@@ -1,0 +1,43 @@
+import { inflateRawSync } from "node:zlib";
+import { AdapterError } from "./manifest.js";
+
+export interface ZipEntry { name:string; data:Buffer }
+// Reviewed ZIP subset only: no ZIP64, encryption, links, collisions or path traversal.
+export function readSafeZip(input:Buffer):ZipEntry[] {
+  const bad=():never=>{throw new AdapterError("UNSAFE_RUNTIME_ARCHIVE");};
+  if(input.length<22||input.length>32*1024*1024)return bad();
+  let end=-1;
+  for(let p=input.length-22;p>=Math.max(0,input.length-65557);p--)if(input.readUInt32LE(p)===0x06054b50){end=p;break;}
+  if(end<0||end+22+input.readUInt16LE(end+20)!==input.length||input.readUInt16LE(end+4)!==0||input.readUInt16LE(end+6)!==0)return bad();
+  const count=input.readUInt16LE(end+10),size=input.readUInt32LE(end+12),offset=input.readUInt32LE(end+16);
+  if(count<1||count>1024||count!==input.readUInt16LE(end+8)||offset+size!==end)return bad();
+  let at=offset,total=0;
+  const names=new Set<string>(),result:ZipEntry[]=[];
+  for(let n=0;n<count;n++) {
+    if(at+46>end||input.readUInt32LE(at)!==0x02014b50)return bad();
+    const flags=input.readUInt16LE(at+8),method=input.readUInt16LE(at+10),compressed=input.readUInt32LE(at+20),expanded=input.readUInt32LE(at+24);
+    const nameSize=input.readUInt16LE(at+28),extra=input.readUInt16LE(at+30),comment=input.readUInt16LE(at+32),local=input.readUInt32LE(at+42);
+    if(at+46+nameSize+extra+comment>end||input.readUInt16LE(at+34)!==0||(flags&~0x808)!==0||![0,8].includes(method))return bad();
+    const name=input.subarray(at+46,at+46+nameSize).toString("utf8"),segments=name.replace(/\/$/,"").split("/");
+    if(!name||name.length>240||name.includes("\\")||segments.some(s=>!s||s==="."||s===".."||!/^[-A-Za-z0-9._]+$/.test(s)||s.endsWith(".")||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(s))||names.has(name.toLowerCase()))return bad();
+    names.add(name.toLowerCase());
+    const mode=(input.readUInt32LE(at+38)>>>16)&0xf000;
+    if(mode!==0&&mode!==0x8000&&mode!==0x4000)return bad();
+    if(local+30>offset||input.readUInt32LE(local)!==0x04034b50||input.readUInt16LE(local+6)!==flags||input.readUInt16LE(local+8)!==method)return bad();
+    const localNameSize=input.readUInt16LE(local+26),dataAt=local+30+localNameSize+input.readUInt16LE(local+28);
+    if(dataAt+compressed>offset||input.subarray(local+30,local+30+localNameSize).toString("utf8")!==name)return bad();
+    total+=expanded;
+    if(total>256*1024*1024||expanded>128*1024*1024)return bad();
+    const directory=name.endsWith("/");
+    if(directory&&expanded!==0)return bad();
+    if(!directory) {
+      let data:Buffer;
+      try {data=method===0?Buffer.from(input.subarray(dataAt,dataAt+compressed)):inflateRawSync(input.subarray(dataAt,dataAt+compressed),{maxOutputLength:Math.max(1,expanded)});}catch{return bad();}
+      if(data.length!==expanded)return bad();
+      result.push({name,data});
+    }
+    at+=46+nameSize+extra+comment;
+  }
+  if(at!==end)return bad();
+  return result;
+}

@@ -1,0 +1,336 @@
+import { mkdir, open, readFile, unlink } from "node:fs/promises";
+import { resolve, join } from "node:path";
+import { createTextAdapter, capabilityDigest, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
+import { requestDigest } from "@excess/protocol";
+import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
+import { observeLocalResources } from "./telemetry.js";
+import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
+import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, type WorkerMode } from "./control.js";
+
+type Assignment = {
+  jobId: string; attemptId: string; deviceId: string; fence: string; leaseExpiresAt: string;
+  runDeadlineAt: string; offerId: string; capabilityDigest: string; requestDigest: string; maxUnits: string;
+};
+type Entry = { assignment: Assignment; state: "seen" | "running" | "result_pending" | "finished" | "abandoned"; updatedAt: string; reason: string; resultDigest?: string };
+type Timing = { pollMs: number; heartbeatMs: number; renewMs: number; monitorMs: number };
+export type WorkerRuntimeOptions = {
+  identityPath: string; stateDir: string; installDir: string; policy?: WorkerPolicy;
+  telemetry?: () => Promise<ResourceObservation>; signal?: AbortSignal;
+  // Dependency injection is for explicit local tests, never a CLI fallback.
+  adapter?: TextAdapter; connection?: WorkerConnection; timings?: Partial<Timing>;
+};
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const digest = /^[0-9a-f]{64}$/;
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid coordinator response");
+  return value as Record<string, unknown>;
+}
+function assignment(value: unknown, deviceId: string, allowExpired = false): Assignment {
+  const data = record(value);
+  if (Object.keys(data).some(k => !["jobId", "attemptId", "deviceId", "fence", "leaseExpiresAt", "runDeadlineAt", "offerId", "capabilityDigest", "requestDigest", "maxUnits"].includes(k))) throw Error("Invalid assignment");
+  for (const field of ["jobId", "attemptId", "deviceId", "offerId"]) if (typeof data[field] !== "string" || !uuid.test(data[field] as string)) throw Error("Invalid assignment");
+  if (data.deviceId !== deviceId || typeof data.fence !== "string" || !/^[1-9][0-9]{0,18}$/.test(data.fence) || BigInt(data.fence) > 9223372036854775807n ||
+      typeof data.maxUnits !== "string" || !/^[1-9][0-9]{0,77}$/.test(data.maxUnits) ||
+      typeof data.capabilityDigest !== "string" || !digest.test(data.capabilityDigest) || typeof data.requestDigest !== "string" || !digest.test(data.requestDigest)) throw Error("Invalid assignment");
+  for (const field of ["leaseExpiresAt", "runDeadlineAt"]) if (typeof data[field] !== "string" || !Number.isFinite(Date.parse(data[field] as string)) || (!allowExpired && Date.parse(data[field] as string) <= Date.now())) throw Error("Expired assignment");
+  if (Date.parse(data.leaseExpiresAt as string) > Date.parse(data.runDeadlineAt as string)) throw Error("Invalid assignment lease");
+  return data as unknown as Assignment;
+}
+const attemptData = (a: Assignment) => ({ jobId: a.jobId, attemptId: a.attemptId, fence: a.fence });
+const pause = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve => {
+  const finish = () => { clearTimeout(timer); signal?.removeEventListener("abort", finish); resolve(); };
+  const timer = setTimeout(finish, ms);
+  signal?.addEventListener("abort", finish, { once: true });
+  if (signal?.aborted) finish();
+});
+const safeReason = (error: unknown) => error instanceof WorkerConnectionError ? error.code : "worker_operation_failed";
+const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
+
+class AttemptJournal {
+  private constructor(readonly dir: string, readonly deviceId: string, private bytes: number, readonly entries: Map<string, Entry>) {}
+  static async load(dir: string, deviceId: string): Promise<AttemptJournal> {
+    const path = join(dir, "attempts.jsonl");
+    const markerPath = join(dir, "journal-owner.json");
+    let initialized = false;
+    try {
+      const owner = JSON.parse(await readFile(markerPath, "utf8")) as { version?: unknown; deviceId?: unknown };
+      if (owner.version !== 1 || owner.deviceId !== deviceId) throw Error("Attempt journal belongs to another device");
+      initialized = true;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    let data: Buffer;
+    try { data = await readFile(path); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (initialized) throw Error("Worker attempt journal missing; explicit recovery required");
+      const file = await open(path, "wx", 0o600);
+      try { await file.sync(); } finally { await file.close(); }
+      data = Buffer.alloc(0);
+    }
+    if (data.length > MAX_JOURNAL_BYTES) throw Error("Worker attempt journal requires maintenance");
+    const complete = data.lastIndexOf(10) + 1;
+    const entries = new Map<string, Entry>();
+    for (const line of data.subarray(0, complete).toString("utf8").split("\n").filter(Boolean)) {
+      const value = record(JSON.parse(line));
+      const a = assignment(value.assignment, deviceId, true);
+      if (!["seen", "running", "result_pending", "finished", "abandoned"].includes(String(value.state)) || typeof value.reason !== "string" || typeof value.updatedAt !== "string") throw Error("Invalid attempt journal");
+      const previous = entries.get(a.attemptId);
+      if (previous && requestDigest(previous.assignment) !== requestDigest(a)) throw Error("Attempt journal identity changed");
+      if (!previous && value.state !== "seen") throw Error("Attempt journal missing first observation");
+      if (previous && ["finished", "abandoned"].includes(previous.state)) throw Error("Attempt journal resurrected terminal attempt");
+      entries.set(a.attemptId, value as unknown as Entry);
+    }
+    // A torn final append cannot erase an earlier durable 'seen' record.
+    if (complete !== data.length) {
+      const file = await open(path, "r+");
+      try { await file.truncate(complete); await file.sync(); } finally { await file.close(); }
+    }
+    if (!initialized) await atomicPrivateJson(markerPath, { version: 1, deviceId });
+    return new AttemptJournal(dir, deviceId, complete, entries);
+  }
+  async append(value: Entry): Promise<void> {
+    const line = JSON.stringify(value) + "\n";
+    const bytes = Buffer.byteLength(line);
+    if (this.bytes + bytes > MAX_JOURNAL_BYTES) throw Error("Worker attempt journal requires maintenance");
+    const file = await open(join(this.dir, "attempts.jsonl"), "a", 0o600);
+    try { await file.writeFile(line); await file.sync(); } finally { await file.close(); }
+    this.bytes += bytes; this.entries.set(value.assignment.attemptId, value);
+  }
+  resultPath(a: Assignment): string { return join(this.dir, a.attemptId + ".result.json"); }
+  async removeOutput(a: Assignment): Promise<void> {
+    try { await unlink(this.resultPath(a)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  async set(a: Assignment, state: Entry["state"], reason: string, resultDigest?: string): Promise<Entry> {
+    const entry: Entry = { assignment: a, state, reason, updatedAt: new Date().toISOString(), ...(resultDigest ? { resultDigest } : {}) };
+    await this.append(entry); return entry;
+  }
+}
+
+export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state: string; reason: string }> {
+  const dir = resolve(options.stateDir);
+  await mkdir(dir, { recursive: true });
+  const releaseLock = await acquireRuntimeLock(dir);
+  let adapter: TextAdapter | undefined;
+  let connection: WorkerConnection | undefined;
+  let active: { assignment: Assignment | null; abort: AbortController } | null = null;
+  let closing = false, mode: WorkerMode = "stop", connected = false, probed = false;
+  let fatal: string | null = null, statusState = "starting", statusReason = "initializing";
+  let observation: ResourceObservation = { freeMemoryMb: null, idleSeconds: null }, observedAt = 0;
+  let tasks: Promise<void>[] = [];
+  const lifetime = new AbortController();
+  const timing: Timing = { pollMs: 1000, heartbeatMs: 5000, renewMs: 5000, monitorMs: 100, ...options.timings };
+  for (const value of Object.values(timing)) if (!Number.isInteger(value) || value < 10 || value > 10000) { await releaseLock(); throw Error("Invalid runtime timing"); }
+  const abortActive = (reason: string) => {
+    if (active && !active.abort.signal.aborted) active.abort.abort(Error(reason));
+  };
+  const disconnected = (error: unknown) => {
+    connected = false; statusReason = safeReason(error); statusState = "disconnected"; abortActive("coordinator_disconnected");
+    if (error instanceof WorkerConnectionError && [401, 403].includes(error.status ?? 0)) { fatal = "device_revoked_or_unauthorized"; mode = "stop"; }
+  };
+  try {
+    const policy = options.policy ? parseWorkerPolicy(options.policy) : await readWorkerPolicy(dir);
+    mode = await readWorkerControl(dir);
+    if (mode !== "run") {
+      statusState = "stopped"; statusReason = mode === "drain" ? "drained" : "explicit_resume_required";
+      await writeWorkerStatus(dir, { state: statusState, reason: statusReason });
+      return { state: "stopped", reason: "explicit_resume_required" };
+    }
+    connection = options.connection ?? await createWorkerConnection(options.identityPath);
+    if (!uuid.test(connection.deviceId)) throw Error("Invalid device identity");
+    const journal = await AttemptJournal.load(dir, connection.deviceId);
+    for (const entry of [...journal.entries.values()]) {
+      if (entry.state === "seen" || entry.state === "running") await journal.set(entry.assignment, "abandoned", "interrupted_before_receipt");
+      if (entry.state !== "result_pending") await journal.removeOutput(entry.assignment);
+    }
+    adapter = options.adapter ?? createTextAdapter(options.installDir, { threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, timeoutMs: policy.runSeconds * 1000 });
+    const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null);
+    const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, deviceId: connection!.deviceId,
+      activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null });
+    tasks.push((async () => {
+      let lastStatus = 0;
+      while (!closing && !lifetime.signal.aborted) {
+        try {
+          mode = options.signal?.aborted || fatal ? "stop" : await readWorkerControl(dir);
+          if (mode === "stop") { abortActive("stop_now"); lifetime.abort(); }
+          else if (!decide().allowed && active) abortActive("local_resource_policy");
+          if (Date.now() - lastStatus >= 1000) { await state(); lastStatus = Date.now(); }
+        } catch { fatal = "local_control_unavailable"; mode = "stop"; abortActive("local_control_unavailable"); }
+        await pause(timing.monitorMs, lifetime.signal);
+      }
+    })());
+    tasks.push((async () => {
+      while (!closing && !lifetime.signal.aborted) {
+        try { observation = await (options.telemetry ?? observeLocalResources)(); observedAt = Date.now(); }
+        catch { observation = { freeMemoryMb: null, idleSeconds: null }; observedAt = Date.now(); }
+        await pause(Math.min(1000, timing.pollMs), lifetime.signal);
+      }
+    })());
+    tasks.push((async () => {
+      while (!closing && !lifetime.signal.aborted) {
+        try {
+          const available = mode === "run" && probed && connected && !active && decide().allowed &&
+            ![...journal.entries.values()].some(entry => entry.state === "result_pending") ? 1 : 0;
+          const response = record(await connection!.heartbeat({ totalSlots: 1, availableSlots: available, capabilityDigests: probed ? [capabilityDigest] : [] }, lifetime.signal));
+          if (response.accepted !== true) throw Error("Heartbeat was not accepted");
+        } catch (error) { if (!closing) disconnected(error); }
+        await pause(timing.heartbeatMs, lifetime.signal);
+      }
+    })());
+
+    const reportFailure = async (a: Assignment, reason: "busy" | "execution_error" | "cancelled_locally") => {
+      try { await connection!.command("job.failed", { ...attemptData(a), reason }, lifetime.signal.aborted ? AbortSignal.timeout(2000) : lifetime.signal); }
+      catch (error) { if (!(error instanceof WorkerConnectionError && [404, 409].includes(error.status ?? 0))) disconnected(error); }
+    };
+    const sendResult = async (entry: Entry): Promise<boolean> => {
+      try {
+        const data = await readFile(journal.resultPath(entry.assignment), "utf8");
+        if (Buffer.byteLength(data) > 32768) throw Error("Cached result too large");
+        const output = parseTextResult(JSON.parse(data));
+        if (requestDigest(output) !== entry.resultDigest) throw Error("Cached result digest mismatch");
+        const response = record(await connection!.command("job.result", { ...attemptData(entry.assignment),
+          outputDigest: entry.resultDigest, reportedUnits: String(output.generatedTokens), output }, lifetime.signal));
+        if (response.accepted !== true) throw Error("Result receipt missing");
+        await journal.set(entry.assignment, "finished", "result_receipted");
+        await journal.removeOutput(entry.assignment);
+        return true;
+      } catch (error) {
+        if (error instanceof WorkerConnectionError && [404, 409].includes(error.status ?? 0)) {
+          await journal.set(entry.assignment, "abandoned", "result_no_longer_accepted");
+          await journal.removeOutput(entry.assignment);
+          return true;
+        }
+        if (error instanceof WorkerConnectionError) { disconnected(error); return false; }
+        throw error;
+      }
+    };
+    const perform = async (a: Assignment) => {
+      const controller = new AbortController();
+      active = { assignment: a, abort: controller };
+      let started = false;
+      await journal.set(a, "seen", "observed_before_execution");
+      try {
+        const input = record(await connection!.command("job.input", attemptData(a), controller.signal));
+        const request = parseTextRequest(input.request);
+        if (a.capabilityDigest !== capabilityDigest || input.capabilityDigest !== capabilityDigest ||
+            input.requestDigest !== a.requestDigest || requestDigest(request) !== a.requestDigest || BigInt(request.maxTokens) > BigInt(a.maxUnits)) throw Error("Job input identity mismatch");
+        if (controller.signal.aborted || mode !== "run" || !decide().allowed) throw Error("Local policy no longer permits start");
+        const acknowledgment = record(await connection!.command("job.started", attemptData(a), controller.signal));
+        if (acknowledgment.state !== "running" || typeof acknowledgment.leaseExpiresAt !== "string" || !Number.isFinite(Date.parse(acknowledgment.leaseExpiresAt)) ||
+            Date.parse(acknowledgment.leaseExpiresAt) <= Date.now() || Date.parse(acknowledgment.leaseExpiresAt) > Date.parse(a.runDeadlineAt)) throw Error("Invalid start acknowledgment");
+        started = true;
+        await journal.set(a, "running", "start_acknowledged");
+        if (controller.signal.aborted) throw Error("Start interrupted");
+        statusState = "running"; statusReason = "executing";
+        let leaseExpires = Date.parse(acknowledgment.leaseExpiresAt);
+        const deadline = Math.min(Date.parse(a.runDeadlineAt), Date.now() + policy.runSeconds * 1000);
+        const deadlineTimer = setTimeout(() => controller.abort(Error("Local execution deadline")), Math.max(0, deadline - Date.now()));
+        const leaseWatch = setInterval(() => { if (Date.now() >= leaseExpires) controller.abort(Error("Lease expired")); }, Math.min(100, timing.monitorMs));
+        let output: TextResult;
+        try {
+          const execution = adapter!.execute(request, { signal: controller.signal }).then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+          while (true) {
+            let wakeTimer: ReturnType<typeof setTimeout> | undefined;
+            const tick = new Promise<null>(resolve => { wakeTimer = setTimeout(() => resolve(null), Math.min(timing.renewMs, Math.max(10, Math.floor((leaseExpires - Date.now()) / 3)))); });
+            const completed = await Promise.race([execution, tick]);
+            clearTimeout(wakeTimer);
+            if (completed) { if (!completed.ok) throw completed.error; output = parseTextResult(completed.value); break; }
+            if (controller.signal.aborted) { await adapter!.stop(); continue; }
+            try {
+              const renewed = record(await connection!.command("job.renew", attemptData(a), controller.signal));
+              if (renewed.state !== "running" || typeof renewed.leaseExpiresAt !== "string" || !Number.isFinite(Date.parse(renewed.leaseExpiresAt)) ||
+                  Date.parse(renewed.leaseExpiresAt) <= Date.now() || Date.parse(renewed.leaseExpiresAt) > Date.parse(a.runDeadlineAt)) throw Error("Invalid lease renewal");
+              leaseExpires = Date.parse(renewed.leaseExpiresAt);
+            } catch (error) { disconnected(error); controller.abort(Error("Lease renewal failed")); await adapter!.stop(); }
+          }
+        } finally { clearTimeout(deadlineTimer); clearInterval(leaseWatch); }
+        if (controller.signal.aborted || Date.now() >= leaseExpires || output.generatedTokens > request.maxTokens) throw Error("Execution no longer authorized");
+        if (Buffer.byteLength(JSON.stringify(output)) > 12000) throw Error("Result exceeds signed transport limit");
+        const outputDigest = requestDigest(output);
+        await atomicPrivateJson(journal.resultPath(a), output);
+        const entry = await journal.set(a, "result_pending", "awaiting_result_receipt", outputDigest);
+        await sendResult(entry);
+      } catch (error) {
+        await adapter!.stop();
+        const entry = journal.entries.get(a.attemptId);
+        if (entry?.state === "finished") throw error;
+        if (entry?.state !== "result_pending") {
+          await journal.set(a, "abandoned", controller.signal.aborted ? "execution_cancelled" : "execution_failed");
+          await journal.removeOutput(a);
+          await reportFailure(a, controller.signal.aborted || !started ? "cancelled_locally" : "execution_error");
+        }
+        if (error instanceof WorkerConnectionError) disconnected(error);
+      } finally { active = null; }
+    };
+
+    while (mode !== "stop" && !fatal) {
+      if ((mode as WorkerMode) === "drain") { statusState = "draining"; statusReason = "drained"; break; }
+      let assignments: Assignment[];
+      try {
+        const response = record(await connection.command("worker.poll", {}, lifetime.signal));
+        if (typeof response.executionEnabled !== "boolean" || !Array.isArray(response.assignments) || response.assignments.length > 1) throw Error("Invalid polling response");
+        assignments = response.assignments.map(value => assignment(value, connection!.deviceId));
+        connected = true;
+        for (const entry of [...journal.entries.values()]) {
+          if (entry.state === "result_pending") {
+            if (!await sendResult(entry)) break;
+          }
+        }
+        if (!connected) { await pause(timing.pollMs); continue; }
+        for (const a of assignments) {
+          const prior = journal.entries.get(a.attemptId);
+          if (prior) {
+            if (requestDigest(prior.assignment) !== requestDigest(a)) {
+              // Lease expiry may advance after acknowledgment; immutable identity
+              // fields must still agree before any failure or result is reported.
+              const { leaseExpiresAt: _old, ...oldIdentity } = prior.assignment;
+              const { leaseExpiresAt: _new, ...newIdentity } = a;
+              if (requestDigest(oldIdentity) !== requestDigest(newIdentity)) throw Error("Known attempt identity changed");
+            }
+            if (prior.state !== "result_pending" && prior.state !== "finished") await reportFailure(a, "cancelled_locally");
+          }
+        }
+        const fresh = assignments.filter(a => !journal.entries.has(a.attemptId));
+        if (fresh.length && !response.executionEnabled) {
+          for (const a of fresh) { await journal.set(a, "seen", "execution_disabled"); await journal.set(a, "abandoned", "execution_disabled"); await reportFailure(a, "busy"); }
+        }
+        const decision = decide();
+        if (!decision.allowed) { statusState = "blocked"; statusReason = decision.reason; await pause(timing.pollMs); continue; }
+        if (!probed) {
+          const controller = new AbortController(); active = { assignment: null, abort: controller };
+          statusState = "starting"; statusReason = "probing_installed_model";
+          const abortProbe = () => { void adapter!.stop().catch(() => {}); };
+          controller.signal.addEventListener("abort", abortProbe, { once: true });
+          try {
+            const proof = await adapter.probe();
+            if (controller.signal.aborted || proof.ok !== true || proof.capabilityDigest !== capabilityDigest) throw Error("Local probe failed");
+            probed = true;
+          } finally { controller.signal.removeEventListener("abort", abortProbe); active = null; }
+        }
+        if (mode !== "run" || !decide().allowed) continue;
+        if (response.executionEnabled && fresh.length && connected && ![...journal.entries.values()].some(e => e.state === "result_pending")) {
+          await perform(fresh[0]!);
+        } else { statusState = "idle"; statusReason = "waiting_for_assignment"; await pause(timing.pollMs); }
+      } catch (error) {
+        if (error instanceof WorkerConnectionError) { disconnected(error); await pause(timing.pollMs); }
+        else { fatal = safeReason(error); mode = "stop"; }
+      }
+    }
+    if (fatal) await setWorkerControl(dir, "stop");
+    statusState = fatal ? (fatal === "device_revoked_or_unauthorized" ? "revoked" : "error") : "stopped";
+    statusReason = fatal ?? ((mode as WorkerMode) === "drain" ? "drained" : "stopped_locally");
+    return { state: statusState, reason: statusReason };
+  } catch (error) {
+    statusState = "error"; statusReason = safeReason(error);
+    await writeWorkerStatus(dir, { state: statusState, reason: statusReason });
+    throw error;
+  } finally {
+    closing = true; lifetime.abort(); abortActive("runtime_shutdown");
+    if (options.signal?.aborted) await setWorkerControl(dir, "stop").catch(() => {});
+    await adapter?.stop().catch(() => { statusState = "error"; statusReason = "adapter_stop_failed"; });
+    await Promise.allSettled(tasks);
+    // Withdraw capacity after every outstanding heartbeat has settled. A lost
+    // withdrawal remains bounded by the coordinator's liveness/offer expiry.
+    await connection?.heartbeat({ totalSlots: 1, availableSlots: 0, capabilityDigests: [] }, AbortSignal.timeout(2000)).catch(() => {});
+    await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(connection ? { deviceId: connection.deviceId } : {}), activeAttemptId: null, capabilityDigest: probed ? capabilityDigest : null });
+    await releaseLock();
+  }
+}

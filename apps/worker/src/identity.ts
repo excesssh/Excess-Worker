@@ -1,6 +1,9 @@
 import { generateKeyPairSync, createPrivateKey, createHash, randomUUID, sign } from "node:crypto";
-import { readFile, writeFile, open, rename, unlink } from "node:fs/promises";
+import { readFile, writeFile, open, unlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
+import { parseWorkerMessage } from "@excess/protocol";
+import { atomicPrivateJson } from "./control.js";
 export interface WorkerIdentity {
   version: 1; origin: string; chainId: number; publicKey: string; privateKey: string;
   protection: "dpapi-current-user" | "file-mode-0600"; pairingId: string; challenge: string;
@@ -31,17 +34,31 @@ async function dpapi(value: string, operation: "Protect" | "Unprotect"): Promise
     child.stdin.end(value);
   });
 }
-async function request(origin: string, path: string, payload?: unknown) {
-  const response = await fetch(new URL(path, origin), {
-    method: payload === undefined ? "GET" : "POST", redirect: "error", signal: AbortSignal.timeout(10000),
-    ...(payload === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }),
-  });
-  if (!response.ok || !response.body) throw Error("Coordinator request failed: " + response.status);
+export class WorkerConnectionError extends Error {
+  constructor(readonly status: number | null, readonly code = "COORDINATOR_UNAVAILABLE") { super("Coordinator request failed: " + (status ?? code)); this.name = "WorkerConnectionError"; }
+}
+async function request(origin: string, path: string, payload?: unknown, signal?: AbortSignal) {
+  let response: Response;
+  try {
+    response = await fetch(new URL(path, origin), {
+      method: payload === undefined ? "GET" : "POST", redirect: "error",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
+      ...(payload === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }),
+    });
+  } catch { throw new WorkerConnectionError(null); }
+  if (!response.body) throw new WorkerConnectionError(response.status);
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
   try {
     while (true) { const result = await reader.read(); if (result.done) break; bytes += result.value.length; if (bytes > 32768) throw Error("Coordinator response too large"); chunks.push(result.value); }
   } finally { await reader.cancel(); }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  let value;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); }
+  catch { throw new WorkerConnectionError(response.status, "INVALID_COORDINATOR_RESPONSE"); }
+  if (!response.ok) {
+    const code = value?.error?.code;
+    throw new WorkerConnectionError(response.status, typeof code === "string" && /^[A-Z_]{1,64}$/.test(code) ? code : "COORDINATOR_REJECTED");
+  }
+  return value;
 }
 export async function beginPairing(origin: string, label: string): Promise<{ identity: WorkerIdentity; code: string; fingerprint: string; expiresAt: string }> {
   origin = originUrl(origin);
@@ -70,7 +87,15 @@ async function key(identity: WorkerIdentity) {
   const plaintext = identity.protection === "dpapi-current-user" ? await dpapi(identity.privateKey, "Unprotect") : identity.privateKey;
   return createPrivateKey({ key: Buffer.from(plaintext, "base64"), type: "pkcs8", format: "der" });
 }
+const identityOperations = new Map<string, Promise<unknown>>();
 async function withIdentity<T>(path: string, action: (identity: WorkerIdentity, save: () => Promise<void>) => Promise<T>): Promise<T> {
+  path = resolve(path);
+  const operation = (identityOperations.get(path) ?? Promise.resolve()).catch(() => {}).then(() => withIdentityLock(path, action));
+  identityOperations.set(path, operation);
+  try { return await operation; }
+  finally { if (identityOperations.get(path) === operation) identityOperations.delete(path); }
+}
+async function withIdentityLock<T>(path: string, action: (identity: WorkerIdentity, save: () => Promise<void>) => Promise<T>): Promise<T> {
   // Lock file fences simultaneous CLI operations. A crash requires manual review/removal of this lock.
   const lock = await open(path + ".lock", "wx", 0o600);
   try {
@@ -79,9 +104,7 @@ async function withIdentity<T>(path: string, action: (identity: WorkerIdentity, 
         !Number.isSafeInteger(identity.sequence) || identity.sequence < 0 ||
         !["dpapi-current-user", "file-mode-0600"].includes(identity.protection)) throw Error("Invalid device identity");
     return await action(identity, async () => {
-      const temporary = path + ".pending-" + randomUUID();
-      await writeFile(temporary, JSON.stringify(identity, null, 2) + "\n", { flag: "wx", mode: 0o600 });
-      await rename(temporary, path);
+      await atomicPrivateJson(path, identity);
     });
   } finally { await lock.close(); await unlink(path + ".lock"); }
 }
@@ -95,12 +118,43 @@ export async function finishPairing(path: string) {
     return { deviceId: identity.deviceId };
   });
 }
-export async function sendHeartbeat(path: string) {
+export type HeartbeatCapacity = { availableSlots: number; totalSlots?: number; capabilityDigests: string[] };
+export async function sendHeartbeat(path: string, capacity: HeartbeatCapacity = { availableSlots: 0, capabilityDigests: [] }) {
   return withIdentity(path, async (identity, save) => {
     if (!identity.deviceId || identity.sequence >= Number.MAX_SAFE_INTEGER) throw Error("Paired identity required");
     identity.sequence++; await save(); // Reserve sequence before sending, including lost-response cases.
     const message = JSON.stringify({ version: 1, messageId: randomUUID(), correlationId: randomUUID(), sentAt: new Date().toISOString(),
-      type: "worker.heartbeat", data: { deviceId: identity.deviceId, sequence: identity.sequence, availableSlots: 0, capabilityDigests: [] } });
+      type: "worker.heartbeat", data: { ...capacity, deviceId: identity.deviceId, sequence: identity.sequence } });
+    parseWorkerMessage(message);
     return request(identity.origin, "/v1/worker/heartbeat", { message, signature: sign(null, Buffer.from(message), await key(identity)).toString("base64") });
   });
+}
+export interface WorkerConnection {
+  deviceId: string;
+  heartbeat(capacity: HeartbeatCapacity, signal?: AbortSignal): Promise<unknown>;
+  command(type: string, data: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+}
+export async function createWorkerConnection(path: string): Promise<WorkerConnection> {
+  // The foreground runtime decrypts once; no private key leaves this process.
+  const initial = await withIdentity(path, async identity => {
+    if (!identity.deviceId) throw Error("Paired identity required");
+    return { identity: { ...identity }, signingKey: await key(identity) };
+  });
+  const { identity, signingKey } = initial;
+  const makeMessage = (type: string, data: Record<string, unknown>) => {
+    const message = JSON.stringify({ version: 1, messageId: randomUUID(), correlationId: randomUUID(), sentAt: new Date().toISOString(),
+      type, data: { ...data, deviceId: identity.deviceId } });
+    if (Buffer.byteLength(message) > 16384) throw Error("Worker message exceeds transport limit");
+    parseWorkerMessage(message);
+    return { message, signature: sign(null, Buffer.from(message), signingKey).toString("base64") };
+  };
+  return {
+    deviceId: identity.deviceId!,
+    heartbeat: (capacity, signal) => withIdentity(path, async (current, save) => {
+      if (current.deviceId !== identity.deviceId || current.publicKey !== identity.publicKey || current.origin !== identity.origin || current.chainId !== identity.chainId || current.sequence >= Number.MAX_SAFE_INTEGER) throw Error("Device identity changed or exhausted");
+      current.sequence++; await save();
+      return request(identity.origin, "/v1/worker/heartbeat", makeMessage("worker.heartbeat", { ...capacity, sequence: current.sequence }), signal);
+    }),
+    command: (type, data, signal) => request(identity.origin, "/v1/worker/command", makeMessage(type, data), signal),
+  };
 }

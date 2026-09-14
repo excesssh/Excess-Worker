@@ -59,6 +59,14 @@ const attemptIdentity = {
   // Lease fences are durable PostgreSQL int64 counters, not asset amounts.
   fence: z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => BigInt(value) <= 9223372036854775807n),
 };
+export const textRequestSchema = z.strictObject({
+  prompt:z.string().min(1).max(4096).refine(value=>Buffer.byteLength(value,"utf8")<=4096),
+  maxTokens:z.number().int().min(1).max(128),seed:z.number().int().min(0).max(2147483647),
+});
+export const textResultSchema = z.strictObject({
+  text:z.string().min(1).max(8192).refine(value=>Buffer.byteLength(value,"utf8")<=8192),
+  generatedTokens:z.number().int().min(0).max(128),finishReason:z.enum(["stop","length"]),
+});
 export const workerMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...envelope, type: z.literal("worker.heartbeat"),
@@ -77,6 +85,9 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
     ...envelope, type: z.literal("job.started"), data: z.strictObject(attemptIdentity),
   }),
   z.strictObject({
+    ...envelope, type: z.literal("job.input"), data: z.strictObject(attemptIdentity),
+  }),
+  z.strictObject({
     ...envelope, type: z.literal("job.renew"), data: z.strictObject(attemptIdentity),
   }),
   z.strictObject({
@@ -90,6 +101,8 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
       outputDigest: digestSchema,
       // A worker declaration is not authoritative billing or delivery evidence.
       reportedUnits: baseUnitsSchema,
+      // Optional only for legacy digest-only fixtures; executable text jobs require it.
+      output: textResultSchema.optional(),
     }),
   }),
 ]);
