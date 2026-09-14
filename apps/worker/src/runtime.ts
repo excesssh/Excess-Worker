@@ -5,7 +5,7 @@ import { requestDigest, textChunkSchema, type TextChunk } from "@excess/protocol
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
-import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, type WorkerMode, type WorkerProbe } from "./control.js";
+import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, WorkerShutdownError, type WorkerMode, type WorkerProbe } from "./control.js";
 
 type Assignment = {
   jobId: string; attemptId: string; deviceId: string; fence: string; leaseExpiresAt: string;
@@ -203,12 +203,13 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       try { await connection!.command("job.failed", { ...attemptData(a), reason }, lifetime.signal.aborted ? AbortSignal.timeout(2000) : lifetime.signal); }
       catch (error) { if (!(error instanceof WorkerConnectionError && [404, 409].includes(error.status ?? 0))) disconnected(error); }
     };
-    const sendResult = async (entry: Entry): Promise<boolean> => {
+    const sendResult = async (entry: Entry, authorize?: () => void): Promise<boolean> => {
       try {
         const data = await readFile(journal.resultPath(entry.assignment), "utf8");
         if (Buffer.byteLength(data) > 32768) throw Error("Cached result too large");
         const output = parseTextResult(JSON.parse(data));
         if (requestDigest(output) !== entry.resultDigest) throw Error("Cached result digest mismatch");
+        authorize?.();
         const response = record(await connection!.command("job.result", { ...attemptData(entry.assignment),
           outputDigest: entry.resultDigest, reportedUnits: String(output.generatedTokens), output }, lifetime.signal));
         if (response.accepted !== true) throw Error("Result receipt missing");
@@ -250,6 +251,11 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         const deadline = Math.min(Date.parse(a.runDeadlineAt), Date.now() + policy.runSeconds * 1000);
         const deadlineTimer = setTimeout(() => controller.abort(Error("Local execution deadline")), Math.max(0, deadline - Date.now()));
         const leaseWatch = setInterval(() => { if (Date.now() >= leaseExpires) controller.abort(Error("Lease expired")); }, Math.min(100, timing.monitorMs));
+        const authorizeExecution = () => {
+          if (controller.signal.aborted || Date.now() >= deadline || Date.now() >= leaseExpires) {
+            controller.abort(Error("Execution deadline expired")); throw Error("Execution no longer authorized");
+          }
+        };
         let streamText = "", streamTokens = 0, streamSequence = 0, chunkInFlight = false, executionOpen = true;
         const onChunk = async (value: TextChunk): Promise<void> => {
           try {
@@ -262,9 +268,10 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
                 Buffer.byteLength(streamText + delta, "utf8") > 8192) throw Error("Invalid adapter chunk");
             const data = { ...attemptData(a), ...chunk };
             if (Buffer.byteLength(JSON.stringify(data), "utf8") > 12000) throw Error("Chunk exceeds signed transport limit");
+            authorizeExecution();
             const receipt = record(await connection!.command("job.chunk", data, controller.signal));
             if (receipt.accepted !== true || receipt.sequence !== sequence || receipt.chunkDigest !== chunkDigest) throw Error("Chunk receipt mismatch");
-            controller.signal.throwIfAborted();
+            authorizeExecution();
             streamSequence = sequence; streamText += delta; streamTokens += tokenIds.length;
           } catch (error) {
             if (error instanceof WorkerConnectionError) disconnected(error);
@@ -293,12 +300,15 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         if (streaming && (chunkInFlight || streamSequence < 1 || output.text !== streamText || output.generatedTokens !== streamTokens)) {
           controller.abort(Error("Stream result does not match acknowledged chunks")); throw Error("Invalid stream result");
         }
-        if (controller.signal.aborted || Date.now() >= leaseExpires || output.generatedTokens > request.maxTokens) throw Error("Execution no longer authorized");
+        authorizeExecution();
+        if (output.generatedTokens > request.maxTokens) throw Error("Execution no longer authorized");
         if (Buffer.byteLength(JSON.stringify(output)) > 12000) throw Error("Result exceeds signed transport limit");
         const outputDigest = requestDigest(output);
+        authorizeExecution();
         await atomicPrivateJson(journal.resultPath(a), output);
+        authorizeExecution();
         const entry = await journal.set(a, "result_pending", "awaiting_result_receipt", outputDigest);
-        await sendResult(entry);
+        await sendResult(entry, authorizeExecution);
       } catch (error) {
         await adapter!.stop();
         const entry = journal.entries.get(a.attemptId);
@@ -380,13 +390,22 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   } finally {
     closing = true; lifetime.abort(); abortActive("runtime_shutdown");
     if (options.signal?.aborted) await setWorkerControl(dir, "stop").catch(() => {});
-    await adapter?.stop().catch(() => { statusState = "error"; statusReason = "adapter_stop_failed"; });
+    let shutdownFailed = false, shutdownError: unknown;
+    try { await adapter?.stop(); }
+    catch (error) {
+      shutdownFailed = true; shutdownError = error; statusState = "error"; statusReason = "adapter_stop_failed";
+      // Never release ownership while a native process may still be running.
+      // Marker-write failure itself leaves the guard for explicit inspection.
+      await releaseLock.markShutdownUnverified().catch(() => {});
+    }
     await Promise.allSettled(tasks);
+    if (shutdownFailed) await setWorkerControl(dir, "stop").catch(() => {});
     // Withdraw capacity after every outstanding heartbeat has settled. A lost
     // withdrawal remains bounded by the coordinator's liveness/offer expiry.
     await connection?.heartbeat({ totalSlots: 1, availableSlots: 0, capabilityDigests: [] }, AbortSignal.timeout(2000)).catch(() => {});
     await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(connection ? { deviceId: connection.deviceId } : {}), activeAttemptId: null,
-      capabilityDigest: probed ? capabilityDigest : null, ...(lastProbe ? { lastProbe } : {}) });
+      capabilityDigest: probed && !shutdownFailed ? capabilityDigest : null, ...(lastProbe ? { lastProbe } : {}) });
+    if (shutdownFailed) throw new WorkerShutdownError(shutdownError);
     await releaseLock();
   }
 }

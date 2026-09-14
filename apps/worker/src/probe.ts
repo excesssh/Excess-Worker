@@ -1,5 +1,5 @@
 import {createTextAdapter,capabilityDigest,type TextAdapter} from "@excess/adapters";
-import {acquireRuntimeLock,readWorkerControl,setWorkerControl,writeWorkerStatus} from "./control.js";
+import {acquireRuntimeLock,readWorkerControl,setWorkerControl,writeWorkerStatus,WorkerShutdownError} from "./control.js";
 import {readWorkerPolicy,parseWorkerPolicy,policyDecision,type ResourceObservation,type WorkerPolicy} from "./policy.js";
 import {observeLocalResources} from "./telemetry.js";
 
@@ -36,8 +36,12 @@ export async function runLocalProbe(options:{stateDir:string;installDir:string;p
     succeeded=true;reason="probe_completed";return proof;
   } finally {
     clearInterval(timer);options.signal?.removeEventListener("abort",external);
-    try {await adapter?.stop();await refresh;await setWorkerControl(options.stateDir,"stop");
+    let shutdownFailed=false,shutdownError:unknown;
+    try {await adapter?.stop();}
+    catch(error){shutdownFailed=true;shutdownError=error;succeeded=false;reason="adapter_stop_failed";await release.markShutdownUnverified().catch(()=>{});}
+    try {await refresh;await setWorkerControl(options.stateDir,"stop");
       await writeWorkerStatus(options.stateDir,{state:succeeded?"stopped":"error",reason,activeAttemptId:null,capabilityDigest:succeeded?capabilityDigest:null});}
-    finally {await release();}
+    finally {if(!shutdownFailed)await release();}
+    if(shutdownFailed)throw new WorkerShutdownError(shutdownError);
   }
 }

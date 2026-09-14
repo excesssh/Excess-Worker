@@ -66,10 +66,16 @@ export async function writeWorkerStatus(stateDir: string, status: Omit<WorkerSta
   await atomicPrivateJson(join(resolve(stateDir), "status.json"), { version: 1, ...status, updatedAt: new Date().toISOString() });
 }
 export async function readWorkerStatus(stateDir: string): Promise<WorkerStatus> {
+  let shutdownUnverified = false;
+  try {
+    const owner = JSON.parse(await readPrivateText(join(resolve(stateDir), "runtime.lock"), 1024)) as { shutdownUnverified?: unknown };
+    shutdownUnverified = owner.shutdownUnverified !== undefined && owner.shutdownUnverified !== false;
+  } catch { /* Lock acquisition separately refuses malformed ownership files. */ }
   try {
     const text = await readPrivateText(join(resolve(stateDir), "status.json"), 16384);
     if (Buffer.byteLength(text) > 16384) throw Error("Invalid worker status");
     const status = JSON.parse(text) as WorkerStatus;
+    if (shutdownUnverified) return { ...status, state: "error", reason: "adapter_stop_failed", activeAttemptId: null, capabilityDigest: null };
     if (!["stopped", "revoked", "error"].includes(status.state)) {
       let alive = false;
       try { const owner = JSON.parse(await readPrivateText(join(resolve(stateDir), "runtime.lock"), 1024)) as { pid: number }; alive = processAlive(owner.pid); }
@@ -79,7 +85,8 @@ export async function readWorkerStatus(stateDir: string): Promise<WorkerStatus> 
     return status;
   }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, state: "stopped", reason: "not_started", updatedAt: new Date().toISOString() };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, state: shutdownUnverified ? "error" : "stopped",
+      reason: shutdownUnverified ? "adapter_stop_failed" : "not_started", updatedAt: new Date().toISOString(), ...(shutdownUnverified ? { capabilityDigest: null } : {}) };
     throw error;
   }
 }
@@ -88,7 +95,7 @@ function processAlive(pid: unknown): boolean {
   try { process.kill(Number(pid), 0); return true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; return true; }
 }
-async function withRuntimeGuard<T>(stateDir: string, action: () => Promise<T>): Promise<T> {
+async function withRuntimeGuard<T>(stateDir: string, action: () => Promise<T>, retainOnFailure = false): Promise<T> {
   const path = join(resolve(stateDir), "runtime.guard");
   let guard;
   for (let n = 0; n < 20; n++) {
@@ -99,10 +106,16 @@ async function withRuntimeGuard<T>(stateDir: string, action: () => Promise<T>): 
     }
   }
   if (!guard) throw Error("Worker lock guard requires inspection");
-  try { return await action(); }
-  finally { await guard.close(); await unlink(path); }
+  let succeeded = false;
+  try { const result = await action(); succeeded = true; return result; }
+  finally { await guard.close(); if (succeeded || !retainOnFailure) await unlink(path); }
 }
-export async function acquireRuntimeLock(stateDir: string): Promise<() => Promise<void>> {
+export class WorkerShutdownError extends Error {
+  readonly code = "ADAPTER_STOP_FAILED";
+  constructor(cause: unknown) { super("Adapter shutdown unverified; local inspection required", { cause }); this.name = "WorkerShutdownError"; }
+}
+export type RuntimeLock = (() => Promise<void>) & { markShutdownUnverified(): Promise<void> };
+export async function acquireRuntimeLock(stateDir: string): Promise<RuntimeLock> {
   await mkdir(resolve(stateDir), { recursive: true });
   const path = join(resolve(stateDir), "runtime.lock");
   const nonce = randomUUID();
@@ -113,7 +126,8 @@ export async function acquireRuntimeLock(stateDir: string): Promise<() => Promis
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const text = await readFile(path, "utf8");
       if (text.length > 1024) throw Error("Worker lock requires inspection");
-      const owner = JSON.parse(text) as { pid?: unknown };
+      const owner = JSON.parse(text) as { pid?: unknown; shutdownUnverified?: unknown };
+      if (owner.shutdownUnverified !== undefined && owner.shutdownUnverified !== false) throw Error("Worker shutdown unverified; local inspection required");
       if (processAlive(owner.pid)) throw Error("Worker is already running");
       await unlink(path);
       file = await open(path, "wx", 0o600);
@@ -121,9 +135,28 @@ export async function acquireRuntimeLock(stateDir: string): Promise<() => Promis
     try { await file.writeFile(JSON.stringify({ pid: process.pid, nonce })); await file.sync(); return file; }
     catch (error) { await file.close(); throw error; }
   }));
-  return async () => withRuntimeGuard(stateDir, () => withPrivateFile(path, async () => {
-    const owner = JSON.parse(await readFile(path, "utf8")) as { nonce?: unknown };
+  let handleClosed = false, marked: Promise<void> | undefined;
+  const closeHandle = async () => { if (!handleClosed) { await handle.close(); handleClosed = true; } };
+  const release = async () => withRuntimeGuard(stateDir, () => withPrivateFile(path, async () => {
+    const owner = JSON.parse(await readFile(path, "utf8")) as { nonce?: unknown; shutdownUnverified?: unknown };
     if (owner.nonce !== nonce) throw Error("Worker lock ownership changed");
-    await handle.close(); await unlink(path);
+    if (owner.shutdownUnverified !== undefined && owner.shutdownUnverified !== false) throw Error("Worker shutdown unverified; local inspection required");
+    await closeHandle(); await unlink(path);
   }));
+  return Object.assign(release, { markShutdownUnverified: () => marked ??= withRuntimeGuard(stateDir, () => withPrivateFile(path, async () => {
+    try {
+      const owner = JSON.parse(await readFile(path, "utf8")) as { pid?: unknown; nonce?: unknown };
+      if (owner.nonce !== nonce || owner.pid !== process.pid) throw Error("Worker lock ownership changed");
+      const bytes = Buffer.from(JSON.stringify({ pid: process.pid, nonce, shutdownUnverified: true, shutdownUnverifiedAt: new Date().toISOString() }));
+      // The guard excludes every acquisition/reclamation while this small marker
+      // is rewritten. A torn write stays malformed and requires inspection.
+      await handle.truncate(0);
+      for (let offset = 0; offset < bytes.length;) {
+        const result = await handle.write(bytes, offset, bytes.length - offset, offset);
+        if (result.bytesWritten < 1) throw Error("Worker lock marker write failed");
+        offset += result.bytesWritten;
+      }
+      await handle.sync();
+    } finally { await closeHandle(); }
+  }), true).finally(closeHandle) });
 }

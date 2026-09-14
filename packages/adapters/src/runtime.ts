@@ -13,6 +13,27 @@ export interface AdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:num
 export interface AdapterProbe {ok:true;capabilityDigest:string;backend:"cpu";model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
 export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal;onChunk?:ChunkCallback}):Promise<TextResult>;stop():Promise<void>}
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(16),maxMemoryMb:z.number().int().min(1024).max(8192),timeoutMs:z.number().int().min(1000).max(300000)});
+// Internal supervisor state (not re-exported by the adapter package entry point).
+// A failed reap retains both its process and rejected barrier: replacement must
+// fail closed instead of forgetting a possibly live native process.
+export class AdapterProcessState {
+  private current:ManagedProcess|undefined;
+  private reaping:Promise<void>|undefined;
+  get process():ManagedProcess|undefined{return this.current;}
+  async ready():Promise<void>{await this.reaping;}
+  attach(process:ManagedProcess):void{
+    if(this.current||this.reaping)throw new AdapterError("RUNTIME_REPLACEMENT_BLOCKED");
+    this.current=process;
+  }
+  stop():Promise<void>{
+    if(this.reaping)return this.reaping;
+    const old=this.current;if(!old)return Promise.resolve();
+    this.reaping=Promise.resolve().then(()=>old.stop()).then(()=>{
+      this.current=undefined;this.reaping=undefined;
+    },error=>{throw error instanceof AdapterError?error:new AdapterError("RUNTIME_STOP_FAILED");});
+    return this.reaping;
+  }
+}
 async function port():Promise<number> {
   return new Promise((resolve,reject)=>{const server=createServer();server.once("error",reject);server.listen(0,"127.0.0.1",()=>{const address=server.address();if(!address||typeof address==="string")return server.close(()=>reject(new AdapterError("RUNTIME_PORT_FAILED")));server.close(error=>error?reject(error):resolve(address.port));});});
 }
@@ -29,22 +50,24 @@ export function createTextAdapter(installDir:string,inputOptions:AdapterOptions)
   if(!parsed.success)throw new AdapterError("INVALID_ADAPTER_POLICY");
   const options=parsed.data;
   if(options.threads>availableParallelism()||options.maxMemoryMb*1048576>totalmem())throw new AdapterError("ADAPTER_POLICY_EXCEEDS_MACHINE");
-  let runtime:ManagedProcess|undefined,origin="",secret="",busy=false,stopping=new AbortController();
-  async function stop():Promise<void> {stopping.abort();const old=runtime;runtime=undefined;await old?.stop();}
+  const processes=new AdapterProcessState();
+  let origin="",secret="",busy=false,stopping=new AbortController();
+  async function stop():Promise<void> {stopping.abort();await processes.stop();}
   async function ensure(signal:AbortSignal) {
-    if(runtime?.alive())return;
+    if(processes.process?.alive())return;
+    await processes.stop();signal.throwIfAborted();
     if(process.platform!=="win32"||process.arch!=="x64")throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
     const installed=await verifyInstallation(installDir);signal.throwIfAborted();
     const selectedPort=await port();signal.throwIfAborted();secret=randomBytes(32).toString("base64url");origin=`http://127.0.0.1:${selectedPort}`;
     const systemRoot=process.env.SystemRoot??"C:\\Windows";
     const env:NodeJS.ProcessEnv={SystemRoot:systemRoot,WINDIR:systemRoot,PATH:join(systemRoot,"System32"),LLAMA_API_KEY:secret,OMP_NUM_THREADS:String(options.threads)};
     for(const key of ["TEMP","TMP"])if(process.env[key])env[key]=process.env[key];
-    runtime=startSupervisedProcess(installed.serverPath,["--model",installed.modelPath,"--host","127.0.0.1","--port",String(selectedPort),
+    processes.attach(startSupervisedProcess(installed.serverPath,["--model",installed.modelPath,"--host","127.0.0.1","--port",String(selectedPort),
       "--threads",String(options.threads),"--threads-batch",String(options.threads),"--threads-http","2","--ctx-size",String(TEXT_CAPABILITY.contextTokens),
       "--parallel","1","--n-gpu-layers","0","--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"],
-      {cwd:dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576});
+      {cwd:dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576}));
     for(;;) {
-      signal.throwIfAborted();if(!runtime.alive())throw runtime.error()??new AdapterError("RUNTIME_EXITED");
+      signal.throwIfAborted();if(!processes.process?.alive())throw processes.process?.error()??new AdapterError("RUNTIME_EXITED");
       try {const response=await fetch(origin+"/health",{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error"});if(response.ok){await boundedJson(response,4096);return;}await response.body?.cancel();}
       catch(error){if(signal.aborted)throw error;}
       await delay(200,undefined,{signal});
@@ -69,14 +92,18 @@ export function createTextAdapter(installDir:string,inputOptions:AdapterOptions)
     if(busy)throw new AdapterError("ADAPTER_BUSY");busy=true;
     if(stopping.signal.aborted)stopping=new AbortController();
     const signal=AbortSignal.any([stopping.signal,AbortSignal.timeout(options.timeoutMs),...(external?[external]:[])]);
-    try {signal.throwIfAborted();await ensure(signal);return await completion(request,signal,onChunk);}
-    catch(error) {const fault=runtime?.error();await stop();if(fault)throw fault;if(error instanceof AdapterError)throw error;throw new AdapterError(signal.aborted?"ADAPTER_ABORTED_OR_TIMED_OUT":"RUNTIME_EXECUTION_FAILED");}
+    try {
+      await processes.ready();
+      signal.throwIfAborted();await ensure(signal);return await completion(request,signal,onChunk);
+    }
+    catch(error) {const fault=processes.process?.error();await stop();if(fault)throw fault;if(error instanceof AdapterError)throw error;throw new AdapterError(signal?.aborted?"ADAPTER_ABORTED_OR_TIMED_OUT":"RUNTIME_EXECUTION_FAILED");}
     finally {busy=false;}
   }
   return {
     supportsStreaming:true,execute:(request,execution={})=>run(parseTextRequest(request),execution.signal,execution.onChunk),stop,
     async probe(){
       const result=await run({prompt:"Reply with the word ready.",maxTokens:8,seed:42});
+      const runtime=processes.process;
       const nativePid=runtime?.nativePid(),guardianPid=runtime?.child.pid;
       if(!runtime?.alive()||typeof nativePid!=="number"||!Number.isSafeInteger(nativePid)||nativePid<=0||
         typeof guardianPid!=="number"||!Number.isSafeInteger(guardianPid)||guardianPid<=0){await stop();throw new AdapterError("RUNTIME_DIAGNOSTICS_UNAVAILABLE");}
