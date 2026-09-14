@@ -1,0 +1,23 @@
+{
+  "name": "excess-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.11.1 <25",
+    "npm": ">=11 <12"
+  },
+  "packageManager": "npm@11.7.0",
+  "workspaces": [
+    "apps/worker",
+    "packages/protocol"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "npm run build && node --test --test-concurrency=4"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2"
+  }
+}
