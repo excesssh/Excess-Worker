@@ -34,7 +34,9 @@ const transitions: Record<JobState, readonly JobState[]> = {
   reserved: ["queued", "expired", "cancelled"],
   queued: ["leased", "expired", "cancelled", "failed"],
   leased: ["running", "queued", "failed", "cancelled"],
-  running: ["verifying", "queued", "failed", "cancelled"],
+  // Once the worker acknowledges start, retry needs explicit future recovery
+  // semantics; acknowledgement loss must not duplicate an execution.
+  running: ["verifying", "failed", "cancelled"],
   verifying: ["succeeded", "failed"],
   succeeded: [], failed: [], cancelled: [], expired: [],
 };
@@ -52,20 +54,39 @@ const envelope = {
   correlationId: z.uuid(),
   sentAt: z.iso.datetime(),
 };
+const attemptIdentity = {
+  deviceId: z.uuid(), jobId: z.uuid(), attemptId: z.uuid(),
+  // Lease fences are durable PostgreSQL int64 counters, not asset amounts.
+  fence: z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => BigInt(value) <= 9223372036854775807n),
+};
 export const workerMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...envelope, type: z.literal("worker.heartbeat"),
     data: z.strictObject({
       deviceId: z.uuid(), sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
       availableSlots: z.number().int().min(0).max(32),
+      // Legacy liveness-only heartbeats do not establish schedulable capacity.
+      totalSlots: z.number().int().min(0).max(32).optional(),
       capabilityDigests: z.array(digestSchema).max(128),
-    }),
+    }).refine(data => data.totalSlots === undefined || data.availableSlots <= data.totalSlots),
+  }),
+  z.strictObject({
+    ...envelope, type: z.literal("worker.poll"), data: z.strictObject({ deviceId: z.uuid() }),
+  }),
+  z.strictObject({
+    ...envelope, type: z.literal("job.started"), data: z.strictObject(attemptIdentity),
+  }),
+  z.strictObject({
+    ...envelope, type: z.literal("job.renew"), data: z.strictObject(attemptIdentity),
+  }),
+  z.strictObject({
+    ...envelope, type: z.literal("job.failed"),
+    data: z.strictObject({ ...attemptIdentity, reason: z.enum(["busy", "execution_error", "cancelled_locally"]) }),
   }),
   z.strictObject({
     ...envelope, type: z.literal("job.result"),
     data: z.strictObject({
-      deviceId: z.uuid(), jobId: z.uuid(), attemptId: z.uuid(),
-      fence: baseUnitsSchema.refine(value => BigInt(value) > 0n),
+      ...attemptIdentity,
       outputDigest: digestSchema,
       // A worker declaration is not authoritative billing or delivery evidence.
       reportedUnits: baseUnitsSchema,
@@ -135,7 +156,7 @@ export const jobEventSchema = z.strictObject({
   jobId: z.uuid().transform(value => value.toLowerCase()),
   attemptId: z.uuid().transform(value => value.toLowerCase()).nullable(),
   correlationId: z.uuid().transform(value => value.toLowerCase()),
-  eventType: z.enum(["job.quoted","job.reserved","job.queued","job.leased","job.running","job.verifying","job.succeeded","job.failed","job.cancelled","job.expired"]),
+  eventType: z.enum(["job.quoted","job.reserved","job.queued","job.leased","job.running","job.delivery_started","job.verifying","job.succeeded","job.failed","job.cancelled","job.expired"]),
   cursor: z.string().regex(/^(0|[1-9][0-9]{0,18})$/).refine(value => BigInt(value)<=9223372036854775807n),
   payload: z.record(z.string().max(128),z.json()),
 });

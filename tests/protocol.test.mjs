@@ -42,7 +42,9 @@ test("request digest is stable for key order and changes with meaningful input",
   for (const input of [{ x: undefined }, { x: NaN }, { x: 1.5 }, new Date(), [,,]]) assert.throws(() => requestDigest(input));
 });
 test("state transitions prevent terminal resurrection and retry after delivered output", () => {
-  assertJobTransition("running", "queued", 0n);
+  assertJobTransition("leased", "queued", 0n);
+  assert.throws(() => assertJobTransition("running", "queued", 0n));
+  assert.throws(() => assertJobTransition("leased", "queued", 1n));
   assert.throws(() => assertJobTransition("running", "queued", 1n));
   assert.throws(() => assertJobTransition("succeeded", "queued"));
   assert.throws(() => assertJobTransition("queued", "succeeded"));
