@@ -67,6 +67,13 @@ export const textResultSchema = z.strictObject({
   text:z.string().min(1).max(8192).refine(value=>Buffer.byteLength(value,"utf8")<=8192),
   generatedTokens:z.number().int().min(0).max(128),finishReason:z.enum(["stop","length"]),
 });
+export const textChunkSchema = z.strictObject({
+  sequence:z.number().int().min(1).max(128),
+  delta:z.string().max(8192).refine(value=>Buffer.byteLength(value,"utf8")<=8192),
+  tokenIds:z.array(z.number().int().min(0).max(2147483647)).min(1).max(128),
+  chunkDigest:digestSchema,
+});
+export type TextChunk = z.infer<typeof textChunkSchema>;
 export const workerMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...envelope, type: z.literal("worker.heartbeat"),
@@ -89,6 +96,9 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
   }),
   z.strictObject({
     ...envelope, type: z.literal("job.renew"), data: z.strictObject(attemptIdentity),
+  }),
+  z.strictObject({
+    ...envelope,type:z.literal("job.chunk"),data:z.strictObject({...attemptIdentity,...textChunkSchema.shape}),
   }),
   z.strictObject({
     ...envelope, type: z.literal("job.failed"),

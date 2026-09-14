@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createTextAdapter, capabilityDigest, TEXT_CAPABILITY, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
-import { requestDigest } from "@excess/protocol";
+import { requestDigest, textChunkSchema, type TextChunk } from "@excess/protocol";
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
@@ -235,6 +235,9 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         const request = parseTextRequest(input.request);
         if (a.capabilityDigest !== capabilityDigest || input.capabilityDigest !== capabilityDigest ||
             input.requestDigest !== a.requestDigest || requestDigest(request) !== a.requestDigest || BigInt(request.maxTokens) > BigInt(a.maxUnits)) throw Error("Job input identity mismatch");
+        if (input.deliveryMode !== undefined && input.deliveryMode !== "buffered" && input.deliveryMode !== "stream") throw Error("Invalid delivery mode");
+        const streaming = input.deliveryMode === "stream";
+        if (streaming && adapter!.supportsStreaming !== true) throw Error("Adapter does not support streaming");
         if (controller.signal.aborted || mode !== "run" || !decide().allowed) throw Error("Local policy no longer permits start");
         const acknowledgment = record(await connection!.command("job.started", attemptData(a), controller.signal));
         if (acknowledgment.state !== "running" || typeof acknowledgment.leaseExpiresAt !== "string" || !Number.isFinite(Date.parse(acknowledgment.leaseExpiresAt)) ||
@@ -247,9 +250,31 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         const deadline = Math.min(Date.parse(a.runDeadlineAt), Date.now() + policy.runSeconds * 1000);
         const deadlineTimer = setTimeout(() => controller.abort(Error("Local execution deadline")), Math.max(0, deadline - Date.now()));
         const leaseWatch = setInterval(() => { if (Date.now() >= leaseExpires) controller.abort(Error("Lease expired")); }, Math.min(100, timing.monitorMs));
+        let streamText = "", streamTokens = 0, streamSequence = 0, chunkInFlight = false, executionOpen = true;
+        const onChunk = async (value: TextChunk): Promise<void> => {
+          try {
+            if (!executionOpen || chunkInFlight || controller.signal.aborted) throw Error("Chunk execution interrupted");
+            chunkInFlight = true;
+            const chunk = textChunkSchema.parse(value);
+            const { sequence, delta, tokenIds, chunkDigest } = chunk;
+            if (sequence !== streamSequence + 1 || chunkDigest !== requestDigest({ sequence, delta, tokenIds }) ||
+                Buffer.from(delta, "utf8").toString("utf8") !== delta || streamTokens + tokenIds.length > request.maxTokens ||
+                Buffer.byteLength(streamText + delta, "utf8") > 8192) throw Error("Invalid adapter chunk");
+            const data = { ...attemptData(a), ...chunk };
+            if (Buffer.byteLength(JSON.stringify(data), "utf8") > 12000) throw Error("Chunk exceeds signed transport limit");
+            const receipt = record(await connection!.command("job.chunk", data, controller.signal));
+            if (receipt.accepted !== true || receipt.sequence !== sequence || receipt.chunkDigest !== chunkDigest) throw Error("Chunk receipt mismatch");
+            controller.signal.throwIfAborted();
+            streamSequence = sequence; streamText += delta; streamTokens += tokenIds.length;
+          } catch (error) {
+            if (error instanceof WorkerConnectionError) disconnected(error);
+            controller.abort(Error("Chunk delivery failed"));
+            throw error;
+          } finally { chunkInFlight = false; }
+        };
         let output: TextResult;
         try {
-          const execution = adapter!.execute(request, { signal: controller.signal }).then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+          const execution = adapter!.execute(request, { signal: controller.signal, ...(streaming ? { onChunk } : {}) }).then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
           while (true) {
             let wakeTimer: ReturnType<typeof setTimeout> | undefined;
             const tick = new Promise<null>(resolve => { wakeTimer = setTimeout(() => resolve(null), Math.min(timing.renewMs, Math.max(10, Math.floor((leaseExpires - Date.now()) / 3)))); });
@@ -264,7 +289,10 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
               leaseExpires = Date.parse(renewed.leaseExpiresAt);
             } catch (error) { disconnected(error); controller.abort(Error("Lease renewal failed")); await adapter!.stop(); }
           }
-        } finally { clearTimeout(deadlineTimer); clearInterval(leaseWatch); }
+        } finally { executionOpen = false; clearTimeout(deadlineTimer); clearInterval(leaseWatch); }
+        if (streaming && (chunkInFlight || streamSequence < 1 || output.text !== streamText || output.generatedTokens !== streamTokens)) {
+          controller.abort(Error("Stream result does not match acknowledged chunks")); throw Error("Invalid stream result");
+        }
         if (controller.signal.aborted || Date.now() >= leaseExpires || output.generatedTokens > request.maxTokens) throw Error("Execution no longer authorized");
         if (Buffer.byteLength(JSON.stringify(output)) > 12000) throw Error("Result exceeds signed transport limit");
         const outputDigest = requestDigest(output);
