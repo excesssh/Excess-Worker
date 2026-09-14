@@ -105,3 +105,38 @@ export function requestDigest(value: unknown): string {
   if (Buffer.byteLength(text, "utf8") > MAX_WORKER_MESSAGE_BYTES) throw new RangeError("Request exceeds limit");
   return createHash("sha256").update("excess:request:v1\n").update(text).digest("hex");
 }
+
+export const journalPostSchema = z.strictObject({
+  assetId: z.uuid().transform(value => value.toLowerCase()),
+  fundingSource: z.enum(["custody", "operator_credit"]),
+  idempotencyScope: z.string().min(1).max(128),
+  idempotencyKey: z.string().min(1).max(128),
+  reason: z.string().min(1).max(500),
+  correlationId: z.uuid().transform(value => value.toLowerCase()),
+  entries: z.array(z.strictObject({
+    accountId: z.uuid().transform(value => value.toLowerCase()),
+    amount: z.string().regex(/^-?[1-9][0-9]{0,77}$/).refine(value => {
+      const amount = BigInt(value);
+      return amount >= -MAX_BASE_UNITS && amount <= MAX_BASE_UNITS;
+    }),
+  })).min(2).max(64),
+}).superRefine((input, context) => {
+  if (new Set(input.entries.map(entry => entry.accountId)).size !== input.entries.length) {
+    context.addIssue({ code: "custom", message: "Duplicate ledger account" });
+  }
+  if (input.entries.every(entry => /^-?[1-9][0-9]{0,77}$/.test(entry.amount)) &&
+      input.entries.reduce((total, entry) => total + BigInt(entry.amount), 0n) !== 0n) {
+    context.addIssue({ code: "custom", message: "Journal entries must sum to zero" });
+  }
+});
+export type JournalPost = z.infer<typeof journalPostSchema>;
+export const jobEventSchema = z.strictObject({
+  id: z.uuid().transform(value => value.toLowerCase()),
+  jobId: z.uuid().transform(value => value.toLowerCase()),
+  attemptId: z.uuid().transform(value => value.toLowerCase()).nullable(),
+  correlationId: z.uuid().transform(value => value.toLowerCase()),
+  eventType: z.enum(["job.quoted","job.reserved","job.queued","job.leased","job.running","job.verifying","job.succeeded","job.failed","job.cancelled","job.expired"]),
+  cursor: z.string().regex(/^(0|[1-9][0-9]{0,18})$/).refine(value => BigInt(value)<=9223372036854775807n),
+  payload: z.record(z.string().max(128),z.json()),
+});
+export type JobEvent = z.infer<typeof jobEventSchema>;
