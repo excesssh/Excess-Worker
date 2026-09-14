@@ -9,7 +9,7 @@ import { verifyInstallation } from "./install.js";
 import { startSupervisedProcess,type ManagedProcess } from "./process.js";
 
 export interface AdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:number}
-export interface AdapterProbe {ok:true;capabilityDigest:string;backend:"cpu";model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number}
+export interface AdapterProbe {ok:true;capabilityDigest:string;backend:"cpu";model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
 export interface TextAdapter {probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal}):Promise<TextResult>;stop():Promise<void>}
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(16),maxMemoryMb:z.number().int().min(1024).max(8192),timeoutMs:z.number().int().min(1000).max(300000)});
 async function port():Promise<number> {
@@ -72,6 +72,13 @@ export function createTextAdapter(installDir:string,inputOptions:AdapterOptions)
   }
   return {
     execute:(request,execution={})=>run(parseTextRequest(request),execution.signal),stop,
-    async probe(){const result=await run({prompt:"Reply with the word ready.",maxTokens:8,seed:42});return {ok:true,capabilityDigest,backend:"cpu",model:TEXT_CAPABILITY.model,runtime:TEXT_CAPABILITY.runtime,threads:options.threads,maxMemoryMb:options.maxMemoryMb,probedAt:new Date().toISOString(),generatedTokens:result.generatedTokens,peakRssMb:Math.ceil((runtime?.peakRssBytes()??0)/1048576)};},
+    async probe(){
+      const result=await run({prompt:"Reply with the word ready.",maxTokens:8,seed:42});
+      const nativePid=runtime?.nativePid(),guardianPid=runtime?.child.pid;
+      if(!runtime?.alive()||typeof nativePid!=="number"||!Number.isSafeInteger(nativePid)||nativePid<=0||
+        typeof guardianPid!=="number"||!Number.isSafeInteger(guardianPid)||guardianPid<=0){await stop();throw new AdapterError("RUNTIME_DIAGNOSTICS_UNAVAILABLE");}
+      return {ok:true,capabilityDigest,backend:"cpu",model:TEXT_CAPABILITY.model,runtime:TEXT_CAPABILITY.runtime,threads:options.threads,maxMemoryMb:options.maxMemoryMb,
+        probedAt:new Date().toISOString(),generatedTokens:result.generatedTokens,peakRssMb:Math.ceil(runtime.peakRssBytes()/1048576),nativePid,guardianPid};
+    },
   };
 }

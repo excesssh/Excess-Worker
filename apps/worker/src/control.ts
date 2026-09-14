@@ -1,11 +1,16 @@
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { AdapterProbe } from "@excess/adapters";
+import type { WorkerPolicy } from "./policy.js";
 
 export type WorkerMode = "run" | "drain" | "stop";
+export type WorkerProbe = AdapterProbe & { policy: WorkerPolicy };
 export type WorkerStatus = {
   version: 1; state: string; reason: string; updatedAt: string;
   deviceId?: string; activeAttemptId?: string | null; capabilityDigest?: string | null;
+  // Historical observation from the current run, not a live-capacity flag.
+  lastProbe?: WorkerProbe;
 };
 const privateFileOperations = new Map<string, Promise<unknown>>();
 async function withPrivateFile<T>(path: string, action: () => Promise<T>): Promise<T> {

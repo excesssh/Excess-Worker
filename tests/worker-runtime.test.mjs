@@ -9,7 +9,7 @@ import { runWorker } from "../apps/worker/dist/runtime.js";
 import { setWorkerControl, readWorkerControl, readWorkerStatus, acquireRuntimeLock } from "../apps/worker/dist/control.js";
 import { parseWorkerPolicy, policyDecision, readWorkerPolicy, writeWorkerPolicy } from "../apps/worker/dist/policy.js";
 import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
-import { capabilityDigest } from "../packages/adapters/dist/index.js";
+import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 
 const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60 };
@@ -66,9 +66,17 @@ async function fixture() {
     },
   };
   let complete;
-  const counts = { probes: 0, executions: 0, aborts: 0, stops: 0 };
+  const counts = { probes: 0, executions: 0, aborts: 0, stops: 0 }, probes = [];
   const adapter = {
-    async probe() { counts.probes++; return { ok: true, capabilityDigest }; },
+    async probe() {
+      counts.probes++;
+      // Explicit synthetic adapter observation for schema/persistence tests only.
+      // These process IDs and memory/token values are not hardware evidence.
+      const proof = { ok: true, capabilityDigest, backend: "cpu", model: TEXT_CAPABILITY.model, runtime: TEXT_CAPABILITY.runtime,
+        threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, probedAt: new Date().toISOString(),
+        generatedTokens: 3, peakRssMb: 256, nativePid: 700001, guardianPid: 700002 };
+      probes.push(proof); return proof;
+    },
     async execute(value, { signal }) {
       assert.deepEqual(value, request);
       counts.executions++;
@@ -93,7 +101,7 @@ async function fixture() {
     return operation;
   };
   const journal = async () => (await readFile(join(dir, "attempts.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-  return { dir, a, state, connection, adapter, calls, heartbeats, counts, start, journal, complete: result => complete(result) };
+  return { dir, a, state, connection, adapter, calls, heartbeats, counts, probes, start, journal, complete: result => complete(result) };
 }
 
 test("worker policy and controls fail closed and fence concurrent foreground runtimes", async () => {
@@ -164,6 +172,8 @@ test("atomic worker controls remain complete during concurrent reads and Windows
 test("fixture worker drain finishes one execution, receipts output and withdraws capacity", async () => {
   const f = await fixture(), running = f.start();
   await waitFor(() => f.counts.executions === 1);
+  const observation = { ...f.probes[0], policy };
+  assert.deepEqual((await readWorkerStatus(f.dir)).lastProbe, observation);
   await setWorkerControl(f.dir, "drain");
   await new Promise(r => setTimeout(r, 50));
   assert.equal(f.counts.aborts, 0);
@@ -174,7 +184,9 @@ test("fixture worker drain finishes one execution, receipts output and withdraws
   assert.deepEqual((await f.journal()).map(e => e.state), ["seen", "running", "result_pending", "finished"]);
   await assert.rejects(access(join(f.dir, f.a.attemptId + ".result.json")), { code: "ENOENT" });
   assert.deepEqual(f.heartbeats.at(-1), { totalSlots: 1, availableSlots: 0, capabilityDigests: [] });
-  assert.equal((await readWorkerStatus(f.dir)).state, "stopped");
+  const status = await readWorkerStatus(f.dir);
+  assert.equal(status.state, "stopped");
+  assert.deepEqual(status.lastProbe, observation);
 });
 
 test("fixture worker stop-now aborts and a repeated assignment cannot execute after restart", async () => {
@@ -228,6 +240,7 @@ test("fixture worker never probes with unavailable idle observation and aborts w
   await waitFor(() => blocked.heartbeats.length >= 3);
   await setWorkerControl(blocked.dir, "stop"); await waiting;
   assert.equal(blocked.counts.probes, 0); assert.equal(blocked.counts.executions, 0);
+  assert.equal((await readWorkerStatus(blocked.dir)).lastProbe, undefined);
   assert.ok(blocked.heartbeats.every(h => h.availableSlots === 0 && h.capabilityDigests.length === 0));
   const f = await fixture(); let idleSeconds = 120;
   const running = f.start({ policy: { ...policy, idleOnly: true }, telemetry: async () => ({ ...ready, idleSeconds }) });
@@ -290,4 +303,20 @@ test("fixture idle worker withdraws advertised capacity and stop interrupts an o
   assert.equal((await running).state, "stopped");
   assert.equal(f.counts.executions, 0);
   assert.deepEqual(f.heartbeats.at(-1), { totalSlots: 1, availableSlots: 0, capabilityDigests: [] });
+});
+
+test("fixture malformed probe observations never become retained evidence or advertised capability", async () => {
+  for (const invalid of [
+    { capabilityDigest: "0".repeat(64) }, { backend: "gpu" }, { runtime: "unrelated runtime" },
+    { threads: 2 }, { generatedTokens: 9 }, { peakRssMb: NaN }, { nativePid: 0 }, { guardianPid: -1 },
+    { probedAt: "2000-01-01T00:00:00.000Z" },
+  ]) {
+    const f = await fixture(); f.state.assigned = false;
+    const original = f.adapter.probe;
+    f.adapter.probe = async () => ({ ...await original(), ...invalid });
+    assert.equal((await f.start()).state, "error");
+    assert.equal(f.counts.executions, 0);
+    assert.equal((await readWorkerStatus(f.dir)).lastProbe, undefined);
+    assert.ok(f.heartbeats.every(heartbeat => heartbeat.capabilityDigests.length === 0));
+  }
 });

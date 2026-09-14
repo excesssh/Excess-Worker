@@ -1,11 +1,11 @@
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { createTextAdapter, capabilityDigest, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
+import { createTextAdapter, capabilityDigest, TEXT_CAPABILITY, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
 import { requestDigest } from "@excess/protocol";
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
-import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, type WorkerMode } from "./control.js";
+import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, type WorkerMode, type WorkerProbe } from "./control.js";
 
 type Assignment = {
   jobId: string; attemptId: string; deviceId: string; fence: string; leaseExpiresAt: string;
@@ -24,6 +24,27 @@ const digest = /^[0-9a-f]{64}$/;
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid coordinator response");
   return value as Record<string, unknown>;
+}
+function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number): WorkerProbe {
+  const proof = record(value);
+  const probedAt = typeof proof.probedAt === "string" ? Date.parse(proof.probedAt) : NaN;
+  if (proof.ok !== true || proof.capabilityDigest !== capabilityDigest || proof.backend !== "cpu" ||
+      proof.model !== TEXT_CAPABILITY.model || proof.runtime !== TEXT_CAPABILITY.runtime ||
+      proof.threads !== policy.threads || proof.maxMemoryMb !== policy.maxMemoryMb ||
+      !Number.isFinite(probedAt) || probedAt < startedAt || probedAt > Date.now() ||
+      !Number.isSafeInteger(proof.generatedTokens) || Number(proof.generatedTokens) < 0 || Number(proof.generatedTokens) > 8 ||
+      !Number.isSafeInteger(proof.peakRssMb) || Number(proof.peakRssMb) < 0) throw Error("Invalid local probe observation");
+  for (const name of ["nativePid", "guardianPid"]) {
+    if (proof[name] !== undefined && (!Number.isSafeInteger(proof[name]) || Number(proof[name]) < 1)) throw Error("Invalid local probe process identity");
+  }
+  return {
+    ok: true, capabilityDigest, backend: "cpu", model: TEXT_CAPABILITY.model, runtime: TEXT_CAPABILITY.runtime,
+    threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, probedAt: String(proof.probedAt),
+    generatedTokens: Number(proof.generatedTokens), peakRssMb: Number(proof.peakRssMb),
+    ...(proof.nativePid === undefined ? {} : { nativePid: Number(proof.nativePid) }),
+    ...(proof.guardianPid === undefined ? {} : { guardianPid: Number(proof.guardianPid) }),
+    policy: { ...policy },
+  };
 }
 function assignment(value: unknown, deviceId: string, allowExpired = false): Assignment {
   const data = record(value);
@@ -111,6 +132,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   const releaseLock = await acquireRuntimeLock(dir);
   let adapter: TextAdapter | undefined;
   let connection: WorkerConnection | undefined;
+  let lastProbe: WorkerProbe | undefined;
   let active: { assignment: Assignment | null; abort: AbortController } | null = null;
   let closing = false, mode: WorkerMode = "stop", connected = false, probed = false;
   let fatal: string | null = null, statusState = "starting", statusReason = "initializing";
@@ -144,7 +166,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     adapter = options.adapter ?? createTextAdapter(options.installDir, { threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, timeoutMs: policy.runSeconds * 1000 });
     const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null);
     const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, deviceId: connection!.deviceId,
-      activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null });
+      activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null,
+      ...(lastProbe ? { lastProbe } : {}) });
     tasks.push((async () => {
       let lastStatus = 0;
       while (!closing && !lifetime.signal.aborted) {
@@ -300,9 +323,13 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
           const abortProbe = () => { void adapter!.stop().catch(() => {}); };
           controller.signal.addEventListener("abort", abortProbe, { once: true });
           try {
+            const startedAt = Date.now();
             const proof = await adapter.probe();
-            if (controller.signal.aborted || proof.ok !== true || proof.capabilityDigest !== capabilityDigest) throw Error("Local probe failed");
+            if (controller.signal.aborted) throw Error("Local probe failed");
+            lastProbe = successfulProbe(proof, policy, startedAt);
             probed = true;
+            statusState = "idle"; statusReason = "probe_complete";
+            await state();
           } finally { controller.signal.removeEventListener("abort", abortProbe); active = null; }
         }
         if (mode !== "run" || !decide().allowed) continue;
@@ -320,7 +347,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     return { state: statusState, reason: statusReason };
   } catch (error) {
     statusState = "error"; statusReason = safeReason(error);
-    await writeWorkerStatus(dir, { state: statusState, reason: statusReason });
+    await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(lastProbe ? { lastProbe } : {}) });
     throw error;
   } finally {
     closing = true; lifetime.abort(); abortActive("runtime_shutdown");
@@ -330,7 +357,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     // Withdraw capacity after every outstanding heartbeat has settled. A lost
     // withdrawal remains bounded by the coordinator's liveness/offer expiry.
     await connection?.heartbeat({ totalSlots: 1, availableSlots: 0, capabilityDigests: [] }, AbortSignal.timeout(2000)).catch(() => {});
-    await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(connection ? { deviceId: connection.deviceId } : {}), activeAttemptId: null, capabilityDigest: probed ? capabilityDigest : null });
+    await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(connection ? { deviceId: connection.deviceId } : {}), activeAttemptId: null,
+      capabilityDigest: probed ? capabilityDigest : null, ...(lastProbe ? { lastProbe } : {}) });
     await releaseLock();
   }
 }

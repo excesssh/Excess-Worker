@@ -23,8 +23,8 @@ export async function diagnostics() {
     platform: os.platform(), release: os.release(), architecture: os.arch(),
     cpu: os.cpus()[0]?.model.trim() ?? "unknown", logicalCpus: os.cpus().length,
     memoryBytes: String(os.totalmem()), nvidia,
-    executionBackends: [], verifiedCapabilities: [], registered: false,
-    notes: ["Hardware discovery is not an execution probe.", "No models downloaded or jobs accepted.", "AMD, Intel and CPU execution remain untested."],
+    executionBackends: [], verifiedCapabilities: [], registrationChecked: false,
+    notes: ["Hardware discovery is not an execution probe.", "This command does not download models or accept jobs.", "Use probe for installed-model execution checks and status for local worker state; this inventory does not establish live supply."],
   };
 }
 try {
