@@ -32,7 +32,8 @@ async function temporary(run) {
 test("adapter manifest is immutable, exact and import-only; requests and outputs reject extra control fields",()=>{
   assert.equal(capabilityDigest,requestDigest(TEXT_CAPABILITY));
   assert.equal(TEXT_CAPABILITY.backend,"cpu");assert.equal(TEXT_CAPABILITY.trustClass,"supplier_visible");
-  assert.equal(textInstallationPlan(".local/models/qwen3-0.6b-cpu-v1").downloadBytes,657866767);
+  assert.equal(textInstallationPlan(".local/models/qwen3-4b-cpu-v1").downloadBytes,2515700335);
+  assert.equal(TEXT_CAPABILITY.model,"Qwen3-4B-Q4_K_M");
   for(const artifact of Object.values(ARTIFACTS)) {
     assert.equal(Object.isFrozen(artifact),true);
     assert.throws(()=>{artifact.url="https://example.com/arbitrary.exe";},TypeError);

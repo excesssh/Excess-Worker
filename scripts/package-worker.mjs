@@ -36,7 +36,7 @@ await copyTree(join(root,"node_modules","zod"),join(stage,"app","node_modules","
 await writeFile(join(stage,"excess-worker.cmd"),[
   "@echo off","setlocal",
   "if not defined EXCESS_WORKER_HOME set \"EXCESS_WORKER_HOME=%LOCALAPPDATA%\\EXCESS\\worker\"",
-  "if not defined EXCESS_MODEL_DIR set \"EXCESS_MODEL_DIR=%LOCALAPPDATA%\\EXCESS\\models\\qwen3-0.6b-cpu-v1\"",
+  "if not defined EXCESS_MODEL_DIR set \"EXCESS_MODEL_DIR=%LOCALAPPDATA%\\EXCESS\\models\\qwen3-4b-cpu-v1\"",
   "\"%~dp0node\\node.exe\" \"%~dp0app\\worker\\dist\\main.js\" %*","exit /b %ERRORLEVEL%",""].join("\r\n"));
 await writeFile(join(stage,"ONBOARDING.txt"),[
   "EXCESS supplier worker (Windows x64, CPU)","",
@@ -45,7 +45,7 @@ await writeFile(join(stage,"ONBOARDING.txt"),[
   "  1. excess-worker guide                      shows your next step at any time",
   "  2. excess-worker pair https://<exchange> \"My PC\"   then approve the printed code in the web app (Supplier, Pair a device)",
   "  3. excess-worker complete-pairing",
-  "  4. excess-worker model-plan                 review the pinned download (about 660 MB) and licences",
+  "  4. excess-worker model-plan                 review the pinned download (about 2.5 GB) and licences",
   "  5. excess-worker install-model --accept-download --accept-licenses",
   "  6. excess-worker offer USDG <price per million output tokens>",
   "  7. excess-worker run                        keep this window open to receive jobs",
@@ -57,7 +57,7 @@ if(nodeLicense)await copyFile(resolve(nodeLicense),join(stage,"licenses","node-L
 await copyFile(join(root,"node_modules/zod/LICENSE"),join(stage,"licenses","zod-LICENSE.txt")).catch(()=>{});
 await writeFile(join(stage,"licenses","NOTICE.txt"),[
   `Bundles Node.js ${process.version} (MIT and bundled third-party licences): https://github.com/nodejs/node/blob/${process.version}/LICENSE`,
-  "Bundles zod (MIT). The model runtime (llama.cpp, MIT) and model (Qwen3-0.6B, Apache-2.0) are downloaded only after explicit consent.",
+  "Bundles zod (MIT). The model runtime (llama.cpp, MIT) and model (Qwen3-4B, Apache-2.0) are downloaded only after explicit consent.",
   nodeLicense?"The full Node.js licence text is included in node-LICENSE.txt.":"NOT FOR PUBLIC DISTRIBUTION: the full Node.js licence text was not included (build with --node-license).",""].join("\r\n"));
 
 let commit="unknown";

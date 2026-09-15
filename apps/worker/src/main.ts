@@ -31,7 +31,7 @@ export async function diagnostics() {
 }
 try {
   const command = process.argv[2];
-  const stateDir=resolve(process.env.EXCESS_WORKER_HOME??".local/worker"),installDir=resolve(process.env.EXCESS_MODEL_DIR??".local/models/qwen3-0.6b-cpu-v1");
+  const stateDir=resolve(process.env.EXCESS_WORKER_HOME??".local/worker"),installDir=resolve(process.env.EXCESS_MODEL_DIR??".local/models/qwen3-4b-cpu-v1");
   const path=resolve(stateDir,"identity.json");
   if (command === "doctor") process.stdout.write(JSON.stringify(await diagnostics(), null, 2) + "\n");
   else if (command === "pair") {

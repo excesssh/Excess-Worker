@@ -20,7 +20,7 @@ export async function workerGuide(identityPath: string, stateDir: string, instal
       note: identity ? "Approve the pairing code in the web app (Supplier, Pair a device) first." : "Prints a code to approve in the web app under Supplier, Pair a device." },
     { step: "install-model", done: await exists(join(resolve(installDir), "install.json")),
       command: "excess-worker model-plan, then excess-worker install-model --accept-download --accept-licenses",
-      note: "Downloads about 660 MB of pinned, hash-checked files: llama.cpp (MIT) and Qwen3-0.6B (Apache-2.0). CPU only." },
+      note: "Downloads about 2.5 GB of pinned, hash-checked files: llama.cpp (MIT) and Qwen3-4B (Apache-2.0). Needs about 4 GB of free memory while running." },
     { step: "set-price", done: offer !== null, command: "excess-worker offer <ASSET SYMBOL> <price per million output tokens>",
       note: "You are paid this net price; buyers also pay the exchange fee. Your worker publishes it only after its local check passes." },
     { step: "run", done: state !== null && ["running", "idle", "blocked", "starting"].includes(state), command: "excess-worker run",

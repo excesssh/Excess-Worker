@@ -42,7 +42,7 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   assert.match(guide.disclosure,/see their prompts and outputs/);
   assert.deepEqual(JSON.parse(run("offer").stdout).offer,null);
   const plan=JSON.parse(run("model-plan").stdout);
-  assert.equal(plan.directory,join(home,"EXCESS","models","qwen3-0.6b-cpu-v1"),"models install under the user's local app data");
+  assert.equal(plan.directory,join(home,"EXCESS","models","qwen3-4b-cpu-v1"),"models install under the user's local app data");
   assert.notEqual(run("no-such-command").status,0);
   assert.notEqual(run("install-model").status,0,"model download still requires explicit consent flags");
 

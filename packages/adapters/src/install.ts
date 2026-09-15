@@ -13,7 +13,7 @@ export function textInstallationPlan(directory:string) {
   if(typeof directory!=="string"||!directory||directory.length>1024)throw new AdapterError("INVALID_INSTALL_DIRECTORY");
   return {directory:resolve(directory),capabilityDigest,backend:"cpu",platform:"win32-x64",artifacts:ARTIFACTS,
     licences:{runtime:"MIT",model:"Apache-2.0"},downloadBytes:Object.values(ARTIFACTS).reduce((sum,a)=>sum+a.bytes,0),
-    maxExtractedBytes:256*1024*1024,diskBudgetBytes:1024*1024*1024,requiresExplicitConsent:true};
+    maxExtractedBytes:256*1024*1024,diskBudgetBytes:4*1024*1024*1024,requiresExplicitConsent:true};
 }
 export async function noLinks(path:string):Promise<void> {
   const absolute=resolve(path),root=parse(absolute).root;

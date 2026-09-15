@@ -5,14 +5,15 @@ import { atomicPrivateJson, readPrivateText } from "./control.js";
 
 export type WorkerPolicy = { threads: number; maxMemoryMb: number; runSeconds: number; idleOnly: boolean; idleSeconds: number };
 export type ResourceObservation = { freeMemoryMb: number | null; idleSeconds: number | null };
-export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 2048, runSeconds: 60, idleOnly: true, idleSeconds: 60 });
+// Qwen3-4B Q4_K_M with a 4,096-token context needs about 3 GB of resident memory.
+export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 4096, runSeconds: 60, idleOnly: true, idleSeconds: 60 });
 export function parseWorkerPolicy(input: unknown): WorkerPolicy {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw Error("Invalid worker policy");
   const value = input as Record<string, unknown>;
   if (Object.keys(value).some(key => !Object.hasOwn(DEFAULT_WORKER_POLICY, key))) throw Error("Invalid worker policy");
   const policy = { ...DEFAULT_WORKER_POLICY, ...value } as WorkerPolicy;
   if (!Number.isInteger(policy.threads) || policy.threads < 1 || policy.threads > 8 ||
-      !Number.isInteger(policy.maxMemoryMb) || policy.maxMemoryMb < 1024 || policy.maxMemoryMb > 4096 ||
+      !Number.isInteger(policy.maxMemoryMb) || policy.maxMemoryMb < 1024 || policy.maxMemoryMb > 8192 ||
       !Number.isInteger(policy.runSeconds) || policy.runSeconds < 1 || policy.runSeconds > 120 ||
       typeof policy.idleOnly !== "boolean" || !Number.isInteger(policy.idleSeconds) || policy.idleSeconds < 1 || policy.idleSeconds > 3600) throw Error("Invalid worker policy");
   return policy;
