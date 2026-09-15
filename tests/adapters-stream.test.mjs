@@ -58,23 +58,39 @@ test("synthetic llama SSE rejects incomplete, reordered, oversized or inconsiste
     ["oversized token", frame(partial("fixture", [2147483648], 1)) + end],
     ["zero-token text", frame(partial("fixture", [], 0)) + frame(final(0))],
     ["unpaired surrogate", frame(partial("\ud800", [1], 1)) + end],
-    ["UTF-8 output bound", frame(partial("é".repeat(4097), [1], 1)) + end],
-    ["aggregate output bound", frame(partial("x".repeat(4096), [1], 1)) + frame(partial("y".repeat(4097), [2], 2)) + frame(final(2))],
+    ["per-event UTF-8 chunk bound", frame(partial("é".repeat(4097), [1], 1)) + end],
+    ["aggregate output bound", Array.from({ length: 8 }, (_, i) => frame(partial("x".repeat(8192), [i], i + 1))).join("") + frame(partial("y", [8], 9)) + frame(final(9))],
     ["request token bound", first + frame(partial("more", [2], 2)) + frame(final(2)), 1],
-    ["global token bound", frame(partial("fixture", Array.from({ length: 129 }, (_, i) => i), 129)) + frame(final(129))],
-    ["oversized wire", ":" + "x".repeat(262145)],
+    ["per-event token bound", frame(partial("fixture", Array.from({ length: 129 }, (_, i) => i), 129)) + frame(final(129))],
+    ["global token bound", Array.from({ length: 2049 }, (_, i) => frame(partial("x", [i], i + 1))).join("") + frame(final(2049))],
+    ["maxTokens above protocol limit", first + end, 2049],
+    ["oversized wire", (":" + "x".repeat(1000) + "\n").repeat(2100)],
   ];
-  for (const [label, wire, max = 128] of cases) await assert.rejects(readLlamaStream(response(wire), max, async () => {}), undefined, label);
+  for (const [label, wire, max = 2048] of cases) await assert.rejects(readLlamaStream(response(wire), max, async () => {}), undefined, label);
   await assert.rejects(readLlamaStream(new Response(JSON.stringify({ content: "fixture" }), { headers: { "content-type": "application/json" } }), 1, async () => {}));
   await assert.rejects(readLlamaStream(response(Buffer.from([0xc3, 0x28])), 1, async () => {}));
 });
 
 test("synthetic llama SSE reaches exact global token/output bounds without buffering all tokens", async () => {
-  const wire = Array.from({ length: 128 }, (_, i) => frame(partial("x".repeat(64), [i], i + 1))).join("") + frame(final(128));
+  const wire = Array.from({ length: 2048 }, (_, i) => frame(partial("x".repeat(32), [i], i + 1))).join("") + frame(final(2048));
   const chunks = [];
-  const result = await readLlamaStream(response(wire), 128, async chunk => { chunks.push(chunk); });
-  assert.equal(Buffer.byteLength(result.text), 8192); assert.equal(result.generatedTokens, 128);
-  assert.equal(chunks.length, 16); assert.ok(chunks.every(chunk => chunk.tokenIds.length === 8));
+  const result = await readLlamaStream(response(wire), 2048, async chunk => { chunks.push(chunk); });
+  assert.equal(Buffer.byteLength(result.text), 65536); assert.equal(result.generatedTokens, 2048);
+  assert.equal(chunks.length, 256); assert.ok(chunks.every(chunk => chunk.tokenIds.length === 8));
+  assert.equal(chunks.at(-1).sequence, 256);
+});
+
+test("synthetic llama SSE splits native events so each emitted chunk stays within 128 tokens and 8,192 bytes", async () => {
+  // Seven single-token events, then one event with 128 tokens: flush before exceeding the chunk token bound.
+  const tokens = [...Array.from({ length: 7 }, (_, i) => frame(partial("a", [i], i + 1))), frame(partial("b", Array.from({ length: 128 }, (_, i) => 100 + i), 135))];
+  const chunks = [];
+  await readLlamaStream(response(tokens.join("") + frame(final(135))), 2048, async chunk => { chunks.push(chunk); });
+  assert.deepEqual(chunks.map(c => c.tokenIds.length), [7, 128]);
+  // A 5,000-byte token followed by another: flush before exceeding the chunk byte bound.
+  const bytes = frame(partial("x".repeat(5000), [1], 1)) + frame(partial("y".repeat(5000), [2], 2)) + frame(final(2));
+  const byteChunks = [];
+  const result = await readLlamaStream(response(bytes), 2048, async chunk => { byteChunks.push(chunk); });
+  assert.deepEqual(byteChunks.map(c => Buffer.byteLength(c.delta)), [5000, 5000]); assert.equal(result.generatedTokens, 2);
 });
 
 test("synthetic llama SSE cancels the reader on callback failure and abort during reads or callbacks", async () => {

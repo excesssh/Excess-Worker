@@ -2,7 +2,7 @@ import { generateKeyPairSync, createPrivateKey, createHash, randomUUID, sign } f
 import { readFile, writeFile, open, unlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { parseWorkerMessage } from "@excess/protocol";
+import { MAX_WORKER_MESSAGE_BYTES, parseWorkerMessage } from "@excess/protocol";
 import { atomicPrivateJson } from "./control.js";
 export interface WorkerIdentity {
   version: 1; origin: string; chainId: number; publicKey: string; privateKey: string;
@@ -49,7 +49,7 @@ async function request(origin: string, path: string, payload?: unknown, signal?:
   if (!response.body) throw new WorkerConnectionError(response.status);
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
   try {
-    while (true) { const result = await reader.read(); if (result.done) break; bytes += result.value.length; if (bytes > 32768) throw Error("Coordinator response too large"); chunks.push(result.value); }
+    while (true) { const result = await reader.read(); if (result.done) break; bytes += result.value.length; if (bytes > 131072 /* job.input carries a JSON-escaped 16 KiB prompt */) throw Error("Coordinator response too large"); chunks.push(result.value); }
   } finally { await reader.cancel(); }
   let value;
   try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); }
@@ -145,7 +145,7 @@ export async function createWorkerConnection(path: string): Promise<WorkerConnec
   const makeMessage = (type: string, data: Record<string, unknown>) => {
     const message = JSON.stringify({ version: 1, messageId: randomUUID(), correlationId: randomUUID(), sentAt: new Date().toISOString(),
       type, data: { ...data, deviceId: identity.deviceId } });
-    if (Buffer.byteLength(message) > 16384) throw Error("Worker message exceeds transport limit");
+    if (Buffer.byteLength(message) > MAX_WORKER_MESSAGE_BYTES) throw Error("Worker message exceeds transport limit");
     parseWorkerMessage(message);
     return { message, signature: sign(null, Buffer.from(message), signingKey).toString("base64") };
   };

@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const MAX_WORKER_MESSAGE_BYTES = 65536;
+/** Owner-approved text job limits. Every layer reads these instead of literals. */
+export const TEXT_LIMITS = Object.freeze({
+  maxPromptBytes: 16384, maxOutputTokens: 2048, maxOutputBytes: 65536, maxStreamChunks: 2048,
+  maxChunkTokens: 128, maxChunkBytes: 8192, maxRunSeconds: 600,
+} as const);
+// A signed job.result carries the whole output. JSON escaping can expand each
+// output byte up to six times (\u00XX), so 6 * 65,536 bytes plus the envelope.
+export const MAX_WORKER_MESSAGE_BYTES = 524288;
 export const MAX_BASE_UNITS = (1n << 256n) - 1n;
 export const baseUnitsSchema = z.string().regex(/^(0|[1-9][0-9]{0,77})$/).refine(value => BigInt(value) <= MAX_BASE_UNITS);
 export const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/)
@@ -60,17 +67,17 @@ const attemptIdentity = {
   fence: z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => BigInt(value) <= 9223372036854775807n),
 };
 export const textRequestSchema = z.strictObject({
-  prompt:z.string().min(1).max(4096).refine(value=>Buffer.byteLength(value,"utf8")<=4096),
-  maxTokens:z.number().int().min(1).max(128),seed:z.number().int().min(0).max(2147483647),
+  prompt:z.string().min(1).max(TEXT_LIMITS.maxPromptBytes).refine(value=>Buffer.byteLength(value,"utf8")<=TEXT_LIMITS.maxPromptBytes),
+  maxTokens:z.number().int().min(1).max(TEXT_LIMITS.maxOutputTokens),seed:z.number().int().min(0).max(2147483647),
 });
 export const textResultSchema = z.strictObject({
-  text:z.string().min(1).max(8192).refine(value=>Buffer.byteLength(value,"utf8")<=8192),
-  generatedTokens:z.number().int().min(0).max(128),finishReason:z.enum(["stop","length"]),
+  text:z.string().min(1).max(TEXT_LIMITS.maxOutputBytes).refine(value=>Buffer.byteLength(value,"utf8")<=TEXT_LIMITS.maxOutputBytes),
+  generatedTokens:z.number().int().min(0).max(TEXT_LIMITS.maxOutputTokens),finishReason:z.enum(["stop","length"]),
 });
 export const textChunkSchema = z.strictObject({
-  sequence:z.number().int().min(1).max(128),
-  delta:z.string().max(8192).refine(value=>Buffer.byteLength(value,"utf8")<=8192),
-  tokenIds:z.array(z.number().int().min(0).max(2147483647)).min(1).max(128),
+  sequence:z.number().int().min(1).max(TEXT_LIMITS.maxStreamChunks),
+  delta:z.string().max(TEXT_LIMITS.maxChunkBytes).refine(value=>Buffer.byteLength(value,"utf8")<=TEXT_LIMITS.maxChunkBytes),
+  tokenIds:z.array(z.number().int().min(0).max(2147483647)).min(1).max(TEXT_LIMITS.maxChunkTokens),
   chunkDigest:digestSchema,
 });
 export type TextChunk = z.infer<typeof textChunkSchema>;

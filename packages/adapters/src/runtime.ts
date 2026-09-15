@@ -4,6 +4,7 @@ import { availableParallelism,totalmem } from "node:os";
 import { dirname,join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
+import { TEXT_LIMITS } from "@excess/protocol";
 import { AdapterError,DEFAULT_MODEL_ID,catalogEntry,parseTextRequest,parseTextResult,type Backend,type TextRequest,type TextResult } from "./manifest.js";
 import { verifyInstallation } from "./install.js";
 import { startSupervisedProcess,type ManagedProcess } from "./process.js";
@@ -12,7 +13,7 @@ import { readLlamaStream,type ChunkCallback } from "./stream.js";
 export interface AdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:number;modelId?:string;backend?:Backend}
 export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
 export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal;onChunk?:ChunkCallback}):Promise<TextResult>;stop():Promise<void>}
-const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(300000),
+const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda"]).optional()});
 // Internal supervisor state (not re-exported by the adapter package entry point).
 // A failed reap retains both its process and rejected barrier: replacement must
@@ -79,8 +80,9 @@ export function createTextAdapter(installDir:string,inputOptions:AdapterOptions)
   }
   async function completion(request:TextRequest,signal:AbortSignal,onChunk?:ChunkCallback):Promise<TextResult> {
     const prompt=`<|im_start|>user\n${request.prompt} /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n`;
-    const tokens=await boundedJson(await fetch(origin+"/tokenize",{method:"POST",redirect:"error",signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+secret},body:JSON.stringify({content:prompt,add_special:true,parse_special:true})}));
-    const tokenized=z.object({tokens:z.array(z.number().int().nonnegative()).max(8192)}).safeParse(tokens);
+    // A maximal prompt tokenizes to at most about one token per byte plus the template.
+    const tokens=await boundedJson(await fetch(origin+"/tokenize",{method:"POST",redirect:"error",signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+secret},body:JSON.stringify({content:prompt,add_special:true,parse_special:true})}),32*TEXT_LIMITS.maxPromptBytes);
+    const tokenized=z.object({tokens:z.array(z.number().int().nonnegative()).max(2*TEXT_LIMITS.maxPromptBytes)}).safeParse(tokens);
     if(!tokenized.success||tokenized.data.tokens.length+request.maxTokens>entry.capability.contextTokens)throw new AdapterError("PROMPT_EXCEEDS_CONTEXT");
     const response=await fetch(origin+"/completion",{method:"POST",redirect:"error",signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+secret},body:JSON.stringify({
       prompt,n_predict:request.maxTokens,seed:request.seed,temperature:0.7,top_p:0.8,top_k:20,min_p:0,presence_penalty:1.5,
@@ -88,7 +90,7 @@ export function createTextAdapter(installDir:string,inputOptions:AdapterOptions)
       response_fields:["content","tokens","stop_type","truncated",...(onChunk?["stop","tokens_predicted"]:[])],
     })});
     if(onChunk)return readLlamaStream(response,request.maxTokens,onChunk,signal);
-    const result=z.object({content:z.string(),tokens:z.array(z.number().int()).max(128),stop_type:z.enum(["eos","limit","word"]),truncated:z.boolean()}).safeParse(await boundedJson(response));
+    const result=z.object({content:z.string(),tokens:z.array(z.number().int()).max(TEXT_LIMITS.maxOutputTokens),stop_type:z.enum(["eos","limit","word"]),truncated:z.boolean()}).safeParse(await boundedJson(response,16*TEXT_LIMITS.maxOutputBytes));
     if(!result.success||result.data.truncated||result.data.tokens.length>request.maxTokens)throw new AdapterError("INVALID_RUNTIME_RESULT");
     return parseTextResult({text:result.data.content,generatedTokens:result.data.tokens.length,finishReason:result.data.stop_type==="limit"?"length":"stop"});
   }

@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { requestDigest, type TextChunk } from "@excess/protocol";
+import { requestDigest, TEXT_LIMITS, type TextChunk } from "@excess/protocol";
 import { AdapterError, parseTextResult, type TextResult } from "./manifest.js";
 
 export type ChunkCallback = (chunk: TextChunk) => Promise<void>;
+// One native event is never split, so it must fit a single protocol chunk.
 const eventSchema = z.object({
-  content: z.string().max(8192), tokens: z.array(z.number().int().min(0).max(2147483647)).max(128),
-  stop: z.boolean(), tokens_predicted: z.number().int().min(0).max(128),
+  content: z.string().max(TEXT_LIMITS.maxChunkBytes), tokens: z.array(z.number().int().min(0).max(2147483647)).max(TEXT_LIMITS.maxChunkTokens),
+  stop: z.boolean(), tokens_predicted: z.number().int().min(0).max(TEXT_LIMITS.maxOutputTokens),
   stop_type: z.enum(["none", "eos", "limit", "word"]).optional(), truncated: z.boolean().optional(),
 });
 const invalid = () => new AdapterError("INVALID_RUNTIME_STREAM");
@@ -26,7 +27,7 @@ async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promis
 // server-context.cpp): partial events carry token IDs; the stop:true event
 // carries empty content/tokens and the final count. This is not OpenAI SSE.
 export async function readLlamaStream(response: Response, maxTokens: number, onChunk: ChunkCallback, signal?: AbortSignal): Promise<TextResult> {
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 128 || !response.ok || !response.body ||
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > TEXT_LIMITS.maxOutputTokens || !response.ok || !response.body ||
       response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
     await response.body?.cancel().catch(() => {}); throw invalid();
   }
@@ -36,14 +37,15 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
   let pendingText = "", pendingTokens: number[] = [];
   const flush = async () => {
     if (!pendingTokens.length) { if (pendingText) throw invalid(); return; }
-    if (++sequence > 128) throw invalid();
+    if (++sequence > TEXT_LIMITS.maxStreamChunks) throw invalid();
     const value = { sequence, delta: pendingText, tokenIds: pendingTokens };
     await abortable(Promise.resolve().then(() => onChunk({ ...value, chunkDigest: requestDigest(value) })), signal);
     pendingText = ""; pendingTokens = [];
   };
   const event = async () => {
     if (!data.length) return;
-    if (finished || ++events > 260) throw invalid();
+    // Every partial event carries at least one token: at most maxOutputTokens + 1 events, with slack.
+    if (finished || ++events > 2 * TEXT_LIMITS.maxOutputTokens + 4) throw invalid();
     let raw: unknown;
     try { raw = JSON.parse(data.join("\n")); } catch { throw invalid(); }
     data = []; eventBytes = 0;
@@ -65,12 +67,16 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
     tokenCount += value.tokens.length;
     if (tokenCount > maxTokens || value.tokens_predicted !== tokenCount) throw invalid();
     text += value.content;
-    if (Buffer.byteLength(text, "utf8") > 8192) throw invalid();
+    const contentBytes = Buffer.byteLength(value.content, "utf8");
+    if (Buffer.byteLength(text, "utf8") > TEXT_LIMITS.maxOutputBytes || contentBytes > TEXT_LIMITS.maxChunkBytes) throw invalid();
+    // Keep each emitted chunk within the per-chunk token and byte bounds.
+    if (pendingTokens.length + value.tokens.length > TEXT_LIMITS.maxChunkTokens ||
+        Buffer.byteLength(pendingText, "utf8") + contentBytes > TEXT_LIMITS.maxChunkBytes) await flush();
     pendingText += value.content; pendingTokens.push(...value.tokens);
     if (pendingTokens.length >= 8) await flush();
   };
   const endLine = async () => {
-    if (++lines > 2048) throw invalid();
+    if (++lines > 16 * TEXT_LIMITS.maxOutputTokens) throw invalid();
     const current = line; line = "";
     if (current === "") { await event(); return; }
     if (current.startsWith(":")) return; // bounded SSE heartbeat comments
@@ -94,7 +100,7 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
       const next = await abortable(reader.read(), signal);
       if (next.done) break;
       wireBytes += next.value.byteLength;
-      if (wireBytes > 262144) throw invalid();
+      if (wireBytes > 32 * TEXT_LIMITS.maxOutputBytes) throw invalid();
       let decoded: string;
       try { decoded = decoder.decode(next.value, { stream: true }); } catch { throw invalid(); }
       await consume(decoded);

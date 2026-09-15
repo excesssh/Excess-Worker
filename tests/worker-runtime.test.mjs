@@ -106,7 +106,9 @@ async function fixture() {
 
 test("worker policy and controls fail closed and fence concurrent foreground runtimes", async () => {
   assert.equal(parseWorkerPolicy({}).idleOnly, true);
-  for (const value of [{ threads: 0 }, { threads: 65 }, { maxMemoryMb: 512 }, { maxMemoryMb: 262145 }, { model: "not-in-catalog" }, { backend: "rocm" }, { runSeconds: 121 }, { idleOnly: "false" }, { gpu: true }]) assert.throws(() => parseWorkerPolicy(value));
+  assert.equal(parseWorkerPolicy({}).runSeconds, 600, "the default allows a normal 2,048-token CPU job");
+  assert.equal(parseWorkerPolicy({ runSeconds: 600 }).runSeconds, 600);
+  for (const value of [{ threads: 0 }, { threads: 65 }, { maxMemoryMb: 512 }, { maxMemoryMb: 262145 }, { model: "not-in-catalog" }, { backend: "rocm" }, { runSeconds: 0 }, { runSeconds: 601 }, { idleOnly: "false" }, { gpu: true }]) assert.throws(() => parseWorkerPolicy(value));
   assert.equal(policyDecision({ ...policy, idleOnly: true }, { ...ready, idleSeconds: null }).reason, "idle_observation_unavailable");
   assert.equal(policyDecision(policy, { ...ready, freeMemoryMb: null }).allowed, false);
   assert.equal(policyDecision(policy, { ...ready, freeMemoryMb: 100 }).allowed, false);

@@ -41,9 +41,11 @@ test("adapter manifest is immutable, exact and import-only; requests and outputs
     assert.throws(()=>{artifact.bytes=1;},TypeError);
   }
   assert.deepEqual(parseTextRequest({prompt:"hello",maxTokens:8,seed:42}),{prompt:"hello",maxTokens:8,seed:42});
-  for(const input of [{prompt:"hello",maxTokens:129,seed:1},{prompt:"💡".repeat(1025),maxTokens:8,seed:1},{prompt:"hello",maxTokens:8,seed:1,command:"calc.exe"},{prompt:"hello",maxTokens:8,seed:2147483648}])assert.throws(()=>parseTextRequest(input),/INVALID_TEXT_REQUEST/);
+  assert.equal(parseTextRequest({prompt:"p".repeat(16384),maxTokens:2048,seed:1}).maxTokens,2048);
+  for(const input of [{prompt:"hello",maxTokens:2049,seed:1},{prompt:"💡".repeat(4097),maxTokens:8,seed:1},{prompt:"hello",maxTokens:8,seed:1,command:"calc.exe"},{prompt:"hello",maxTokens:8,seed:2147483648}])assert.throws(()=>parseTextRequest(input),/INVALID_TEXT_REQUEST/);
   assert.deepEqual(parseTextResult({text:"ready",generatedTokens:1,finishReason:"stop"}),{text:"ready",generatedTokens:1,finishReason:"stop"});
-  for(const input of [{text:"",generatedTokens:0,finishReason:"stop"},{text:"x",generatedTokens:129,finishReason:"stop"},{text:"x",generatedTokens:1,finishReason:"unknown"},{text:"x",generatedTokens:1,finishReason:"stop",url:"file:///secret"}])assert.throws(()=>parseTextResult(input),/INVALID_TEXT_RESULT/);
+  assert.equal(parseTextResult({text:"x".repeat(65536),generatedTokens:2048,finishReason:"length"}).generatedTokens,2048);
+  for(const input of [{text:"",generatedTokens:0,finishReason:"stop"},{text:"x",generatedTokens:2049,finishReason:"stop"},{text:"x".repeat(65537),generatedTokens:1,finishReason:"stop"},{text:"x",generatedTokens:1,finishReason:"unknown"},{text:"x",generatedTokens:1,finishReason:"stop",url:"file:///secret"}])assert.throws(()=>parseTextResult(input),/INVALID_TEXT_RESULT/);
 });
 test("reviewed ZIP reader rejects traversal, Windows aliases, links, duplicate names and oversized expansion",()=>{
   const valid=readSafeZip(fixtureZip([["llama-server.exe","FAKE FIXTURE"],["lib/ggml.dll","FAKE DLL FIXTURE"]]));

@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createTextAdapter, catalogEntry, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
-import { requestDigest, textChunkSchema, type TextChunk } from "@excess/protocol";
+import { MAX_WORKER_MESSAGE_BYTES, requestDigest, TEXT_LIMITS, textChunkSchema, type TextChunk } from "@excess/protocol";
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
@@ -229,7 +229,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     const sendResult = async (entry: Entry, authorize?: () => void): Promise<boolean> => {
       try {
         const data = await readFile(journal.resultPath(entry.assignment), "utf8");
-        if (Buffer.byteLength(data) > 32768) throw Error("Cached result too large");
+        if (Buffer.byteLength(data) > MAX_WORKER_MESSAGE_BYTES) throw Error("Cached result too large");
         const output = parseTextResult(JSON.parse(data));
         if (requestDigest(output) !== entry.resultDigest) throw Error("Cached result digest mismatch");
         authorize?.();
@@ -288,7 +288,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
             const { sequence, delta, tokenIds, chunkDigest } = chunk;
             if (sequence !== streamSequence + 1 || chunkDigest !== requestDigest({ sequence, delta, tokenIds }) ||
                 Buffer.from(delta, "utf8").toString("utf8") !== delta || streamTokens + tokenIds.length > request.maxTokens ||
-                Buffer.byteLength(streamText + delta, "utf8") > 8192) throw Error("Invalid adapter chunk");
+                Buffer.byteLength(streamText + delta, "utf8") > TEXT_LIMITS.maxOutputBytes) throw Error("Invalid adapter chunk");
             const data = { ...attemptData(a), ...chunk };
             if (Buffer.byteLength(JSON.stringify(data), "utf8") > 12000) throw Error("Chunk exceeds signed transport limit");
             authorizeExecution();
@@ -325,7 +325,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         }
         authorizeExecution();
         if (output.generatedTokens > request.maxTokens) throw Error("Execution no longer authorized");
-        if (Buffer.byteLength(JSON.stringify(output)) > 12000) throw Error("Result exceeds signed transport limit");
+        // Leave room for the signed envelope around the complete output.
+        if (Buffer.byteLength(JSON.stringify(output)) > MAX_WORKER_MESSAGE_BYTES - 4096) throw Error("Result exceeds signed transport limit");
         const outputDigest = requestDigest(output);
         authorizeExecution();
         await atomicPrivateJson(journal.resultPath(a), output);

@@ -33,7 +33,7 @@ test("worker messages are versioned, bounded and strict before ingestion", () =>
   for (const invalid of [{ ...message, version: 2 }, { ...message, secret: "oops" }, { ...message, data: { ...message.data, availableSlots: 100 } }]) {
     assert.throws(() => parseWorkerMessage(JSON.stringify(invalid)), { code: "INVALID_MESSAGE" });
   }
-  assert.throws(() => parseWorkerMessage("x".repeat(65537)), { code: "MESSAGE_TOO_LARGE" });
+  assert.throws(() => parseWorkerMessage("x".repeat(524289)), { code: "MESSAGE_TOO_LARGE" });
   assert.throws(() => parseWorkerMessage(Uint8Array.from([0xff])), { code: "INVALID_MESSAGE" });
 });
 test("request digest is stable for key order and changes with meaningful input", () => {
