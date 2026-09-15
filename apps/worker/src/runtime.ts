@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { createTextAdapter, catalogEntry, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
+import { AdapterError, createTextAdapter, catalogEntry, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
 import { MAX_WORKER_MESSAGE_BYTES, requestDigest, TEXT_LIMITS, textChunkSchema, type TextChunk } from "@excess/protocol";
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
@@ -68,7 +68,9 @@ const pause = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve =>
   signal?.addEventListener("abort", finish, { once: true });
   if (signal?.aborted) finish();
 });
-const safeReason = (error: unknown) => error instanceof WorkerConnectionError ? error.code : "worker_operation_failed";
+// Adapter codes are fixed identifiers (no paths or prompts), so the supplier sees why a probe or job failed.
+const safeReason = (error: unknown) => error instanceof WorkerConnectionError ? error.code
+  : error instanceof AdapterError && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code) ? "adapter_" + error.code.toLowerCase() : "worker_operation_failed";
 const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
 
 class AttemptJournal {
