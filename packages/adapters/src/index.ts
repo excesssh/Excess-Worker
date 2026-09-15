@@ -15,3 +15,4 @@ export { createMediaAdapter } from "./media-runtime.js";
 export type { MediaAdapter,MediaAdapterOptions,MediaArtifact,MediaOutput,MediaProbe } from "./media-runtime.js";
 export { parseWav,toneWav,parsePng } from "./media-format.js";
 export type { WavInfo } from "./media-format.js";
+export type { ModelInfo,Modality,Hosting } from "./model-info.js";
