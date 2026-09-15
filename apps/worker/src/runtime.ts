@@ -5,6 +5,7 @@ import { requestDigest, textChunkSchema, type TextChunk } from "@excess/protocol
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
+import { readWorkerOffer, type WorkerOffer } from "./offer.js";
 import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, WorkerShutdownError, type WorkerMode, type WorkerProbe } from "./control.js";
 
 type Assignment = {
@@ -17,8 +18,10 @@ export type WorkerRuntimeOptions = {
   identityPath: string; stateDir: string; installDir: string; policy?: WorkerPolicy;
   telemetry?: () => Promise<ResourceObservation>; signal?: AbortSignal;
   // Dependency injection is for explicit local tests, never a CLI fallback.
-  adapter?: TextAdapter; connection?: WorkerConnection; timings?: Partial<Timing>;
+  adapter?: TextAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null;
 };
+// Listed offers need a probe newer than the coordinator's five-minute window.
+const REPROBE_MS = 240_000;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const digest = /^[0-9a-f]{64}$/;
 function record(value: unknown): Record<string, unknown> {
@@ -150,6 +153,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   };
   try {
     const policy = options.policy ? parseWorkerPolicy(options.policy) : await readWorkerPolicy(dir);
+    const offer = options.offer !== undefined ? options.offer : await readWorkerOffer(dir);
     mode = await readWorkerControl(dir);
     if (mode !== "run") {
       statusState = "stopped"; statusReason = mode === "drain" ? "drained" : "explicit_resume_required";
@@ -196,6 +200,22 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
           if (response.accepted !== true) throw Error("Heartbeat was not accepted");
         } catch (error) { if (!closing) disconnected(error); }
         await pause(timing.heartbeatMs, lifetime.signal);
+      }
+    })());
+    tasks.push((async () => {
+      let published = false;
+      while (!closing && !lifetime.signal.aborted) {
+        try {
+          published = false;
+          if (offer && connection!.offer && mode === "run" && probed && connected && lastProbe) {
+            record(await connection!.offer({ capabilityDigest, assetId: offer.assetId, netUnits: offer.netUnits, slots: 1, probedAt: lastProbe.probedAt }, lifetime.signal));
+            published = true;
+          }
+        } catch (error) {
+          // A refused offer (such as a probe the coordinator considers stale) retries; lost transport is a disconnect.
+          if (!closing && !(error instanceof WorkerConnectionError && [400, 403, 409].includes(error.status ?? 0))) disconnected(error);
+        }
+        await pause(published ? timing.heartbeatMs * 6 : timing.heartbeatMs, lifetime.signal);
       }
     })());
 
@@ -355,6 +375,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         }
         const decision = decide();
         if (!decision.allowed) { statusState = "blocked"; statusReason = decision.reason; await pause(timing.pollMs); continue; }
+        if (probed && lastProbe && !fresh.length && Date.now() - Date.parse(lastProbe.probedAt) > REPROBE_MS) probed = false;
         if (!probed) {
           const controller = new AbortController(); active = { assignment: null, abort: controller };
           statusState = "starting"; statusReason = "probing_installed_model";

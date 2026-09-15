@@ -133,6 +133,7 @@ export interface WorkerConnection {
   deviceId: string;
   heartbeat(capacity: HeartbeatCapacity, signal?: AbortSignal): Promise<unknown>;
   command(type: string, data: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+  offer?(data: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 }
 export async function createWorkerConnection(path: string): Promise<WorkerConnection> {
   // The foreground runtime decrypts once; no private key leaves this process.
@@ -156,5 +157,6 @@ export async function createWorkerConnection(path: string): Promise<WorkerConnec
       return request(identity.origin, "/v1/worker/heartbeat", makeMessage("worker.heartbeat", { ...capacity, sequence: current.sequence }), signal);
     }),
     command: (type, data, signal) => request(identity.origin, "/v1/worker/command", makeMessage(type, data), signal),
+    offer: (data, signal) => request(identity.origin, "/v1/worker/offer", makeMessage("worker.offer", data), signal),
   };
 }

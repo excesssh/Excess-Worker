@@ -89,6 +89,16 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
     ...envelope, type: z.literal("worker.poll"), data: z.strictObject({ deviceId: z.uuid() }),
   }),
   z.strictObject({
+    // A supplier's public ask: net units per output token in one asset. probedAt is
+    // the worker's own report of its last local probe, not proof of honest execution.
+    ...envelope, type: z.literal("worker.offer"),
+    data: z.strictObject({
+      deviceId: z.uuid(), capabilityDigest: digestSchema, assetId: z.uuid(),
+      netUnits: baseUnitsSchema.refine(value => BigInt(value) > 0n),
+      slots: z.number().int().min(1).max(32), probedAt: z.iso.datetime(),
+    }),
+  }),
+  z.strictObject({
     ...envelope, type: z.literal("job.started"), data: z.strictObject(attemptIdentity),
   }),
   z.strictObject({

@@ -305,6 +305,33 @@ test("fixture idle worker withdraws advertised capacity and stop interrupts an o
   assert.deepEqual(f.heartbeats.at(-1), { totalSlots: 1, availableSlots: 0, capabilityDigests: [] });
 });
 
+test("fixture worker publishes its configured offer only after a probe, and a refused offer retries without disconnecting", async () => {
+  const f = await fixture(); f.state.assigned = false;
+  const assetId = randomUUID(), offers = [];
+  let refuse = 1;
+  f.connection.offer = async data => {
+    offers.push(structuredClone(data));
+    if (refuse > 0) { refuse--; throw new WorkerConnectionError(409); }
+    return { published: true, offerId: randomUUID() };
+  };
+  const running = f.start({ offer: { assetId, netUnits: "5" } });
+  await waitFor(() => offers.length >= 2, "offer retried after refusal");
+  assert.ok(f.counts.probes >= 1);
+  assert.deepEqual(offers[1], { capabilityDigest, assetId, netUnits: "5", slots: 1, probedAt: f.probes[0].probedAt });
+  assert.ok(!f.heartbeats.some(h => h.capabilityDigests.length === 0 && h.availableSlots === 1));
+  await setWorkerControl(f.dir, "stop");
+  assert.equal((await running).state, "stopped", "an offer refusal is not a disconnect or fatal error");
+
+  const quiet = await fixture(); quiet.state.assigned = false;
+  let published = 0;
+  quiet.connection.offer = async () => { published++; return { published: true }; };
+  const idle = quiet.start({ offer: null });
+  await waitFor(() => quiet.heartbeats.some(h => h.availableSlots === 1));
+  await setWorkerControl(quiet.dir, "stop");
+  await idle;
+  assert.equal(published, 0, "a worker without a configured price publishes nothing");
+});
+
 test("fixture malformed probe observations never become retained evidence or advertised capability", async () => {
   for (const invalid of [
     { capabilityDigest: "0".repeat(64) }, { backend: "gpu" }, { runtime: "unrelated runtime" },
