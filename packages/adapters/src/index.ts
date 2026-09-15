@@ -6,4 +6,6 @@ export type { AdapterOptions,AdapterProbe,TextAdapter } from "./runtime.js";
 export { installTextAdapter,installRuntimeRedist,verifyInstallation,textInstallationPlan,installedComponents } from "./install.js";
 export { RUNTIME_REDIST,PLATFORM_BACKENDS,GPU_BACKEND,currentPlatform,runtimeArtifacts,serverExecutable } from "./manifest.js";
 export type { RedistFile,Platform } from "./manifest.js";
+export { MEDIA_CATALOG,mediaCatalogEntry,mediaEntryByDigest,isMediaCapability,sdRuntimeArtifacts } from "./manifest.js";
+export type { MediaModelEntry,MediaRuntime } from "./manifest.js";
 export type { InstallProgress,Installation } from "./install.js";

@@ -1,4 +1,4 @@
-import { requestDigest,textRequestSchema,textResultSchema } from "@excess/protocol";
+import { requestDigest,textRequestSchema,textResultSchema,type MediaKind } from "@excess/protocol";
 import { z } from "zod";
 
 export interface Artifact { readonly name:string; readonly bytes:number; readonly sha256:string; readonly url:string }
@@ -101,6 +101,90 @@ export const isCatalogCapability=(digest:unknown):boolean=>typeof digest==="stri
 export const TEXT_CAPABILITY=MODEL_CATALOG[0]!.capability;
 export const capabilityDigest=MODEL_CATALOG[0]!.capabilityDigest;
 export const ARTIFACTS=Object.freeze({runtime:RUNTIME_ARTIFACTS.cpu[0]!,model:MODEL_CATALOG[0]!.artifacts[0]!,runtimeLicense:RUNTIME_LICENCE,modelLicense:MODEL_CATALOG[0]!.artifacts[1]!});
+
+// ---------- Buffered media models (ADR 0007) ----------
+
+/** stable-diffusion.cpp master-869 (commit 07a85c74), the image runtime. Hashes are GitHub's published asset digests. */
+const SD_RELEASE="https://github.com/leejet/stable-diffusion.cpp/releases/download/master-869-07a85c7/";
+const SD_LICENCE=artifact({ name:"licences/stable-diffusion.cpp-MIT.txt", bytes:1062, sha256:"b53fa08f515cb5a6fff7b9fd8fcd0961a4b80df29d74372d25e1f9171aa042ee", url:"https://raw.githubusercontent.com/leejet/stable-diffusion.cpp/07a85c74cb08cda3aa176f688c5d8f522615e2b9/LICENSE" });
+const SD_RUNTIMES:Readonly<Record<Platform,Partial<Record<Backend,readonly Artifact[]>>>>=Object.freeze({
+  "win32-x64":Object.freeze({
+    cpu:Object.freeze([artifact({ name:"runtime.zip", bytes:17114202, sha256:"55157cc96bfa7f37c5db6e91d302a77ba956273a4dd7cc04a643495d3ac097d6", url:SD_RELEASE+"sd-master-07a85c7-bin-win-cpu-x64.zip" }),SD_LICENCE]),
+    cuda:Object.freeze([
+      artifact({ name:"runtime.zip", bytes:329470677, sha256:"e83e69b6bf75d6e52bdbd524b5d5044e267b9e73a5d4f9a98a1a3a3543eb0273", url:SD_RELEASE+"sd-master-07a85c7-bin-win-cuda12-x64.zip" }),
+      artifact({ name:"cudart.zip", bytes:563452046, sha256:"fe20366827d357c00797eebb58244dddab7fd9a348d70090c3871004c320f38d", url:SD_RELEASE+"cudart-sd-bin-win-cu12-x64.zip" }),SD_LICENCE]),
+  }),
+  "linux-x64":Object.freeze({
+    cpu:Object.freeze([artifact({ name:"runtime.zip", bytes:25288890, sha256:"38dfa88068f0beef416763c96154fc3f24ad8284fa1864fe3118280ef28093ce", url:SD_RELEASE+"sd-master-07a85c7-bin-Linux-Ubuntu-24.04-x86_64.zip" }),SD_LICENCE]),
+    vulkan:Object.freeze([artifact({ name:"runtime.zip", bytes:38412182, sha256:"550b4b3bb0b0e98c13ba7569e39e2ec90b9f8fa9e3dd641689e835278000555f", url:SD_RELEASE+"sd-master-07a85c7-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip" }),SD_LICENCE]),
+  }),
+});
+export type MediaRuntime="llama.cpp"|"stable-diffusion.cpp";
+/** The pinned stable-diffusion.cpp files for a backend on a platform (the current machine's by default). */
+export function sdRuntimeArtifacts(backend:Backend,platform:Platform=currentPlatform()??"win32-x64"):readonly Artifact[] {
+  const artifacts=SD_RUNTIMES[platform][backend];
+  if(!artifacts)throw new AdapterError("BACKEND_UNSUPPORTED_ON_PLATFORM");
+  return artifacts;
+}
+export interface MediaModelEntry {
+  readonly id:string; readonly kind:MediaKind; readonly displayName:string; readonly parameters:string; readonly quantization:string;
+  readonly runtime:MediaRuntime;
+  /** Resident memory on CPU and GPU memory for full offload. */
+  readonly minMemoryMb:number; readonly minVramMb:number;
+  /** Image models too slow for CPU suppliers are GPU-only. */
+  readonly gpuOnly:boolean;
+  readonly artifacts:readonly Artifact[];
+  readonly capability:Readonly<Record<string,unknown>> & {readonly kind:MediaKind;readonly meteringUnit:string;readonly model:string;readonly runtime:string};
+  readonly capabilityDigest:string;
+}
+const HF=(repository:string,revision:string,file:string)=>`https://huggingface.co/${repository}/resolve/${revision}/${file}`;
+function media(input:Omit<MediaModelEntry,"capability"|"capabilityDigest"> & {repository:string;revision:string;licence:string;limits:Record<string,unknown>}):MediaModelEntry {
+  const {repository,revision,licence,limits,...entry}=input;
+  const runtime=entry.runtime==="llama.cpp"
+    ?{runtime:"llama.cpp-b10809",runtimeCommit:"5266f24da75dc449bd56cbed7addb9c8e4a6a73e"}
+    :{runtime:"stable-diffusion.cpp-master-869",runtimeCommit:"07a85c74cb08cda3aa176f688c5d8f522615e2b9"};
+  const meteringUnit=entry.kind==="embedding"?"input_token":entry.kind==="transcription"?"audio_second":"image";
+  const capability=Object.freeze({
+    version:1,adapterId:"excess.media-"+entry.kind,adapterVersion:"0.1.0",kind:entry.kind,...runtime,
+    modelId:entry.id,model:entry.displayName,modelRepository:repository,modelRevision:revision,
+    modelFiles:Object.fromEntries(entry.artifacts.map(item=>[item.name,item.sha256])),
+    runtimeLicence:"MIT",modelLicence:licence,meteringUnit,trustClass:"supplier_visible",deliveryMode:"buffered",billingPolicy:"delivered_units_v1",
+    limits:Object.freeze(limits),slots:1,
+  });
+  return Object.freeze({...entry,artifacts:Object.freeze([...entry.artifacts]),capability,capabilityDigest:requestDigest(capability)});
+}
+/** Pinned buffered media models, checked against Hugging Face on 15 September 2026. */
+export const MEDIA_CATALOG:readonly MediaModelEntry[]=Object.freeze([
+  media({ id:"qwen3-embedding-0.6b", kind:"embedding", displayName:"Qwen3 Embedding 0.6B", parameters:"0.6B", quantization:"Q8_0", runtime:"llama.cpp",
+    minMemoryMb:1536, minVramMb:1024, gpuOnly:false, repository:"Qwen/Qwen3-Embedding-0.6B-GGUF", revision:"370f27d7550e0def9b39c1f16d3fbaa13aa67728", licence:"Apache-2.0",
+    artifacts:[artifact({ name:"model.gguf", bytes:639150592, sha256:"06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439", url:HF("Qwen/Qwen3-Embedding-0.6B-GGUF","370f27d7550e0def9b39c1f16d3fbaa13aa67728","Qwen3-Embedding-0.6B-Q8_0.gguf") })],
+    limits:{maxInputs:64,maxInputBytes:8192,maxTotalBytes:65536,maxInputTokens:32768,dimensions:1024,pooling:"last",normalize:"euclidean"} }),
+  media({ id:"qwen3-asr-0.6b", kind:"transcription", displayName:"Qwen3 ASR 0.6B", parameters:"0.6B", quantization:"Q8_0", runtime:"llama.cpp",
+    minMemoryMb:2048, minVramMb:1536, gpuOnly:false, repository:"ggml-org/Qwen3-ASR-0.6B-GGUF", revision:"928ab958557df9aa2ef1c93e0e83c7ad0933fae2", licence:"Apache-2.0",
+    artifacts:[
+      artifact({ name:"model.gguf", bytes:804749248, sha256:"bca259818b50ca7c4c05e9bdb35a5dc04fa039653a6d6f3f0f331f96f6aa1971", url:HF("ggml-org/Qwen3-ASR-0.6B-GGUF","928ab958557df9aa2ef1c93e0e83c7ad0933fae2","Qwen3-ASR-0.6B-Q8_0.gguf") }),
+      artifact({ name:"mmproj.gguf", bytes:214392480, sha256:"41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d", url:HF("ggml-org/Qwen3-ASR-0.6B-GGUF","928ab958557df9aa2ef1c93e0e83c7ad0933fae2","mmproj-Qwen3-ASR-0.6B-Q8_0.gguf") })],
+    limits:{audioFormat:"wav-pcm16-mono-16khz",minSeconds:1,maxSeconds:300,maxTranscriptBytes:65536} }),
+  media({ id:"sd-turbo", kind:"image", displayName:"SD-Turbo", parameters:"1B", quantization:"Q8_0", runtime:"stable-diffusion.cpp",
+    minMemoryMb:4096, minVramMb:3072, gpuOnly:false, repository:"Green-Sky/SD-Turbo-GGUF", revision:"19a31586d02d64a73b4419bc193b3ecfaf38e1f0", licence:"Stability-AI-Community",
+    artifacts:[artifact({ name:"model.gguf", bytes:2023745376, sha256:"d50be7655f0a554cf8041c145d88b210bd5f3c545423119dee62ae08cae51580", url:HF("Green-Sky/SD-Turbo-GGUF","19a31586d02d64a73b4419bc193b3ecfaf38e1f0","sd_turbo-f16-q8_0.gguf") })],
+    limits:{sizes:[512],maxSteps:4,maxImages:4,maxPromptBytes:2048,cfgScale:"1.0",format:"png"} }),
+  media({ id:"flux1-schnell", kind:"image", displayName:"FLUX.1 schnell", parameters:"12B", quantization:"Q4_0", runtime:"stable-diffusion.cpp",
+    minMemoryMb:16384, minVramMb:12288, gpuOnly:true, repository:"second-state/FLUX.1-schnell-GGUF", revision:"8c45a2ba25e2d02bd34230989fb54983f39e44ec", licence:"Apache-2.0",
+    artifacts:[
+      artifact({ name:"diffusion.gguf", bytes:6688845536, sha256:"b338a7ab5c81600a54be46c4cf950edb3761a52ae163e419beafd250976fb566", url:HF("second-state/FLUX.1-schnell-GGUF","8c45a2ba25e2d02bd34230989fb54983f39e44ec","flux1-schnell-Q4_0.gguf") }),
+      artifact({ name:"t5xxl.gguf", bytes:2752841312, sha256:"098daa07ac5a926ebf2814a8e02ef1221eee53b8268db0d965ecb608603682de", url:HF("second-state/FLUX.1-schnell-GGUF","8c45a2ba25e2d02bd34230989fb54983f39e44ec","t5xxl-Q4_0.gguf") }),
+      artifact({ name:"clip_l.gguf", bytes:130769600, sha256:"59cbe002c3e75d2b89d38787e81d12fb4e512fd76176884c470737ad87a1d309", url:HF("second-state/FLUX.1-schnell-GGUF","8c45a2ba25e2d02bd34230989fb54983f39e44ec","clip_l-Q8_0.gguf") }),
+      artifact({ name:"ae.gguf", bytes:167656704, sha256:"1bed7b05318709e46a8cb9accc211168fc7f0b61ab594661860bbfe4d785cc46", url:HF("second-state/FLUX.1-schnell-GGUF","8c45a2ba25e2d02bd34230989fb54983f39e44ec","ae-f16.gguf") })],
+    limits:{sizes:[512,768,1024],maxSteps:8,maxImages:4,maxPromptBytes:2048,cfgScale:"1.0",format:"png"} }),
+]);
+export function mediaCatalogEntry(id:string):MediaModelEntry {
+  const entry=MEDIA_CATALOG.find(item=>item.id===id);
+  if(!entry)throw new AdapterError("UNKNOWN_MODEL");
+  return entry;
+}
+export const mediaEntryByDigest=(digest:string):MediaModelEntry|undefined=>MEDIA_CATALOG.find(item=>item.capabilityDigest===digest);
+export const isMediaCapability=(digest:unknown):boolean=>typeof digest==="string"&&mediaEntryByDigest(digest)!==undefined;
 
 export type TextRequest=z.infer<typeof textRequestSchema>;
 export type TextResult=z.infer<typeof textResultSchema>;

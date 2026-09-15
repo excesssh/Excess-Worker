@@ -81,6 +81,73 @@ export const textChunkSchema = z.strictObject({
   chunkDigest:digestSchema,
 });
 export type TextChunk = z.infer<typeof textChunkSchema>;
+
+/** Buffered media job limits (ADR 0007). Every layer reads these instead of literals. */
+export const MEDIA_LIMITS = Object.freeze({
+  embedding: Object.freeze({ maxInputs: 64, maxInputBytes: 8192, maxTotalBytes: 65536, maxInputTokens: 32768, dimensions: 1024 }),
+  transcription: Object.freeze({ sampleRate: 16000, minSeconds: 1, maxSeconds: 300, maxAudioBytes: 9600044, maxTranscriptBytes: 65536 }),
+  image: Object.freeze({ maxPromptBytes: 2048, sizes: Object.freeze([512, 768, 1024] as const), maxSteps: 8, maxImages: 4, maxImageBytes: 4194304 }),
+  artifactPartBytes: 262144,
+} as const);
+const utf8Bytes = (value: string) => Buffer.byteLength(value, "utf8");
+export const artifactContentTypeSchema = z.enum(["audio/wav", "image/png", "application/vnd.excess.float32le"]);
+export const artifactRefSchema = z.strictObject({
+  digest: digestSchema,
+  bytes: z.number().int().min(1).max(MEDIA_LIMITS.transcription.maxAudioBytes),
+  contentType: artifactContentTypeSchema,
+});
+export type ArtifactRef = z.infer<typeof artifactRefSchema>;
+export const embeddingRequestSchema = z.strictObject({
+  kind: z.literal("embedding"),
+  inputs: z.array(z.string().min(1).max(MEDIA_LIMITS.embedding.maxInputBytes).refine(value => utf8Bytes(value) <= MEDIA_LIMITS.embedding.maxInputBytes))
+    .min(1).max(MEDIA_LIMITS.embedding.maxInputs).refine(inputs => inputs.reduce((sum, value) => sum + utf8Bytes(value), 0) <= MEDIA_LIMITS.embedding.maxTotalBytes),
+});
+export const embeddingResultSchema = z.strictObject({
+  kind: z.literal("embedding"),
+  dimensions: z.literal(MEDIA_LIMITS.embedding.dimensions),
+  count: z.number().int().min(1).max(MEDIA_LIMITS.embedding.maxInputs),
+  inputTokens: z.number().int().min(1).max(MEDIA_LIMITS.embedding.maxInputTokens),
+  vectors: artifactRefSchema.refine(ref => ref.contentType === "application/vnd.excess.float32le"),
+}).refine(result => result.vectors.bytes === result.count * result.dimensions * 4 && result.inputTokens >= result.count);
+export const transcriptionRequestSchema = z.strictObject({
+  kind: z.literal("transcription"),
+  audio: artifactRefSchema.refine(ref => ref.contentType === "audio/wav"),
+  durationMs: z.number().int().min(MEDIA_LIMITS.transcription.minSeconds * 1000).max(MEDIA_LIMITS.transcription.maxSeconds * 1000),
+  language: z.string().regex(/^[a-z]{2,8}$/).optional(),
+});
+export const transcriptionResultSchema = z.strictObject({
+  kind: z.literal("transcription"),
+  text: z.string().max(MEDIA_LIMITS.transcription.maxTranscriptBytes).refine(value => utf8Bytes(value) <= MEDIA_LIMITS.transcription.maxTranscriptBytes),
+  audioSeconds: z.number().int().min(MEDIA_LIMITS.transcription.minSeconds).max(MEDIA_LIMITS.transcription.maxSeconds),
+});
+export const imageRequestSchema = z.strictObject({
+  kind: z.literal("image"),
+  prompt: z.string().min(1).max(MEDIA_LIMITS.image.maxPromptBytes).refine(value => utf8Bytes(value) <= MEDIA_LIMITS.image.maxPromptBytes),
+  width: z.union([z.literal(512), z.literal(768), z.literal(1024)]),
+  height: z.union([z.literal(512), z.literal(768), z.literal(1024)]),
+  steps: z.number().int().min(1).max(MEDIA_LIMITS.image.maxSteps),
+  count: z.number().int().min(1).max(MEDIA_LIMITS.image.maxImages),
+  seed: z.number().int().min(0).max(2147483647),
+}).refine(request => request.width === request.height);
+export const imageResultSchema = z.strictObject({
+  kind: z.literal("image"),
+  width: z.union([z.literal(512), z.literal(768), z.literal(1024)]),
+  height: z.union([z.literal(512), z.literal(768), z.literal(1024)]),
+  images: z.array(artifactRefSchema.refine(ref => ref.contentType === "image/png" && ref.bytes <= MEDIA_LIMITS.image.maxImageBytes)).min(1).max(MEDIA_LIMITS.image.maxImages),
+});
+export const mediaRequestSchema = z.union([embeddingRequestSchema, transcriptionRequestSchema, imageRequestSchema]);
+export const mediaResultSchema = z.union([embeddingResultSchema, transcriptionResultSchema, imageResultSchema]);
+export type MediaKind = "embedding" | "transcription" | "image";
+export type MediaRequest = z.infer<typeof mediaRequestSchema>;
+export type MediaResult = z.infer<typeof mediaResultSchema>;
+/** Billable units a media result claims: input tokens, whole audio seconds or delivered images. */
+export function mediaResultUnits(result: MediaResult): number {
+  return result.kind === "embedding" ? result.inputTokens : result.kind === "transcription" ? result.audioSeconds : result.images.length;
+}
+const artifactPartIdentity = {
+  digest: digestSchema,
+  part: z.number().int().min(0).max(Math.ceil(MEDIA_LIMITS.transcription.maxAudioBytes / MEDIA_LIMITS.artifactPartBytes) - 1),
+};
 export const workerMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...envelope, type: z.literal("worker.heartbeat"),
@@ -118,6 +185,20 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
     ...envelope,type:z.literal("job.chunk"),data:z.strictObject({...attemptIdentity,...textChunkSchema.shape}),
   }),
   z.strictObject({
+    // Reads one part of an input artifact of the worker's current live lease (ADR 0007).
+    ...envelope, type: z.literal("job.artifact.read"), data: z.strictObject({ ...attemptIdentity, ...artifactPartIdentity }),
+  }),
+  z.strictObject({
+    // Uploads one part of an output artifact; the server checks the whole digest on the last part.
+    ...envelope, type: z.literal("job.artifact"),
+    data: z.strictObject({
+      ...attemptIdentity, ...artifactPartIdentity,
+      bytes: artifactRefSchema.shape.bytes, contentType: artifactContentTypeSchema,
+      parts: z.number().int().min(1).max(Math.ceil(MEDIA_LIMITS.transcription.maxAudioBytes / MEDIA_LIMITS.artifactPartBytes)),
+      data: z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/).max(Math.ceil(MEDIA_LIMITS.artifactPartBytes / 3) * 4),
+    }).refine(data => data.part < data.parts),
+  }),
+  z.strictObject({
     ...envelope, type: z.literal("job.failed"),
     data: z.strictObject({ ...attemptIdentity, reason: z.enum(["busy", "execution_error", "cancelled_locally"]) }),
   }),
@@ -128,8 +209,8 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
       outputDigest: digestSchema,
       // A worker declaration is not authoritative billing or delivery evidence.
       reportedUnits: baseUnitsSchema,
-      // Optional only for legacy digest-only fixtures; executable text jobs require it.
-      output: textResultSchema.optional(),
+      // Optional only for legacy digest-only fixtures; executable jobs require it. Media results reference uploaded artifacts.
+      output: z.union([textResultSchema, mediaResultSchema]).optional(),
     }),
   }),
 ]);
