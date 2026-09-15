@@ -65,10 +65,11 @@ for(const pkg of ["adapters","protocol"]){
 }
 await copyTree(join(root,"node_modules","zod"),join(stage,"app","node_modules","zod"));
 if(!linux){
-  // The Visual C++ runtime files llama.cpp needs, copied from this build machine and checked against the adapter's pins.
-  const {RUNTIME_REDIST}=await import(new URL("../packages/adapters/dist/manifest.js",import.meta.url).href);
+  // The Visual C++ runtime files llama.cpp and stable-diffusion.cpp need (the latter also imports the OpenMP runtime),
+  // copied from this build machine and checked against the adapter's pins.
+  const {SD_RUNTIME_REDIST}=await import(new URL("../packages/adapters/dist/manifest.js",import.meta.url).href);
   await mkdir(join(stage,"redist"),{recursive:true});
-  for(const file of RUNTIME_REDIST){
+  for(const file of SD_RUNTIME_REDIST){
     const bytes=await readFile(join(process.env.SystemRoot??"C:\\Windows","System32",file.name));
     if(bytes.length!==file.bytes||sha256(bytes)!==file.sha256)throw new Error("PACKAGE_REDIST_MISMATCH "+file.name+" (install the pinned Visual C++ Redistributable 14.51.36247.0)");
     await writeFile(join(stage,"redist",file.name),bytes);
@@ -96,15 +97,15 @@ const cli=linux?"sh excess-worker":"excess-worker";
 const newline=linux?"\n":"\r\n";
 await writeFile(join(stage,"ONBOARDING.txt"),[
   `EXCESS supplier worker (${linux?"Linux x64":"Windows x64"})`,"",
-  "Earn by running AI text jobs on this computer. Jobs run locally, and you can see their prompts and outputs.","",
+  "Earn by running AI jobs on this computer: text answers, embeddings, speech-to-text or images. Jobs run locally, and you can see their inputs and outputs.","",
   linux?"In a terminal in this folder, then:":"Open Command Prompt in this folder, then:",
   `  1. ${cli} guide                      shows your next step at any time`,
   `  2. ${cli} pair https://<exchange> "My PC"   then approve the printed code in the web app (Supplier, Pair a device)`,
   `  3. ${cli} complete-pairing`,
-  `  4. ${cli} models                     see which models this computer can run`,
-  `     ${cli} use qwen3-8b --gpu         choose one (--gpu uses ${linux?"Vulkan; install your GPU driver and libvulkan1":"an NVIDIA GPU through CUDA"}; omit it to run on the CPU)`,
-  `  5. ${cli} install-model --accept-download --accept-licenses   downloads the chosen model (2.5 to 19 GB)`,
-  `  6. ${cli} offer USDG <price per million output tokens>`,
+  `  4. ${cli} models                     see every model (text, embedding, transcription, image) and whether this computer fits it`,
+  `     ${cli} use qwen3-8b --gpu         choose one (--gpu uses ${linux?"Vulkan; install your GPU driver and libvulkan1":"an NVIDIA GPU through CUDA"}; omit it to run on the CPU; flux1-schnell is GPU-only)`,
+  `  5. ${cli} install-model --accept-download --accept-licenses   downloads the chosen model (0.6 to 19 GB)`,
+  `  6. ${cli} offer USDG <price>          per million output tokens (text), million input tokens (embedding), audio hour (transcription) or image`,
   `  7. ${cli} run                        keep it running to receive jobs${linux?" (for example under systemd)":""}`,
   "",`Stop: ${cli} drain (finish current work) or ${cli} stop-now. Status: ${cli} status.`,
   linux?"Data lives in ~/.local/share/excess. The device key is stored in a file readable only by your user and cannot move your wallet's funds."
@@ -113,7 +114,7 @@ await writeFile(join(stage,"ONBOARDING.txt"),[
 await copyFile(join(root,"node_modules/zod/LICENSE"),join(stage,"licenses","zod-LICENSE.txt")).catch(()=>{});
 await writeFile(join(stage,"licenses","NOTICE.txt"),[
   `Bundles Node.js ${nodeVersion} (MIT and bundled third-party licences): https://github.com/nodejs/node/blob/${nodeVersion}/LICENSE`,
-  "Bundles zod (MIT). The model runtime (llama.cpp, MIT) and models (Apache-2.0) are downloaded only after explicit consent.",
+  "Bundles zod (MIT). The model runtimes (llama.cpp and stable-diffusion.cpp, MIT) and models (each under its own listed licence) are downloaded only after explicit consent.",
   nodeLicenseIncluded?"The full Node.js licence text is included in node-LICENSE.txt.":"NOT FOR PUBLIC DISTRIBUTION: the full Node.js licence text was not included (build with --node-license).",""].join(newline));
 
 let commit="unknown";

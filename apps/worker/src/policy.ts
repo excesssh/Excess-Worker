@@ -1,7 +1,7 @@
 import os from "node:os";
 import { mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { BACKENDS, DEFAULT_MODEL_ID, MODEL_CATALOG, type Backend } from "@excess/adapters";
+import { BACKENDS, DEFAULT_MODEL_ID, MEDIA_CATALOG, MODEL_CATALOG, type Backend } from "@excess/adapters";
 import { TEXT_LIMITS } from "@excess/protocol";
 import { atomicPrivateJson, readPrivateText } from "./control.js";
 
@@ -18,12 +18,13 @@ export function parseWorkerPolicy(input: unknown): WorkerPolicy {
   const value = input as Record<string, unknown>;
   if (Object.keys(value).some(key => !Object.hasOwn(DEFAULT_WORKER_POLICY, key))) throw Error("Invalid worker policy");
   const policy = { ...DEFAULT_WORKER_POLICY, ...value } as WorkerPolicy;
-  const entry = MODEL_CATALOG.find(item => item.id === policy.model);
+  // A text or media catalog model; GPU-only media models never run on the CPU backend.
+  const entry = MODEL_CATALOG.find(item => item.id === policy.model) ?? MEDIA_CATALOG.find(item => item.id === policy.model);
   if (!Number.isInteger(policy.threads) || policy.threads < 1 || policy.threads > 64 ||
       !Number.isInteger(policy.maxMemoryMb) || policy.maxMemoryMb < 1024 || policy.maxMemoryMb > 262144 ||
       !Number.isInteger(policy.runSeconds) || policy.runSeconds < 1 || policy.runSeconds > TEXT_LIMITS.maxRunSeconds ||
       typeof policy.idleOnly !== "boolean" || !Number.isInteger(policy.idleSeconds) || policy.idleSeconds < 1 || policy.idleSeconds > 3600 ||
-      !entry || !BACKENDS.includes(policy.backend)) throw Error("Invalid worker policy");
+      !entry || !BACKENDS.includes(policy.backend) || ("gpuOnly" in entry && entry.gpuOnly && policy.backend === "cpu")) throw Error("Invalid worker policy");
   // Whether the memory cap covers the chosen model is checked by the adapter when it loads the model.
   return policy;
 }

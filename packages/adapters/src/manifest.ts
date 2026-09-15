@@ -120,6 +120,11 @@ const SD_RUNTIMES:Readonly<Record<Platform,Partial<Record<Backend,readonly Artif
   }),
 });
 export type MediaRuntime="llama.cpp"|"stable-diffusion.cpp";
+export const sdServerExecutable=(platform:Platform):string=>platform==="win32-x64"?"sd-server.exe":"sd-server";
+/** stable-diffusion.cpp's Windows ggml DLLs also import the OpenMP runtime (VCOMP140.DLL) from the same Visual C++
+ * 14.51.36247.0 redistributable, which a clean Windows Server lacks. Checked against the pinned CPU zip's imports. */
+export const SD_RUNTIME_REDIST:readonly RedistFile[]=Object.freeze([...RUNTIME_REDIST,
+  Object.freeze({name:"vcomp140.dll",bytes:212920,sha256:"95d4ce4a6802d1e18b5e0e1722cc30ea72ca7e033f83828f05c0b7b993fe7cbf"})]);
 /** The pinned stable-diffusion.cpp files for a backend on a platform (the current machine's by default). */
 export function sdRuntimeArtifacts(backend:Backend,platform:Platform=currentPlatform()??"win32-x64"):readonly Artifact[] {
   const artifacts=SD_RUNTIMES[platform][backend];

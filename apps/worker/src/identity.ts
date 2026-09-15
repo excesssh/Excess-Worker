@@ -49,7 +49,7 @@ async function request(origin: string, path: string, payload?: unknown, signal?:
   if (!response.body) throw new WorkerConnectionError(response.status);
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
   try {
-    while (true) { const result = await reader.read(); if (result.done) break; bytes += result.value.length; if (bytes > 131072 /* job.input carries a JSON-escaped 16 KiB prompt */) throw Error("Coordinator response too large"); chunks.push(result.value); }
+    while (true) { const result = await reader.read(); if (result.done) break; bytes += result.value.length; if (bytes > 1048576 /* job.input carries up to 64 KiB of JSON-escaped embedding inputs; job.artifact.read a base64 256 KiB part */) throw Error("Coordinator response too large"); chunks.push(result.value); }
   } finally { await reader.cancel(); }
   let value;
   try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); }

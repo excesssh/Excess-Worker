@@ -1,7 +1,10 @@
-import { mkdir, open, readFile, unlink } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { AdapterError, createTextAdapter, catalogEntry, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
-import { MAX_WORKER_MESSAGE_BYTES, requestDigest, TEXT_LIMITS, textChunkSchema, type TextChunk } from "@excess/protocol";
+import { AdapterError, parseTextRequest, parseTextResult, type MediaAdapter, type MediaOutput, type TextAdapter, type TextResult } from "@excess/adapters";
+import { MAX_WORKER_MESSAGE_BYTES, MEDIA_LIMITS, mediaRequestSchema, mediaResultSchema, mediaResultUnits, requestDigest, TEXT_LIMITS, textChunkSchema,
+  type ArtifactRef, type MediaRequest, type MediaResult, type TextChunk } from "@excess/protocol";
+import { createServedAdapter, isMediaAdapter, servedModel, type ServedAdapter } from "./served.js";
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
@@ -18,7 +21,7 @@ export type WorkerRuntimeOptions = {
   identityPath: string; stateDir: string; installDir: string; policy?: WorkerPolicy;
   telemetry?: () => Promise<ResourceObservation>; signal?: AbortSignal;
   // Dependency injection is for explicit local tests, never a CLI fallback.
-  adapter?: TextAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null;
+  adapter?: ServedAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null;
 };
 // Listed offers need a probe newer than the coordinator's five-minute window.
 const REPROBE_MS = 240_000;
@@ -29,11 +32,11 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number): WorkerProbe {
-  const proof = record(value), entry = catalogEntry(policy.model);
+  const proof = record(value), entry = servedModel(policy.model);
   const probedAt = typeof proof.probedAt === "string" ? Date.parse(proof.probedAt) : NaN;
   if (proof.ok !== true || proof.capabilityDigest !== entry.capabilityDigest || proof.backend !== policy.backend ||
       (proof.modelId !== undefined && proof.modelId !== entry.id) ||
-      proof.model !== entry.capability.model || proof.runtime !== entry.capability.runtime ||
+      proof.model !== entry.model || proof.runtime !== entry.runtime ||
       proof.threads !== policy.threads || proof.maxMemoryMb !== policy.maxMemoryMb ||
       !Number.isFinite(probedAt) || probedAt < startedAt || probedAt > Date.now() ||
       !Number.isSafeInteger(proof.generatedTokens) || Number(proof.generatedTokens) < 0 || Number(proof.generatedTokens) > 8 ||
@@ -42,7 +45,7 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
     if (proof[name] !== undefined && (!Number.isSafeInteger(proof[name]) || Number(proof[name]) < 1)) throw Error("Invalid local probe process identity");
   }
   return {
-    ok: true, capabilityDigest: entry.capabilityDigest, backend: policy.backend, model: entry.capability.model, runtime: entry.capability.runtime,
+    ok: true, capabilityDigest: entry.capabilityDigest, backend: policy.backend, model: entry.model, runtime: entry.runtime,
     threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, probedAt: String(proof.probedAt),
     generatedTokens: Number(proof.generatedTokens), peakRssMb: Number(proof.peakRssMb),
     ...(proof.nativePid === undefined ? {} : { nativePid: Number(proof.nativePid) }),
@@ -72,6 +75,15 @@ const pause = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve =>
 const safeReason = (error: unknown) => error instanceof WorkerConnectionError ? error.code
   : error instanceof AdapterError && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code) ? "adapter_" + error.code.toLowerCase() : "worker_operation_failed";
 const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
+const sha256 = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
+const artifactRefs = (output: MediaResult): ArtifactRef[] => output.kind === "embedding" ? [output.vectors] : output.kind === "image" ? output.images : [];
+// Output artifact bytes are journaled beside the result so a lost upload can be resent after a restart.
+async function writePrivateFile(path: string, data: Buffer): Promise<void> {
+  const temporary = path + ".pending-" + randomUUID();
+  const file = await open(temporary, "wx", 0o600);
+  try { await file.writeFile(data); await file.sync(); } finally { await file.close(); }
+  await rename(temporary, path);
+}
 
 class AttemptJournal {
   private constructor(readonly dir: string, readonly deviceId: string, private bytes: number, readonly entries: Map<string, Entry>) {}
@@ -123,8 +135,16 @@ class AttemptJournal {
     this.bytes += bytes; this.entries.set(value.assignment.attemptId, value);
   }
   resultPath(a: Assignment): string { return join(this.dir, a.attemptId + ".result.json"); }
+  artifactPath(a: Assignment, artifactDigest: string): string {
+    if (!digest.test(artifactDigest)) throw Error("Invalid artifact digest");
+    return join(this.dir, `${a.attemptId}.artifact.${artifactDigest}.bin`);
+  }
   async removeOutput(a: Assignment): Promise<void> {
     try { await unlink(this.resultPath(a)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    for (const name of await readdir(this.dir)) {
+      if (!name.startsWith(a.attemptId + ".artifact.")) continue;
+      try { await unlink(join(this.dir, name)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
   }
   async set(a: Assignment, state: Entry["state"], reason: string, resultDigest?: string): Promise<Entry> {
     const entry: Entry = { assignment: a, state, reason, updatedAt: new Date().toISOString(), ...(resultDigest ? { resultDigest } : {}) };
@@ -136,7 +156,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   const dir = resolve(options.stateDir);
   await mkdir(dir, { recursive: true });
   const releaseLock = await acquireRuntimeLock(dir);
-  let adapter: TextAdapter | undefined;
+  let adapter: ServedAdapter | undefined;
   let connection: WorkerConnection | undefined;
   let lastProbe: WorkerProbe | undefined;
   let active: { assignment: Assignment | null; abort: AbortController } | null = null;
@@ -156,8 +176,9 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   };
   try {
     const policy = options.policy ? parseWorkerPolicy(options.policy) : await readWorkerPolicy(dir);
-    // The worker serves exactly one catalog model at a time, chosen in its policy.
-    capabilityDigest = catalogEntry(policy.model).capabilityDigest;
+    // The worker serves exactly one catalog model at a time, chosen in its policy: text or a buffered media kind.
+    const served = servedModel(policy.model);
+    capabilityDigest = served.capabilityDigest;
     const offer = options.offer !== undefined ? options.offer : await readWorkerOffer(dir, policy.model);
     mode = await readWorkerControl(dir);
     if (mode !== "run") {
@@ -172,7 +193,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       if (entry.state === "seen" || entry.state === "running") await journal.set(entry.assignment, "abandoned", "interrupted_before_receipt");
       if (entry.state !== "result_pending") await journal.removeOutput(entry.assignment);
     }
-    adapter = options.adapter ?? createTextAdapter(options.installDir, { threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, timeoutMs: policy.runSeconds * 1000, modelId: policy.model, backend: policy.backend });
+    adapter = options.adapter ?? createServedAdapter(options.installDir, policy);
+    if ((served.kind === "text") === isMediaAdapter(adapter)) throw Error("Adapter does not match the served model kind");
     const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null);
     const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, deviceId: connection!.deviceId,
       activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null,
@@ -228,15 +250,39 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       try { await connection!.command("job.failed", { ...attemptData(a), reason }, lifetime.signal.aborted ? AbortSignal.timeout(2000) : lifetime.signal); }
       catch (error) { if (!(error instanceof WorkerConnectionError && [404, 409].includes(error.status ?? 0))) disconnected(error); }
     };
-    const sendResult = async (entry: Entry, authorize?: () => void): Promise<boolean> => {
+    // Uploads every output artifact of a media result part by part. Parts are idempotent by (job, digest, part), so a resend
+    // after a lost receipt or a restart is safe; each part is re-authorized against the lease and deadline first.
+    const uploadArtifacts = async (a: Assignment, output: MediaResult, signal: AbortSignal, authorize?: () => void) => {
+      const partBytes = MEDIA_LIMITS.artifactPartBytes, sent = new Set<string>();
+      for (const ref of artifactRefs(output)) {
+        if (sent.has(ref.digest)) continue;
+        sent.add(ref.digest);
+        const data = await readFile(journal.artifactPath(a, ref.digest));
+        if (data.length !== ref.bytes || sha256(data) !== ref.digest) throw Error("Cached artifact digest mismatch");
+        const parts = Math.ceil(ref.bytes / partBytes);
+        for (let part = 0; part < parts; part++) {
+          authorize?.();
+          const receipt = record(await connection!.command("job.artifact", { ...attemptData(a), digest: ref.digest, part, parts, bytes: ref.bytes, contentType: ref.contentType,
+            data: data.subarray(part * partBytes, Math.min(ref.bytes, (part + 1) * partBytes)).toString("base64") }, signal));
+          if ((receipt.digest !== undefined && receipt.digest !== ref.digest) || (receipt.part !== undefined && receipt.part !== part) ||
+              (receipt.accepted !== true && !(receipt.digest === ref.digest && receipt.part === part))) throw Error("Artifact part receipt mismatch");
+        }
+      }
+    };
+    const sendResult = async (entry: Entry, authorize?: () => void, signal: AbortSignal = lifetime.signal): Promise<boolean> => {
       try {
         const data = await readFile(journal.resultPath(entry.assignment), "utf8");
         if (Buffer.byteLength(data) > MAX_WORKER_MESSAGE_BYTES) throw Error("Cached result too large");
-        const output = parseTextResult(JSON.parse(data));
+        const value: unknown = JSON.parse(data);
+        // Media results carry a kind; text results keep their untagged shape.
+        const media = !!value && typeof value === "object" && "kind" in value;
+        const output = media ? mediaResultSchema.parse(value) : parseTextResult(value);
         if (requestDigest(output) !== entry.resultDigest) throw Error("Cached result digest mismatch");
+        if (media) await uploadArtifacts(entry.assignment, output as MediaResult, signal, authorize);
         authorize?.();
+        const reportedUnits = String(media ? mediaResultUnits(output as MediaResult) : (output as TextResult).generatedTokens);
         const response = record(await connection!.command("job.result", { ...attemptData(entry.assignment),
-          outputDigest: entry.resultDigest, reportedUnits: String(output.generatedTokens), output }, lifetime.signal));
+          outputDigest: entry.resultDigest, reportedUnits, output }, signal));
         if (response.accepted !== true) throw Error("Result receipt missing");
         await journal.set(entry.assignment, "finished", "result_receipted");
         await journal.removeOutput(entry.assignment);
@@ -251,6 +297,106 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         throw error;
       }
     };
+    // Downloads the input artifacts of a buffered job part by part while the pre-start lease is live, checking each part's
+    // exact size and the whole artifact's digest.
+    const downloadInputs = async (a: Assignment, request: MediaRequest, listed: unknown, signal: AbortSignal): Promise<Map<string, Buffer>> => {
+      const expected: ArtifactRef[] = request.kind === "transcription" ? [request.audio] : [];
+      if (listed === undefined ? expected.length !== 0 : !Array.isArray(listed) || listed.length !== expected.length) throw Error("Job input artifacts mismatch");
+      const inputs = new Map<string, Buffer>(), partBytes = MEDIA_LIMITS.artifactPartBytes;
+      for (const [index, ref] of expected.entries()) {
+        const item = record((listed as unknown[])[index]), parts = Math.ceil(ref.bytes / partBytes);
+        if (item.digest !== ref.digest || item.bytes !== ref.bytes || item.contentType !== ref.contentType || item.parts !== parts) throw Error("Job input artifact mismatch");
+        const data = Buffer.alloc(ref.bytes);
+        for (let part = 0; part < parts; part++) {
+          if (signal.aborted || Date.now() >= Date.parse(a.leaseExpiresAt)) throw Error("Lease expired before start");
+          const size = Math.min(partBytes, ref.bytes - part * partBytes);
+          const got = record(await connection!.command("job.artifact.read", { ...attemptData(a), digest: ref.digest, part }, signal));
+          const chunk = typeof got.data === "string" && got.data.length === Math.ceil(size / 3) * 4 && /^[A-Za-z0-9+/]*={0,2}$/.test(got.data) ? Buffer.from(got.data, "base64") : null;
+          if (got.digest !== ref.digest || got.part !== part || got.parts !== parts || !chunk || chunk.length !== size || chunk.toString("base64") !== got.data) throw Error("Invalid input artifact part");
+          chunk.copy(data, part * partBytes);
+        }
+        if (sha256(data) !== ref.digest) throw Error("Input artifact digest mismatch");
+        inputs.set(ref.digest, data);
+      }
+      return inputs;
+    };
+    // The adapter's output must match the request, the quote and its own artifact bytes before anything is journaled.
+    const boundedResult = (request: MediaRequest, output: MediaOutput, maxUnits: bigint): MediaResult => {
+      let result = mediaResultSchema.parse(output.result);
+      if (result.kind === "embedding" && request.kind === "embedding") {
+        if (result.count !== request.inputs.length) throw Error("Embedding count mismatch");
+        // Supplier-reported tokens are billed at most up to the quoted maximum.
+        result = { ...result, inputTokens: Math.max(result.count, Math.min(result.inputTokens, Number(maxUnits))) };
+      } else if (result.kind === "transcription" && request.kind === "transcription") {
+        if (result.audioSeconds !== Math.ceil(request.durationMs / 1000)) throw Error("Audio seconds mismatch");
+      } else if (result.kind === "image" && request.kind === "image") {
+        if (result.width !== request.width || result.height !== request.height || result.images.length !== request.count) throw Error("Image result mismatch");
+      } else throw Error("Media result kind mismatch");
+      const refs = artifactRefs(result);
+      for (const ref of refs) {
+        const artifact = output.artifacts.find(item => item.ref.digest === ref.digest);
+        if (!artifact || artifact.ref.contentType !== ref.contentType || artifact.data.length !== ref.bytes || sha256(artifact.data) !== ref.digest) throw Error("Media artifact mismatch");
+      }
+      if (output.artifacts.some(item => !refs.some(ref => ref.digest === item.ref.digest))) throw Error("Unreferenced media artifact");
+      if (Buffer.byteLength(JSON.stringify(result)) > MAX_WORKER_MESSAGE_BYTES - 4096) throw Error("Result exceeds signed transport limit");
+      return mediaResultSchema.parse(result);
+    };
+    const performMedia = async (a: Assignment, input: Record<string, unknown>, controller: AbortController, media: MediaAdapter, markStarted: () => void) => {
+      const request = mediaRequestSchema.parse(input.request);
+      if (request.kind !== served.kind || a.capabilityDigest !== capabilityDigest || input.capabilityDigest !== capabilityDigest ||
+          input.requestDigest !== a.requestDigest || requestDigest(request) !== a.requestDigest || input.deliveryMode !== "buffered") throw Error("Job input identity mismatch");
+      media.check(request);
+      // Quotes bind the units: embeddings at least one token per input; audio seconds and image counts exactly.
+      const maxUnits = BigInt(a.maxUnits);
+      if (request.kind === "embedding" ? BigInt(request.inputs.length) > maxUnits :
+          request.kind === "transcription" ? BigInt(Math.ceil(request.durationMs / 1000)) !== maxUnits : BigInt(request.count) !== maxUnits) throw Error("Job input does not match its quote");
+      const inputs = await downloadInputs(a, request, input.artifacts, controller.signal);
+      if (controller.signal.aborted || mode !== "run" || !decide().allowed) throw Error("Local policy no longer permits start");
+      const acknowledgment = record(await connection!.command("job.started", attemptData(a), controller.signal));
+      if (acknowledgment.state !== "running" || typeof acknowledgment.leaseExpiresAt !== "string" || !Number.isFinite(Date.parse(acknowledgment.leaseExpiresAt)) ||
+          Date.parse(acknowledgment.leaseExpiresAt) <= Date.now() || Date.parse(acknowledgment.leaseExpiresAt) > Date.parse(a.runDeadlineAt)) throw Error("Invalid start acknowledgment");
+      markStarted();
+      await journal.set(a, "running", "start_acknowledged");
+      if (controller.signal.aborted) throw Error("Start interrupted");
+      statusState = "running"; statusReason = "executing";
+      let leaseExpires = Date.parse(acknowledgment.leaseExpiresAt);
+      const deadline = Math.min(Date.parse(a.runDeadlineAt), Date.now() + policy.runSeconds * 1000);
+      const deadlineTimer = setTimeout(() => controller.abort(Error("Local execution deadline")), Math.max(0, deadline - Date.now()));
+      const leaseWatch = setInterval(() => { if (Date.now() >= leaseExpires) controller.abort(Error("Lease expired")); }, Math.min(100, timing.monitorMs));
+      const authorizeExecution = () => {
+        if (controller.signal.aborted || Date.now() >= deadline || Date.now() >= leaseExpires) {
+          controller.abort(Error("Execution deadline expired")); throw Error("Execution no longer authorized");
+        }
+      };
+      // Execution and upload both keep the lease renewed, exactly like a text execution.
+      const leased = async <T>(work: Promise<T>): Promise<T> => {
+        const settled = work.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+        while (true) {
+          let wakeTimer: ReturnType<typeof setTimeout> | undefined;
+          const tick = new Promise<null>(resolve => { wakeTimer = setTimeout(() => resolve(null), Math.min(timing.renewMs, Math.max(10, Math.floor((leaseExpires - Date.now()) / 3)))); });
+          const completed = await Promise.race([settled, tick]);
+          clearTimeout(wakeTimer);
+          if (completed) { if (!completed.ok) throw completed.error; return completed.value; }
+          if (controller.signal.aborted) { await media.stop(); continue; }
+          try {
+            const renewed = record(await connection!.command("job.renew", attemptData(a), controller.signal));
+            if (renewed.state !== "running" || typeof renewed.leaseExpiresAt !== "string" || !Number.isFinite(Date.parse(renewed.leaseExpiresAt)) ||
+                Date.parse(renewed.leaseExpiresAt) <= Date.now() || Date.parse(renewed.leaseExpiresAt) > Date.parse(a.runDeadlineAt)) throw Error("Invalid lease renewal");
+            leaseExpires = Date.parse(renewed.leaseExpiresAt);
+          } catch (error) { disconnected(error); controller.abort(Error("Lease renewal failed")); await media.stop(); }
+        }
+      };
+      try {
+        const output = await leased(media.execute(request, { signal: controller.signal, inputs }));
+        const result = boundedResult(request, output, maxUnits);
+        authorizeExecution();
+        for (const artifact of output.artifacts) await writePrivateFile(journal.artifactPath(a, artifact.ref.digest), artifact.data);
+        await atomicPrivateJson(journal.resultPath(a), result);
+        authorizeExecution();
+        const entry = await journal.set(a, "result_pending", "awaiting_result_receipt", requestDigest(result));
+        await leased(sendResult(entry, authorizeExecution, controller.signal));
+      } finally { clearTimeout(deadlineTimer); clearInterval(leaseWatch); }
+    };
     const perform = async (a: Assignment) => {
       const controller = new AbortController();
       active = { assignment: a, abort: controller };
@@ -258,12 +404,14 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       await journal.set(a, "seen", "observed_before_execution");
       try {
         const input = record(await connection!.command("job.input", attemptData(a), controller.signal));
+        if (isMediaAdapter(adapter!)) { await performMedia(a, input, controller, adapter, () => { started = true; }); return; }
+        const textAdapter = adapter as TextAdapter;
         const request = parseTextRequest(input.request);
         if (a.capabilityDigest !== capabilityDigest || input.capabilityDigest !== capabilityDigest ||
             input.requestDigest !== a.requestDigest || requestDigest(request) !== a.requestDigest || BigInt(request.maxTokens) > BigInt(a.maxUnits)) throw Error("Job input identity mismatch");
         if (input.deliveryMode !== undefined && input.deliveryMode !== "buffered" && input.deliveryMode !== "stream") throw Error("Invalid delivery mode");
         const streaming = input.deliveryMode === "stream";
-        if (streaming && adapter!.supportsStreaming !== true) throw Error("Adapter does not support streaming");
+        if (streaming && textAdapter.supportsStreaming !== true) throw Error("Adapter does not support streaming");
         if (controller.signal.aborted || mode !== "run" || !decide().allowed) throw Error("Local policy no longer permits start");
         const acknowledgment = record(await connection!.command("job.started", attemptData(a), controller.signal));
         if (acknowledgment.state !== "running" || typeof acknowledgment.leaseExpiresAt !== "string" || !Number.isFinite(Date.parse(acknowledgment.leaseExpiresAt)) ||
@@ -306,7 +454,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         };
         let output: TextResult;
         try {
-          const execution = adapter!.execute(request, { signal: controller.signal, ...(streaming ? { onChunk } : {}) }).then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+          const execution = textAdapter.execute(request, { signal: controller.signal, ...(streaming ? { onChunk } : {}) }).then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
           while (true) {
             let wakeTimer: ReturnType<typeof setTimeout> | undefined;
             const tick = new Promise<null>(resolve => { wakeTimer = setTimeout(() => resolve(null), Math.min(timing.renewMs, Math.max(10, Math.floor((leaseExpires - Date.now()) / 3)))); });

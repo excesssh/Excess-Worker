@@ -36,7 +36,7 @@ export class AdapterProcessState {
     return this.reaping;
   }
 }
-async function port():Promise<number> {
+export async function port():Promise<number> {
   return new Promise((resolve,reject)=>{const server=createServer();server.once("error",reject);server.listen(0,"127.0.0.1",()=>{const address=server.address();if(!address||typeof address==="string")return server.close(()=>reject(new AdapterError("RUNTIME_PORT_FAILED")));server.close(error=>error?reject(error):resolve(address.port));});});
 }
 export async function boundedJson(response:Response,maxBytes=65536):Promise<unknown> {

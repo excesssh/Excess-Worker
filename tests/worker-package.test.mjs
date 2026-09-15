@@ -40,7 +40,13 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   let guide=JSON.parse(run("guide").stdout);
   assert.deepEqual([guide.next,guide.origin,guide.model,guide.backend,guide.steps.map(s=>s.done)],["pair",null,"qwen3-4b","cpu",[false,true,false,false,false]]);
   const models=JSON.parse(run("models").stdout);
-  assert.deepEqual(models.models.map(m=>m.id),["qwen3-4b","qwen3-8b","qwen3-14b","qwen3-30b-a3b"]);
+  assert.deepEqual(models.models.map(m=>m.id),["qwen3-4b","qwen3-8b","qwen3-14b","qwen3-30b-a3b","qwen3-embedding-0.6b","qwen3-asr-0.6b","sd-turbo","flux1-schnell"]);
+  assert.deepEqual(models.models.map(m=>m.kind),["text","text","text","text","embedding","transcription","image","image"]);
+  assert.deepEqual([models.models.at(-1).gpuOnly,models.models.at(-1).cpu.fits],[true,false],"FLUX is flagged GPU-only and never fits the CPU");
+  assert.notEqual(run("use","flux1-schnell","--cpu").status,0,"a GPU-only model cannot be chosen for the CPU");
+  assert.match(JSON.parse(run("use","sd-turbo").stdout).next,/price per image/);
+  assert.equal(JSON.parse(run("model-plan").stdout).runtime,"stable-diffusion.cpp");
+  assert.equal(JSON.parse(run("guide").stdout).kind,"image");
   assert.deepEqual(models.active,{model:"qwen3-4b",backend:"cpu"});
   const chosen=run("use","qwen3-8b","--gpu");
   assert.equal(chosen.status,0,chosen.stderr);assert.deepEqual([JSON.parse(chosen.stdout).policy.model,JSON.parse(chosen.stdout).policy.backend],["qwen3-8b","cuda"]);

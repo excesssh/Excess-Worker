@@ -2,7 +2,7 @@ import { createHash,randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile,lstat,mkdir,open,readFile,readdir,rename,rm,writeFile } from "node:fs/promises";
 import { dirname,isAbsolute,join,parse,relative,resolve,sep } from "node:path";
-import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,RUNTIME_REDIST,catalogEntry,currentPlatform,runtimeArtifacts,serverExecutable,type Artifact,type Backend,type Platform } from "./manifest.js";
+import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,RUNTIME_REDIST,catalogEntry,currentPlatform,runtimeArtifacts,serverExecutable,type Artifact,type Backend,type Platform,type RedistFile } from "./manifest.js";
 import { scanSafeZip,DEFAULT_ZIP_LIMITS,type ZipEntry,type ZipLimits } from "./zip.js";
 import { scanSafeTarGz } from "./tar.js";
 
@@ -16,16 +16,16 @@ const ARCHIVE_LIMITS:Readonly<Record<Platform,Partial<Record<Backend,ZipLimits>>
 export interface InstallProgress { artifact:string; receivedBytes:number; totalBytes:number }
 export interface Installation {directory:string;serverPath:string;modelPath:string;capabilityDigest:string;modelId:string;backend:Backend}
 
-function backendOf(value:unknown):Backend {
+export function backendOf(value:unknown):Backend {
   if(!BACKENDS.includes(value as Backend))throw new AdapterError("INVALID_BACKEND");
   return value as Backend;
 }
-function platformOf():Platform {
+export function platformOf():Platform {
   const platform=currentPlatform();
   if(!platform)throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
   return platform;
 }
-function limitsFor(platform:Platform,backend:Backend):ZipLimits {
+export function limitsFor(platform:Platform,backend:Backend):ZipLimits {
   const limits=ARCHIVE_LIMITS[platform][backend];
   if(!limits)throw new AdapterError("BACKEND_UNSUPPORTED_ON_PLATFORM");
   return limits;
@@ -36,8 +36,8 @@ function scanArchive(name:string,input:Buffer,limits:ZipLimits,onEntry:(entry:Zi
 }
 // Windows file names are case-insensitive, so runtime files are compared case-insensitively there only.
 const fileKey=(platform:Platform,name:string)=>platform==="win32-x64"?name.toLowerCase():name;
-const runtimeDirectory=(root:string,backend:Backend)=>join(resolve(root),"runtimes",backend);
-const modelDirectory=(root:string,modelId:string)=>join(resolve(root),"models",modelId);
+export const runtimeDirectory=(root:string,backend:Backend)=>join(resolve(root),"runtimes",backend);
+export const modelDirectory=(root:string,modelId:string)=>join(resolve(root),"models",modelId);
 
 /** What installing one catalog model on one backend downloads on this platform, and what it needs. The root holds shared
  * runtimes (`runtimes/<backend>`), models (`models/<id>`) and an optional offline cache (`downloads/<sha256>`). */
@@ -65,7 +65,7 @@ export function inside(root:string,name:string):string {
   if(!rel||rel.startsWith(".."+sep)||rel===".."||isAbsolute(rel))throw new AdapterError("INSTALL_PATH_ESCAPE");
   return target;
 }
-async function hashFile(path:string,expectedBytes:number):Promise<string> {
+export async function hashFile(path:string,expectedBytes:number):Promise<string> {
   await noLinks(path);
   const stat=await lstat(path);
   if(!stat.isFile()||stat.size!==expectedBytes)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
@@ -74,11 +74,14 @@ async function hashFile(path:string,expectedBytes:number):Promise<string> {
   if(bytes!==expectedBytes)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
   return hash.digest("hex");
 }
-async function verifyRuntime(root:string,backend:Backend):Promise<string> {
-  const platform=platformOf(),limits=limitsFor(platform,backend),server=fileKey(platform,serverExecutable(platform));
-  const directory=runtimeDirectory(root,backend);await noLinks(directory);
+/** One pinned runtime folder: its archives and licence, the one server executable they must contain, the archive bounds
+ * and the only redistributable files allowed beside a Windows server. */
+export interface RuntimeSpec {directory:string;artifacts:readonly Artifact[];server:string;limits:ZipLimits;redist:readonly RedistFile[];platform:Platform}
+export async function verifyRuntimeAt(spec:RuntimeSpec):Promise<string> {
+  const {directory,platform,limits}=spec,server=fileKey(platform,spec.server);
+  await noLinks(directory);
   const expected=new Map<string,{bytes:number;sha256:string}>();let servers=0;
-  for(const artifact of runtimeArtifacts(backend,platform)) {
+  for(const artifact of spec.artifacts) {
     if(await hashFile(inside(directory,artifact.name),artifact.bytes)!==artifact.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
     if(!isArchive(artifact.name))continue;
     scanArchive(artifact.name,await readFile(inside(directory,artifact.name)),limits,entry=>{
@@ -101,7 +104,7 @@ async function verifyRuntime(root:string,backend:Backend):Promise<string> {
       const file=expected.get(key);
       if(!file){
         // Only the pinned Visual C++ runtime files may sit beside a Windows server, and only with their exact bytes.
-        const redist=relativeDirectory||platform!=="win32-x64"?undefined:RUNTIME_REDIST.find(item=>item.name===key);
+        const redist=relativeDirectory||platform!=="win32-x64"?undefined:spec.redist.find(item=>item.name===key);
         if(!redist)throw new AdapterError("UNEXPECTED_RUNTIME_FILE");
         if(await hashFile(inside(join(directory,"runtime"),name),redist.bytes)!==redist.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
         continue;
@@ -114,6 +117,10 @@ async function verifyRuntime(root:string,backend:Backend):Promise<string> {
   if(seen.size!==expected.size)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
   return inside(join(directory,"runtime"),serverEntries[0]!);
 }
+function textRuntimeSpec(root:string,backend:Backend):RuntimeSpec {
+  const platform=platformOf();
+  return {directory:runtimeDirectory(root,backend),artifacts:runtimeArtifacts(backend,platform),server:serverExecutable(platform),limits:limitsFor(platform,backend),redist:RUNTIME_REDIST,platform};
+}
 async function verifyModel(root:string,modelId:string):Promise<string> {
   const entry=catalogEntry(modelId),directory=modelDirectory(root,entry.id);await noLinks(directory);
   for(const artifact of entry.artifacts)if(await hashFile(inside(directory,artifact.name),artifact.bytes)!==artifact.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
@@ -123,17 +130,21 @@ async function verifyModel(root:string,modelId:string):Promise<string> {
 export async function verifyInstallation(directory:string,modelId:string=DEFAULT_MODEL_ID,backend:Backend="cpu"):Promise<Installation> {
   const root=resolve(directory),entry=catalogEntry(modelId),selected=backendOf(backend);await noLinks(root);
   try {
-    const serverPath=await verifyRuntime(root,selected),modelPath=await verifyModel(root,entry.id);
+    const serverPath=await verifyRuntimeAt(textRuntimeSpec(root,selected)),modelPath=await verifyModel(root,entry.id);
     return {directory:root,serverPath,modelPath,capabilityDigest:entry.capabilityDigest,modelId:entry.id,backend:selected};
   } catch(error) {if(error instanceof AdapterError)throw error;throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");}
 }
-/** Lists which catalog models and runtimes are present on disk, without re-hashing large files. */
-export async function installedComponents(directory:string):Promise<{runtimes:Backend[];models:string[]}> {
+/** Lists which catalog models (text and media) and runtimes are present on disk, without re-hashing large files.
+ * `runtimes` are llama.cpp builds; `sdRuntimes` are stable-diffusion.cpp builds for image models. */
+export async function installedComponents(directory:string):Promise<{runtimes:Backend[];sdRuntimes:Backend[];models:string[]}> {
   const root=resolve(directory),present=async(path:string)=>{try{return (await lstat(path)).isFile();}catch{return false;}};
-  const runtimes:Backend[]=[],models:string[]=[];
-  for(const backend of BACKENDS)if(await present(join(runtimeDirectory(root,backend),"install.json")))runtimes.push(backend);
+  const runtimes:Backend[]=[],sdRuntimes:Backend[]=[],models:string[]=[];
+  for(const backend of BACKENDS) {
+    if(await present(join(runtimeDirectory(root,backend),"install.json")))runtimes.push(backend);
+    if(await present(join(root,"sd-runtimes",backend,"install.json")))sdRuntimes.push(backend);
+  }
   try{for(const name of await readdir(join(root,"models")))if(await present(join(root,"models",name,"install.json")))models.push(name);}catch{}
-  return {runtimes,models};
+  return {runtimes,sdRuntimes,models};
 }
 async function download(artifact:Artifact,path:string,cache:string,signal:AbortSignal,progress?:(value:InstallProgress)=>void) {
   // A file already in the offline cache is used only if its size and hash match the pin.
@@ -178,7 +189,7 @@ async function renameWithRetry(from:string,to:string):Promise<void> {
     }
   }
 }
-async function installComponent(root:string,target:string,artifacts:readonly Artifact[],limits:ZipLimits|null,verify:()=>Promise<unknown>,
+export async function installComponent(root:string,target:string,artifacts:readonly Artifact[],limits:ZipLimits|null,verify:()=>Promise<unknown>,
   record:Record<string,unknown>,signal:AbortSignal,onProgress?:(value:InstallProgress)=>void):Promise<void> {
   try {await lstat(target);await verify();return;}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
   await mkdir(dirname(target),{recursive:true});await noLinks(dirname(target));
@@ -209,12 +220,12 @@ async function installComponent(root:string,target:string,artifacts:readonly Art
     throw new AdapterError(signal.aborted?"ARTIFACT_DOWNLOAD_ABORTED":"ARTIFACT_INSTALL_FAILED",{cause:error});
   }
 }
-/** Copies the pinned Visual C++ runtime files from source into an installed runtime, checking every source byte first.
+/** Copies pinned redistributable files from source into an installed runtime folder, checking every source byte first.
  * Files already present with the pinned bytes are kept; returns the names copied. */
-export async function installRuntimeRedist(directory:string,backend:Backend,source:string):Promise<string[]> {
-  const target=join(runtimeDirectory(resolve(directory),backendOf(backend)),"runtime");await noLinks(target);await noLinks(resolve(source));
+export async function copyRedist(target:string,files:readonly RedistFile[],source:string):Promise<string[]> {
+  await noLinks(target);await noLinks(resolve(source));
   const copied:string[]=[];
-  for(const file of RUNTIME_REDIST) {
+  for(const file of files) {
     const destination=inside(target,file.name);
     try {if(await hashFile(destination,file.bytes)===file.sha256)continue;}catch(error){if(!(error instanceof AdapterError)&&(error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
     const from=inside(resolve(source),file.name);
@@ -228,15 +239,19 @@ export async function installRuntimeRedist(directory:string,backend:Backend,sour
   }
   return copied;
 }
+/** Copies the pinned Visual C++ runtime files from source into an installed llama.cpp runtime. */
+export async function installRuntimeRedist(directory:string,backend:Backend,source:string):Promise<string[]> {
+  return copyRedist(join(runtimeDirectory(resolve(directory),backendOf(backend)),"runtime"),RUNTIME_REDIST,source);
+}
 /** Installs a catalog model and its backend runtime after explicit consent, reusing whatever is already verified. */
 export async function installTextAdapter(directory:string,options:{consent:true;modelId?:string;backend?:Backend;redistDirectory?:string;signal?:AbortSignal;onProgress?:(value:InstallProgress)=>void}):Promise<Installation> {
   if(options?.consent!==true)throw new AdapterError("MODEL_INSTALL_CONSENT_REQUIRED");
   const platform=platformOf();
   const root=resolve(directory),entry=catalogEntry(options.modelId??DEFAULT_MODEL_ID),backend=backendOf(options.backend??"cpu");
-  const artifacts=runtimeArtifacts(backend,platform),limits=limitsFor(platform,backend);
+  const spec=textRuntimeSpec(root,backend);
   await mkdir(root,{recursive:true});await noLinks(root);
   const signal=options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(6*60*60*1000)]):AbortSignal.timeout(6*60*60*1000);
-  await installComponent(root,runtimeDirectory(root,backend),artifacts,limits,()=>verifyRuntime(root,backend),{backend,platform},signal,options.onProgress);
+  await installComponent(root,spec.directory,spec.artifacts,spec.limits,()=>verifyRuntimeAt(spec),{backend,platform},signal,options.onProgress);
   if(options.redistDirectory&&platform==="win32-x64")await installRuntimeRedist(root,backend,options.redistDirectory);
   await installComponent(root,modelDirectory(root,entry.id),entry.artifacts,null,()=>verifyModel(root,entry.id),{modelId:entry.id,capabilityDigest:entry.capabilityDigest},signal,options.onProgress);
   return verifyInstallation(root,entry.id,backend);
