@@ -8,6 +8,14 @@ const RUNTIME_LICENCE=artifact({ name:"licences/llama.cpp-MIT.txt", bytes:1078, 
 
 /** Pinned llama.cpp b10809 builds. Every backend runs the same release, so a model's capability is backend-independent. */
 export type Backend="cpu"|"cuda";
+/** Microsoft Visual C++ runtime files (14.51.36247.0) that llama.cpp needs and a clean Windows Server lacks
+ * (it ships 14.0 without vcruntime140_1.dll). The worker package bundles them; the installer copies only these exact files beside the server. */
+export interface RedistFile { readonly name:string; readonly bytes:number; readonly sha256:string }
+export const RUNTIME_REDIST:readonly RedistFile[]=Object.freeze([
+  Object.freeze({name:"vcruntime140.dll",bytes:178616,sha256:"d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"}),
+  Object.freeze({name:"vcruntime140_1.dll",bytes:50112,sha256:"a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"}),
+  Object.freeze({name:"msvcp140.dll",bytes:643512,sha256:"7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"}),
+]);
 export const BACKENDS:readonly Backend[]=Object.freeze(["cpu","cuda"]);
 export const RUNTIME_ARTIFACTS:Readonly<Record<Backend,readonly Artifact[]>>=Object.freeze({
   cpu:Object.freeze([

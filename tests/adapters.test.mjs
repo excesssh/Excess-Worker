@@ -5,10 +5,11 @@ import { spawn,execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { mkdtemp,mkdir,writeFile,rm } from "node:fs/promises";
+import { mkdtemp,mkdir,writeFile,rm,readdir,readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve,join,dirname,basename } from "node:path";
 import { requestDigest } from "../packages/protocol/dist/index.js";
-import { ARTIFACTS,TEXT_CAPABILITY,capabilityDigest,parseTextRequest,parseTextResult,textInstallationPlan,installTextAdapter,verifyInstallation,createTextAdapter } from "../packages/adapters/dist/index.js";
+import { ARTIFACTS,TEXT_CAPABILITY,capabilityDigest,parseTextRequest,parseTextResult,textInstallationPlan,installTextAdapter,installRuntimeRedist,RUNTIME_REDIST,verifyInstallation,createTextAdapter } from "../packages/adapters/dist/index.js";
 import { readSafeZip } from "../packages/adapters/dist/zip.js";
 import { boundedJson } from "../packages/adapters/dist/runtime.js";
 import { startSupervisedProcess } from "../packages/adapters/dist/process.js";
@@ -66,6 +67,21 @@ test("installer fails before download without consent and rejects corrupt local 
   const adapter=createTextAdapter(dir,{threads:1,maxMemoryMb:1024,timeoutMs:2000});
   await assert.rejects(adapter.probe(),/INSTALLED_ARTIFACT_MISMATCH|UNSUPPORTED_ADAPTER_PLATFORM/);
   await adapter.stop();await adapter.stop();
+}));
+test("Visual C++ runtime files are copied beside the server only with their pinned bytes",async t=>temporary(async dir=>{
+  const system32=join(process.env.SystemRoot??"C:\\Windows","System32");
+  const runtime=join(dir,"runtimes","cpu","runtime");await mkdir(runtime,{recursive:true});
+  // A source with the wrong bytes is refused and leaves nothing in the runtime folder.
+  const forged=join(dir,"forged");await mkdir(forged);
+  for(const file of RUNTIME_REDIST)await writeFile(join(forged,file.name),"NOT THE PINNED DLL");
+  await assert.rejects(installRuntimeRedist(dir,"cpu",forged),/REDIST_FILE_MISMATCH/);
+  await assert.rejects(installRuntimeRedist(dir,"cpu",join(dir,"absent")),/REDIST_FILE_MISMATCH/);
+  assert.deepEqual(await readdir(runtime),[]);
+  const pinned=await Promise.all(RUNTIME_REDIST.map(async file=>{try{return createHash("sha256").update(await readFile(join(system32,file.name))).digest("hex")===file.sha256;}catch{return false;}}));
+  if(pinned.includes(false)){t.diagnostic("this machine lacks the pinned Visual C++ runtime; copy path not exercised");return;}
+  assert.deepEqual(await installRuntimeRedist(dir,"cpu",system32),RUNTIME_REDIST.map(file=>file.name));
+  assert.deepEqual((await readdir(runtime)).sort(),RUNTIME_REDIST.map(file=>file.name).sort());
+  assert.deepEqual(await installRuntimeRedist(dir,"cpu",forged),[],"files already pinned are kept without reading the source");
 }));
 test("runtime response reader rejects overlong, malformed and invalid UTF-8 responses",async()=>{
   assert.deepEqual(await boundedJson(new Response('{"ok":true}')),{ok:true});

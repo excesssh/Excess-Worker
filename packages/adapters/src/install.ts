@@ -2,7 +2,7 @@ import { createHash,randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile,lstat,mkdir,open,readFile,readdir,rename,rm,writeFile } from "node:fs/promises";
 import { dirname,isAbsolute,join,parse,relative,resolve,sep } from "node:path";
-import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,RUNTIME_ARTIFACTS,catalogEntry,type Artifact,type Backend } from "./manifest.js";
+import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,RUNTIME_ARTIFACTS,RUNTIME_REDIST,catalogEntry,type Artifact,type Backend } from "./manifest.js";
 import { scanSafeZip,DEFAULT_ZIP_LIMITS,type ZipLimits } from "./zip.js";
 
 const hosts=new Set(["github.com","release-assets.githubusercontent.com","objects.githubusercontent.com","raw.githubusercontent.com","huggingface.co","us.aws.cdn.hf.co","cas-bridge.xethub.hf.co"]);
@@ -77,7 +77,13 @@ async function verifyRuntime(root:string,backend:Backend):Promise<string> {
       if(entry.isSymbolicLink()||(!entry.isFile()&&!entry.isDirectory()))throw new AdapterError("UNEXPECTED_RUNTIME_FILE");
       if(entry.isDirectory()){if(!directories.has(key))throw new AdapterError("UNEXPECTED_RUNTIME_FILE");await inspect(name);continue;}
       const file=expected.get(key);
-      if(!file)throw new AdapterError("UNEXPECTED_RUNTIME_FILE");
+      if(!file){
+        // Only the pinned Visual C++ runtime files may sit beside the server, and only with their exact bytes.
+        const redist=relativeDirectory?undefined:RUNTIME_REDIST.find(item=>item.name===key);
+        if(!redist)throw new AdapterError("UNEXPECTED_RUNTIME_FILE");
+        if(await hashFile(inside(join(directory,"runtime"),name),redist.bytes)!==redist.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
+        continue;
+      }
       if(await hashFile(inside(join(directory,"runtime"),name),file.bytes)!==file.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
       seen.add(key);
     }
@@ -179,14 +185,34 @@ async function installComponent(root:string,target:string,artifacts:readonly Art
     throw new AdapterError(signal.aborted?"ARTIFACT_DOWNLOAD_ABORTED":"ARTIFACT_INSTALL_FAILED",{cause:error});
   }
 }
+/** Copies the pinned Visual C++ runtime files from source into an installed runtime, checking every source byte first.
+ * Files already present with the pinned bytes are kept; returns the names copied. */
+export async function installRuntimeRedist(directory:string,backend:Backend,source:string):Promise<string[]> {
+  const target=join(runtimeDirectory(resolve(directory),backendOf(backend)),"runtime");await noLinks(target);await noLinks(resolve(source));
+  const copied:string[]=[];
+  for(const file of RUNTIME_REDIST) {
+    const destination=inside(target,file.name);
+    try {if(await hashFile(destination,file.bytes)===file.sha256)continue;}catch(error){if(!(error instanceof AdapterError)&&(error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+    const from=inside(resolve(source),file.name);
+    let matches=false;try{matches=await hashFile(from,file.bytes)===file.sha256;}catch(error){if(!(error instanceof AdapterError)&&(error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+    if(!matches)throw new AdapterError("REDIST_FILE_MISMATCH");
+    // Staged beside, not inside, the runtime folder so an interrupted copy never leaves an unexpected runtime file.
+    const stage=join(dirname(target),file.name+".install-"+randomUUID());
+    await copyFile(from,stage);
+    if(await hashFile(stage,file.bytes)!==file.sha256){await rm(stage,{force:true});throw new AdapterError("REDIST_FILE_MISMATCH");}
+    await rm(destination,{force:true});await renameWithRetry(stage,destination);copied.push(file.name);
+  }
+  return copied;
+}
 /** Installs a catalog model and its backend runtime after explicit consent, reusing whatever is already verified. */
-export async function installTextAdapter(directory:string,options:{consent:true;modelId?:string;backend?:Backend;signal?:AbortSignal;onProgress?:(value:InstallProgress)=>void}):Promise<Installation> {
+export async function installTextAdapter(directory:string,options:{consent:true;modelId?:string;backend?:Backend;redistDirectory?:string;signal?:AbortSignal;onProgress?:(value:InstallProgress)=>void}):Promise<Installation> {
   if(options?.consent!==true)throw new AdapterError("MODEL_INSTALL_CONSENT_REQUIRED");
   if(process.platform!=="win32"||process.arch!=="x64")throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
   const root=resolve(directory),entry=catalogEntry(options.modelId??DEFAULT_MODEL_ID),backend=backendOf(options.backend??"cpu");
   await mkdir(root,{recursive:true});await noLinks(root);
   const signal=options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(6*60*60*1000)]):AbortSignal.timeout(6*60*60*1000);
   await installComponent(root,runtimeDirectory(root,backend),RUNTIME_ARTIFACTS[backend],ZIP_LIMITS[backend],()=>verifyRuntime(root,backend),{backend},signal,options.onProgress);
+  if(options.redistDirectory)await installRuntimeRedist(root,backend,options.redistDirectory);
   await installComponent(root,modelDirectory(root,entry.id),entry.artifacts,null,()=>verifyModel(root,entry.id),{modelId:entry.id,capabilityDigest:entry.capabilityDigest},signal,options.onProgress);
   return verifyInstallation(root,entry.id,backend);
 }

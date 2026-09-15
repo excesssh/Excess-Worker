@@ -82,7 +82,9 @@ try {
     if (!flags.has("--accept-download") || !flags.has("--accept-licenses") || positional.length > 1)
       throw Error("Read worker model-plan, then use install-model [model id] [--gpu] --accept-download --accept-licenses to opt in");
     const policy = await readWorkerPolicy(stateDir);
+    // The packaged launcher points EXCESS_REDIST_DIR at the bundled Visual C++ runtime files.
     print(await installTextAdapter(installDir, { consent: true, modelId: positional[0] ?? policy.model, backend: chosenBackend(policy.backend),
+      ...(process.env.EXCESS_REDIST_DIR ? { redistDirectory: resolve(process.env.EXCESS_REDIST_DIR) } : {}),
       onProgress: value => process.stdout.write(JSON.stringify({ product: "EXCESS", download: value }) + "\n") }));
   } else if (command === "policy") {
     const file = process.argv[3];

@@ -32,11 +32,20 @@ for(const pkg of ["adapters","protocol"]){
   await copyTree(join(root,"packages",pkg,"dist"),join(target,"dist"));
 }
 await copyTree(join(root,"node_modules","zod"),join(stage,"app","node_modules","zod"));
+// The Visual C++ runtime files llama.cpp needs, copied from this build machine and checked against the adapter's pins.
+const {RUNTIME_REDIST}=await import(new URL("../packages/adapters/dist/manifest.js",import.meta.url).href);
+await mkdir(join(stage,"redist"),{recursive:true});
+for(const file of RUNTIME_REDIST){
+  const bytes=await readFile(join(process.env.SystemRoot??"C:\\Windows","System32",file.name));
+  if(bytes.length!==file.bytes||createHash("sha256").update(bytes).digest("hex")!==file.sha256)throw new Error("PACKAGE_REDIST_MISMATCH "+file.name+" (install the pinned Visual C++ Redistributable 14.51.36247.0)");
+  await writeFile(join(stage,"redist",file.name),bytes);
+}
 
 await writeFile(join(stage,"excess-worker.cmd"),[
   "@echo off","setlocal",
   "if not defined EXCESS_WORKER_HOME set \"EXCESS_WORKER_HOME=%LOCALAPPDATA%\\EXCESS\\worker\"",
   "if not defined EXCESS_MODEL_DIR set \"EXCESS_MODEL_DIR=%LOCALAPPDATA%\\EXCESS\\ai\"",
+  "if not defined EXCESS_REDIST_DIR set \"EXCESS_REDIST_DIR=%~dp0redist\"",
   "\"%~dp0node\\node.exe\" \"%~dp0app\\worker\\dist\\main.js\" %*","exit /b %ERRORLEVEL%",""].join("\r\n"));
 await writeFile(join(stage,"ONBOARDING.txt"),[
   "EXCESS supplier worker (Windows x64, CPU)","",
