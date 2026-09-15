@@ -7,6 +7,12 @@ export const TEXT_LIMITS = Object.freeze({
   maxPromptBytes: 16384, maxOutputTokens: 2048, maxOutputBytes: 65536, maxStreamChunks: 2048,
   maxChunkTokens: 128, maxChunkBytes: 8192, maxRunSeconds: 600,
 } as const);
+/** Input-token pricing for text jobs (ADR 0008). Byte-level BPE and byte-fallback tokenizers emit at most one token per
+ * UTF-8 byte of text, and a chat template adds a bounded number of role and special tokens, so a prompt of n bytes is at
+ * most n + promptTemplateTokens tokens. A reported prompt token count is capped at that bound. Usage reported after a job
+ * ends may still lower the count for usageGraceSeconds before accounting charges the latest claim. */
+export const INPUT_PRICING = Object.freeze({ promptTemplateTokens: 1024, maxPromptTokens: 17408, usageGraceSeconds: 90 } as const);
+export const promptTokenBound = (prompt: string): number => Buffer.byteLength(prompt, "utf8") + INPUT_PRICING.promptTemplateTokens;
 // A signed job.result carries the whole output. JSON escaping can expand each
 // output byte up to six times (\u00XX), so 6 * 65,536 bytes plus the envelope.
 export const MAX_WORKER_MESSAGE_BYTES = 524288;
@@ -169,8 +175,16 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
     data: z.strictObject({
       deviceId: z.uuid(), capabilityDigest: digestSchema, assetId: z.uuid(),
       netUnits: baseUnitsSchema.refine(value => BigInt(value) > 0n),
+      // Optional net units per prompt token (ADR 0008); absent means zero, the output-only offer.
+      inputNetUnits: baseUnitsSchema.optional(),
       slots: z.number().int().min(1).max(32), probedAt: z.iso.datetime(),
     }),
+  }),
+  z.strictObject({
+    // A supplier's prompt token count for an input-priced text job (ADR 0008): claimed before the prompt is sent,
+    // lowered to the provider's count later. The database caps it at the quoted bound; it is not otherwise verified.
+    ...envelope, type: z.literal("job.usage"),
+    data: z.strictObject({ ...attemptIdentity, promptTokens: z.number().int().min(0).max(INPUT_PRICING.maxPromptTokens), final: z.boolean() }),
   }),
   z.strictObject({
     ...envelope, type: z.literal("job.started"), data: z.strictObject(attemptIdentity),
