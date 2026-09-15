@@ -1,15 +1,19 @@
 export { ARTIFACTS,TEXT_CAPABILITY,capabilityDigest,AdapterError,parseTextRequest,parseTextResult,
-  MODEL_CATALOG,DEFAULT_MODEL_ID,RUNTIME_ARTIFACTS,BACKENDS,catalogEntry,catalogEntryByDigest,isCatalogCapability } from "./manifest.js";
-export type { TextRequest,TextResult,ModelEntry,Backend,Artifact } from "./manifest.js";
+  MODEL_CATALOG,DEFAULT_MODEL_ID,RUNTIME_ARTIFACTS,BACKENDS,catalogEntry,catalogEntryByDigest,isCatalogCapability,
+  REASONING_MIN_OUTPUT_TOKENS,textMemoryEstimate,textProbeTokens } from "./manifest.js";
+export type { TextRequest,TextResult,ModelEntry,Backend,Artifact,KvShape } from "./manifest.js";
+export { PROMPT_FORMATS } from "./prompt-format.js";
+export type { PromptFormat } from "./prompt-format.js";
 export { createTextAdapter } from "./runtime.js";
 export type { AdapterOptions,AdapterProbe,TextAdapter } from "./runtime.js";
-export { installTextAdapter,installRuntimeRedist,verifyInstallation,textInstallationPlan,installedComponents } from "./install.js";
+export { installTextAdapter,installRuntimeRedist,verifyInstallation,textInstallationPlan,installedComponents,
+  textInstallDiskCheck,freeDiskBytes,importModelFiles,ImportMismatchError } from "./install.js";
 export { RUNTIME_REDIST,PLATFORM_BACKENDS,GPU_BACKEND,currentPlatform,runtimeArtifacts,serverExecutable } from "./manifest.js";
 export type { RedistFile,Platform } from "./manifest.js";
 export { MEDIA_CATALOG,mediaCatalogEntry,mediaEntryByDigest,isMediaCapability,sdRuntimeArtifacts,sdServerExecutable,SD_RUNTIME_REDIST } from "./manifest.js";
 export type { MediaModelEntry,MediaRuntime } from "./manifest.js";
-export type { InstallProgress,Installation } from "./install.js";
-export { installMediaModel,verifyMediaInstallation,mediaInstallationPlan } from "./media-install.js";
+export type { InstallProgress,Installation,DiskCheck,ImportResult } from "./install.js";
+export { installMediaModel,verifyMediaInstallation,mediaInstallationPlan,mediaInstallDiskCheck } from "./media-install.js";
 export type { MediaInstallation } from "./media-install.js";
 export { createMediaAdapter } from "./media-runtime.js";
 export type { MediaAdapter,MediaAdapterOptions,MediaArtifact,MediaOutput,MediaProbe } from "./media-runtime.js";

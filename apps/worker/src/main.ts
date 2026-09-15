@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { mkdir, access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { beginPairing, writeIdentity, finishPairing, sendHeartbeat } from "./identity.js";
-import { textInstallationPlan, installTextAdapter, installMediaModel, mediaInstallationPlan, installedComponents, type Backend } from "@excess/adapters";
+import { textInstallationPlan, installTextAdapter, installMediaModel, mediaInstallationPlan, installedComponents, textInstallDiskCheck, mediaInstallDiskCheck, importModelFiles, type Backend, type DiskCheck } from "@excess/adapters";
 import { priceUnit, servedModel, servedModels } from "./served.js";
 import { runWorker } from "./runtime.js";
 import { readWorkerStatus, setWorkerControl } from "./control.js";
@@ -13,17 +13,10 @@ import { observeLocalResources } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
 import { readWorkerOffer, writeWorkerOffer, offerFromSymbol } from "./offer.js";
 import { workerGuide } from "./guide.js";
+import { detectHardware, modelsByFit } from "./hardware.js";
 const execute = promisify(execFile);
-
-async function nvidiaGpus(): Promise<{ name: string; memoryMb: number }[]> {
-  try {
-    const { stdout } = await execute("nvidia-smi", ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"], { timeout: 5000, maxBuffer: 16384, windowsHide: true });
-    return stdout.trim().split(/\r?\n/).filter(Boolean).map(line => {
-      const [name, memory] = line.split(",").map(part => part.trim());
-      return { name: name ?? "unknown", memoryMb: Number(memory) || 0 };
-    });
-  } catch { return []; }
-}
+const gigabytes = (bytes: number) => (bytes / 1073741824).toFixed(1) + " GB";
+const diskMessage = (disk: DiskCheck) => `INSUFFICIENT_DISK_SPACE: this install needs ${gigabytes(disk.requiredBytes)} free on the model drive and ${gigabytes(disk.freeBytes ?? 0)} is free. Free space or set EXCESS_MODEL_DIR to a larger drive.`;
 export async function diagnostics() {
   let nvidia: { status: string; devices: string[] } = { status: "unavailable", devices: [] };
   try {
@@ -62,18 +55,18 @@ try {
   } else if (command === "complete-pairing") process.stdout.write(JSON.stringify(await finishPairing(path)) + "\n");
   else if (command === "heartbeat") process.stdout.write(JSON.stringify(await sendHeartbeat(path)) + "\n");
   else if (command === "models") {
-    // What this computer can run: system memory for CPU inference, NVIDIA GPU memory for full offload.
-    const [policy, installed, gpus] = await Promise.all([readWorkerPolicy(stateDir), installedComponents(installDir), nvidiaGpus()]);
-    const memoryMb = Math.floor(os.totalmem() / 1048576), bestGpuMb = Math.max(0, ...gpus.map(gpu => gpu.memoryMb));
+    // What this computer can run: system memory for CPU inference, NVIDIA GPU memory for full offload. Models that fit come first.
+    const [policy, installed, hardware] = await Promise.all([readWorkerPolicy(stateDir), installedComponents(installDir), detectHardware()]);
     const runtimesInstalled = { "llama.cpp": installed.runtimes, "stable-diffusion.cpp": installed.sdRuntimes };
-    print({ product: "EXCESS", hardware: { memoryMb, gpus }, active: { model: policy.model, backend: policy.backend }, runtimesInstalled,
-      models: servedModels().map(entry => ({ id: entry.id, kind: entry.kind, name: entry.displayName, parameters: entry.parameters, quantization: entry.quantization,
-        meteringUnit: entry.meteringUnit, pricedPer: priceUnit(entry.kind).label, runtime: entry.engine,
-        downloadBytes: entry.downloadBytes, installed: installed.models.includes(entry.id), gpuOnly: entry.gpuOnly,
-        cpu: { needsMemoryMb: entry.minMemoryMb, fits: !entry.gpuOnly && memoryMb >= entry.minMemoryMb + 2048 },
-        gpu: { needsGpuMemoryMb: entry.minVramMb, fits: bestGpuMb >= entry.minVramMb } })),
-      next: "excess-worker use <model id> [--gpu], then excess-worker install-model <model id> [--gpu] --accept-download --accept-licenses",
-      note: "Kinds: text (streamed), embedding, transcription and image (buffered). GPU mode needs an NVIDIA GPU with a current driver on Windows or a Vulkan driver on Linux; gpuOnly models never run on the CPU. Fit estimates are guidance; the worker's local check decides." });
+    const rated = modelsByFit(servedModels(), hardware);
+    print({ product: "EXCESS", hardware, active: { model: policy.model, backend: policy.backend }, runtimesInstalled,
+      fitsThisComputer: rated.filter(item => item.fit.fits !== "no").map(item => item.entry.id),
+      tooLargeForThisComputer: rated.filter(item => item.fit.fits === "no").map(item => item.entry.id),
+      models: rated.map(({ entry, fit }) => ({ id: entry.id, kind: entry.kind, name: entry.displayName, parameters: entry.parameters, quantization: entry.quantization,
+        meteringUnit: entry.meteringUnit, pricedPer: priceUnit(entry.kind).label, runtime: entry.engine, reasoning: entry.reasoning,
+        downloadBytes: entry.downloadBytes, installed: installed.models.includes(entry.id), gpuOnly: entry.gpuOnly, ...fit })),
+      next: "excess-worker use <model id> [--gpu], then excess-worker install-model <model id> [--gpu] --accept-download --accept-licenses (or excess-worker import <model id> <file.gguf ...> --accept-licenses if you already have the exact file)",
+      note: "Kinds: text (streamed), embedding, transcription and image (buffered). fits says where a model fits: gpu, cpu, gpu or cpu, or no. GPU memory is read from nvidia-smi; other GPUs are not measured. GPU mode needs an NVIDIA GPU with a current driver on Windows or a Vulkan driver on Linux; gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. Fit estimates are guidance; the worker's local check decides." });
   } else if (command === "use") {
     if (positional.length !== 1) throw Error("Usage: worker use <model id> [--gpu | --cpu]");
     const current = await readWorkerPolicy(stateDir), entry = servedModel(positional[0]!);
@@ -83,17 +76,30 @@ try {
       maxMemoryMb: backend === "cpu" ? Math.max(current.maxMemoryMb, entry.minMemoryMb) : current.maxMemoryMb });
     print({ product: "EXCESS", policy, kind: entry.kind, next: `excess-worker install-model ${entry.id}${backend !== "cpu" ? " --gpu" : ""} --accept-download --accept-licenses (if not installed), then excess-worker offer <SYMBOL> <price per ${priceUnit(entry.kind).label}>` });
   } else if (command === "model-plan") {
-    const policy = await readWorkerPolicy(stateDir), id = positional[0] ?? policy.model;
-    print(servedModel(id).kind === "text" ? textInstallationPlan(installDir, id, chosenBackend(policy.backend)) : mediaInstallationPlan(installDir, id, chosenBackend(policy.backend)));
+    const policy = await readWorkerPolicy(stateDir), id = positional[0] ?? policy.model, backend = chosenBackend(policy.backend), text = servedModel(id).kind === "text";
+    const plan = text ? textInstallationPlan(installDir, id, backend) : mediaInstallationPlan(installDir, id, backend);
+    print({ ...plan, disk: await (text ? textInstallDiskCheck(installDir, id, backend) : mediaInstallDiskCheck(installDir, id, backend)).catch(() => null) });
   } else if (command === "install-model") {
     if (!flags.has("--accept-download") || !flags.has("--accept-licenses") || positional.length > 1)
       throw Error("Read worker model-plan, then use install-model [model id] [--gpu] --accept-download --accept-licenses to opt in");
     const policy = await readWorkerPolicy(stateDir), id = positional[0] ?? policy.model;
+    const disk = await (servedModel(id).kind === "text" ? textInstallDiskCheck(installDir, id, chosenBackend(policy.backend)) : mediaInstallDiskCheck(installDir, id, chosenBackend(policy.backend)));
+    if (!disk.sufficient) throw Error(diskMessage(disk));
     // The packaged launcher points EXCESS_REDIST_DIR at the bundled Visual C++ runtime files.
     const install = { consent: true as const, modelId: id, backend: chosenBackend(policy.backend),
       ...(process.env.EXCESS_REDIST_DIR ? { redistDirectory: resolve(process.env.EXCESS_REDIST_DIR) } : {}),
       onProgress: (value: unknown) => process.stdout.write(JSON.stringify({ product: "EXCESS", download: value }) + "\n") };
     print(servedModel(id).kind === "text" ? await installTextAdapter(installDir, install) : await installMediaModel(installDir, install));
+  } else if (command === "import") {
+    // Files the supplier already has (LM Studio, llama.cpp downloads) are checked byte for byte against the pinned entry.
+    if (positional.length < 2 || !flags.has("--accept-licenses")) throw Error("Usage: worker import <model id> <file.gguf> [more split parts...] --accept-licenses");
+    const id = servedModel(positional[0]!).id;
+    let result;
+    try { result = await importModelFiles(installDir, id, positional.slice(1), { consent: true, onProgress: value => process.stdout.write(JSON.stringify({ product: "EXCESS", download: value }) + "\n") }); }
+    catch (error) { if ((error as { code?: string }).code === "INSUFFICIENT_DISK_SPACE") throw Error("INSUFFICIENT_DISK_SPACE: copying these files needs more free space on the model drive; put them on the same drive as EXCESS_MODEL_DIR so they can be hard-linked"); throw error; }
+    print({ product: "EXCESS", ...result,
+      next: result.installed ? `excess-worker use ${id} [--gpu], then excess-worker install-model ${id} [--gpu] --accept-download --accept-licenses (downloads only what is still missing, such as the runtime), then excess-worker offer <SYMBOL> <price>`
+        : `Add the missing files: excess-worker import ${id} <every part> --accept-licenses` });
   } else if (command === "policy") {
     const file = process.argv[3];
     if (process.argv.length > 4) throw Error("Usage: worker policy [policy.json]");
@@ -105,7 +111,7 @@ try {
     } else policy = await readWorkerPolicy(stateDir);
     print({ product: "EXCESS", policy });
   } else if (command === "guide") {
-    print(await workerGuide(path, stateDir, installDir));
+    print(await workerGuide(path, stateDir, installDir, await detectHardware()));
   } else if (command === "offer") {
     const policy = await readWorkerPolicy(stateDir), unit = priceUnit(servedModel(policy.model).kind);
     if (positional.length === 0) print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offer: await readWorkerOffer(stateDir, policy.model) });
@@ -131,7 +137,7 @@ try {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
     print(await runLocalProbe({ stateDir, installDir, signal: controller.signal }));
-  } else throw Error("Usage: worker guide | doctor | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit] | status | run | drain | stop-now | resume | probe");
+  } else throw Error("Usage: worker guide | doctor | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit] | status | run | drain | stop-now | resume | probe");
 } catch (error) {
   const safe = error instanceof Error && !/private|secret|password/i.test(error.message) ? error.message : "Worker identity operation failed";
   // Only a system error code (such as EPERM or ENOSPC) is added; paths and messages stay out of the output.

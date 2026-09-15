@@ -1,4 +1,4 @@
-import { AdapterError, MEDIA_CATALOG, MODEL_CATALOG, createMediaAdapter, createTextAdapter, type Backend, type MediaAdapter, type TextAdapter } from "@excess/adapters";
+import { AdapterError, MEDIA_CATALOG, MODEL_CATALOG, createMediaAdapter, createTextAdapter, textProbeTokens, type Backend, type MediaAdapter, type TextAdapter } from "@excess/adapters";
 import type { MediaKind } from "@excess/protocol";
 
 /** The worker serves exactly one catalog model: a streamed text model or a buffered media model (ADR 0007). */
@@ -7,17 +7,21 @@ export type ServedModel = {
   id: string; kind: ServedKind; displayName: string; parameters: string; quantization: string; capabilityDigest: string;
   model: string; runtime: string; engine: "llama.cpp" | "stable-diffusion.cpp"; meteringUnit: string;
   minMemoryMb: number; minVramMb: number; gpuOnly: boolean; downloadBytes: number;
+  /** Most tokens a successful local probe may generate: reasoning models need room to reach their answer. */
+  probeMaxTokens: number; reasoning: boolean;
 };
 export type ServedAdapter = TextAdapter | MediaAdapter;
 export function servedModel(id: string): ServedModel {
   const text = MODEL_CATALOG.find(entry => entry.id === id);
   if (text) return { id: text.id, kind: "text", displayName: text.displayName, parameters: text.parameters, quantization: text.quantization, capabilityDigest: text.capabilityDigest,
     model: text.capability.model, runtime: text.capability.runtime, engine: "llama.cpp", meteringUnit: "output_token",
-    minMemoryMb: text.minMemoryMb, minVramMb: text.minVramMb, gpuOnly: false, downloadBytes: text.artifacts.reduce((sum, item) => sum + item.bytes, 0) };
+    minMemoryMb: text.minMemoryMb, minVramMb: text.minVramMb, gpuOnly: false, downloadBytes: text.artifacts.reduce((sum, item) => sum + item.bytes, 0),
+    probeMaxTokens: textProbeTokens(text), reasoning: text.info.reasoning };
   const media = MEDIA_CATALOG.find(entry => entry.id === id);
   if (media) return { id: media.id, kind: media.kind, displayName: media.displayName, parameters: media.parameters, quantization: media.quantization, capabilityDigest: media.capabilityDigest,
     model: media.capability.model, runtime: media.capability.runtime, engine: media.runtime, meteringUnit: media.capability.meteringUnit,
-    minMemoryMb: media.minMemoryMb, minVramMb: media.minVramMb, gpuOnly: media.gpuOnly, downloadBytes: media.artifacts.reduce((sum, item) => sum + item.bytes, 0) };
+    minMemoryMb: media.minMemoryMb, minVramMb: media.minVramMb, gpuOnly: media.gpuOnly, downloadBytes: media.artifacts.reduce((sum, item) => sum + item.bytes, 0),
+    probeMaxTokens: 0, reasoning: false };
   throw new AdapterError("UNKNOWN_MODEL");
 }
 export const servedModels = (): ServedModel[] => [...MODEL_CATALOG, ...MEDIA_CATALOG].map(entry => servedModel(entry.id));

@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join,resolve } from "node:path";
 import { AdapterError,RUNTIME_REDIST,SD_RUNTIME_REDIST,currentPlatform,mediaCatalogEntry,runtimeArtifacts,sdRuntimeArtifacts,sdServerExecutable,serverExecutable,
   type Backend,type MediaModelEntry,type MediaRuntime,type Platform } from "./manifest.js";
-import { backendOf,copyRedist,hashFile,inside,installComponent,limitsFor,modelDirectory,noLinks,platformOf,runtimeDirectory,verifyRuntimeAt,type InstallProgress,type RuntimeSpec } from "./install.js";
+import { backendOf,copyRedist,hashFile,inside,installComponent,installDiskCheck,limitsFor,modelDirectory,noLinks,platformOf,runtimeDirectory,verifyRuntimeAt,type DiskCheck,type InstallProgress,type RuntimeSpec } from "./install.js";
 import { DEFAULT_ZIP_LIMITS,type ZipLimits } from "./zip.js";
 import type { MediaKind } from "@excess/protocol";
 
@@ -68,6 +68,11 @@ export async function verifyMediaInstallation(directory:string,modelId:string,ba
     return {directory:root,serverPath,files,capabilityDigest:entry.capabilityDigest,modelId:entry.id,kind:entry.kind,runtime:entry.runtime,backend:chosen};
   } catch(error) {if(error instanceof AdapterError)throw error;throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");}
 }
+/** Disk preflight for installing a media model and its runtime on this platform. */
+export async function mediaInstallDiskCheck(directory:string,modelId:string,backend:Backend="cpu"):Promise<DiskCheck> {
+  const root=resolve(directory),{entry,backend:chosen}=selected(modelId,backend),spec=mediaRuntimeSpec(root,entry,chosen,platformOf());
+  return installDiskCheck(root,[{target:spec.directory,artifacts:spec.artifacts,limits:spec.limits},{target:modelDirectory(root,entry.id),artifacts:entry.artifacts,limits:null}]);
+}
 /** Installs a media model and its runtime after explicit consent, reusing whatever is already verified. GPU-only models
  * are refused on the CPU backend before anything is downloaded. */
 export async function installMediaModel(directory:string,options:{consent:true;modelId:string;backend?:Backend;redistDirectory?:string;signal?:AbortSignal;onProgress?:(value:InstallProgress)=>void}):Promise<MediaInstallation> {
@@ -77,6 +82,7 @@ export async function installMediaModel(directory:string,options:{consent:true;m
   // The pinned stable-diffusion.cpp Linux build links against glibc 2.38 (Ubuntu 24.04 or newer); refuse before any download.
   if(entry.runtime==="stable-diffusion.cpp"&&platform==="linux-x64"&&!glibcAtLeast(runtimeGlibcVersion(),2,38))throw new AdapterError("SD_RUNTIME_NEEDS_GLIBC_2_38");
   await mkdir(root,{recursive:true});await noLinks(root);
+  if(!(await mediaInstallDiskCheck(root,entry.id,backend)).sufficient)throw new AdapterError("INSUFFICIENT_DISK_SPACE");
   const signal=options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(6*60*60*1000)]):AbortSignal.timeout(6*60*60*1000);
   await installComponent(root,spec.directory,spec.artifacts,spec.limits,()=>verifyRuntimeAt(spec),{backend,platform,runtime:entry.runtime},signal,options.onProgress);
   if(options.redistDirectory&&platform==="win32-x64")await copyRedist(join(spec.directory,"runtime"),spec.redist,options.redistDirectory);

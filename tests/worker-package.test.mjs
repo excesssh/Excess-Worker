@@ -40,9 +40,17 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   let guide=JSON.parse(run("guide").stdout);
   assert.deepEqual([guide.next,guide.origin,guide.model,guide.backend,guide.steps.map(s=>s.done)],["pair",null,"qwen3-4b","cpu",[false,true,false,false,false]]);
   const models=JSON.parse(run("models").stdout);
-  assert.deepEqual(models.models.map(m=>m.id),["qwen3-4b","qwen3-8b","qwen3-14b","qwen3-30b-a3b","qwen3-embedding-0.6b","qwen3-asr-0.6b","sd-turbo","flux1-schnell"]);
-  assert.deepEqual(models.models.map(m=>m.kind),["text","text","text","text","embedding","transcription","image","image"]);
-  assert.deepEqual([models.models.at(-1).gpuOnly,models.models.at(-1).cpu.fits],[true,false],"FLUX is flagged GPU-only and never fits the CPU");
+  assert.deepEqual(models.models.map(m=>m.id).sort(),["flux1-schnell","gpt-oss-120b","gpt-oss-20b","llama-3.1-8b","llama-3.3-70b","phi-4","phi-4-mini","qwen3-14b","qwen3-30b-a3b",
+    "qwen3-30b-a3b-instruct-2507","qwen3-32b","qwen3-4b","qwen3-8b","qwen3-asr-0.6b","qwen3-coder-30b-a3b","qwen3-embedding-0.6b","sd-turbo"]);
+  assert.deepEqual(Object.fromEntries(models.models.filter(m=>m.kind!=="text").map(m=>[m.id,m.kind])),{"qwen3-embedding-0.6b":"embedding","qwen3-asr-0.6b":"transcription","sd-turbo":"image","flux1-schnell":"image"});
+  // Models that fit this computer are listed first, and the summary lists agree with each model's own fit.
+  const fitting=models.models.map(m=>m.fits!=="no");
+  assert.deepEqual(fitting,[...fitting].sort((a,b)=>Number(b)-Number(a)));
+  assert.deepEqual([models.fitsThisComputer,models.tooLargeForThisComputer],[models.models.filter(m=>m.fits!=="no").map(m=>m.id),models.models.filter(m=>m.fits==="no").map(m=>m.id)]);
+  const flux=models.models.find(m=>m.id==="flux1-schnell");
+  assert.deepEqual([flux.gpuOnly,flux.cpu.fits],[true,false],"FLUX is flagged GPU-only and never fits the CPU");
+  assert.deepEqual([models.models.find(m=>m.id==="gpt-oss-120b").reasoning,models.models.find(m=>m.id==="gpt-oss-120b").cpu.needsMemoryMb],[true,61952]);
+  assert.ok(Array.isArray(guide.models.fitsThisComputer)&&guide.steps[2].note.includes("excess-worker import qwen3-4b"));
   assert.notEqual(run("use","flux1-schnell","--cpu").status,0,"a GPU-only model cannot be chosen for the CPU");
   assert.match(JSON.parse(run("use","sd-turbo").stdout).next,/price per image/);
   assert.equal(JSON.parse(run("model-plan").stdout).runtime,"stable-diffusion.cpp");

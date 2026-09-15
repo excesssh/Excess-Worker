@@ -11,6 +11,26 @@ const eventSchema = z.object({
 });
 const invalid = () => new AdapterError("INVALID_RUNTIME_STREAM");
 
+/** Follows generated token IDs until the answer marker (the loaded vocabulary's tokenization of a format's answerMarker)
+ * has appeared. Everything up to and including it is reasoning: metered, but its text is never delivered. */
+export class AnswerGate {
+  private matched = 0;
+  revealed = false;
+  constructor(private readonly marker: readonly number[]) { if (!marker.length) throw new AdapterError("RUNTIME_RESPONSE_INVALID"); }
+  /** Index just past the marker within these tokens, or -1 while the answer has not begun. */
+  feed(tokens: readonly number[]): number {
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index]!;
+      this.matched = token === this.marker[this.matched] ? this.matched + 1 : token === this.marker[0] ? 1 : 0;
+      if (this.matched === this.marker.length) { this.revealed = true; return index + 1; }
+    }
+    return -1;
+  }
+}
+/** A reasoning run that ends before its answer began: the output budget ran out, or the model stopped. */
+export const unansweredReasoning = (finishReason: "stop" | "length") =>
+  new AdapterError(finishReason === "length" ? "REASONING_EXCEEDED_OUTPUT_TOKENS" : "REASONING_WITHOUT_ANSWER");
+
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
   let abort: (() => void) | undefined;
@@ -26,7 +46,8 @@ async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promis
 // Native /completion at pinned llama.cpp 5266f24 (server-task.cpp and
 // server-context.cpp): partial events carry token IDs; the stop:true event
 // carries empty content/tokens and the final count. This is not OpenAI SSE.
-export async function readLlamaStream(response: Response, maxTokens: number, onChunk: ChunkCallback, signal?: AbortSignal): Promise<TextResult> {
+// With a gate, reasoning tokens are streamed as chunks with an empty delta: the buyer sees them counted, never their text.
+export async function readLlamaStream(response: Response, maxTokens: number, onChunk: ChunkCallback, signal?: AbortSignal, gate?: AnswerGate): Promise<TextResult> {
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > TEXT_LIMITS.maxOutputTokens || !response.ok || !response.body ||
       response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
     await response.body?.cancel().catch(() => {}); throw invalid();
@@ -66,13 +87,21 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
     // Such a count gap fails closed; never invent missing metering evidence.
     tokenCount += value.tokens.length;
     if (tokenCount > maxTokens || value.tokens_predicted !== tokenCount) throw invalid();
-    text += value.content;
-    const contentBytes = Buffer.byteLength(value.content, "utf8");
+    let content = value.content;
+    if (gate && !gate.revealed) {
+      const after = gate.feed(value.tokens);
+      // A native event carries one generated token. One that completes the marker and also carries answer tokens cannot be
+      // split into withheld and delivered text, so it fails closed.
+      if (after >= 0 && after !== value.tokens.length) throw invalid();
+      content = "";
+    }
+    text += content;
+    const contentBytes = Buffer.byteLength(content, "utf8");
     if (Buffer.byteLength(text, "utf8") > TEXT_LIMITS.maxOutputBytes || contentBytes > TEXT_LIMITS.maxChunkBytes) throw invalid();
     // Keep each emitted chunk within the per-chunk token and byte bounds.
     if (pendingTokens.length + value.tokens.length > TEXT_LIMITS.maxChunkTokens ||
         Buffer.byteLength(pendingText, "utf8") + contentBytes > TEXT_LIMITS.maxChunkBytes) await flush();
-    pendingText += value.content; pendingTokens.push(...value.tokens);
+    pendingText += content; pendingTokens.push(...value.tokens);
     if (pendingTokens.length >= 8) await flush();
   };
   const endLine = async () => {
@@ -110,6 +139,7 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
     await consume(tail);
     if (!finished || line || data.length) throw invalid();
     signal?.throwIfAborted();
+    if (gate && !gate.revealed) throw unansweredReasoning(finishReason);
     return parseTextResult({ text, generatedTokens: tokenCount, finishReason });
   } catch (error) { await reader.cancel().catch(() => {}); throw error; }
   finally { reader.releaseLock(); }

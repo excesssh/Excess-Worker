@@ -39,7 +39,7 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
       proof.model !== entry.model || proof.runtime !== entry.runtime ||
       proof.threads !== policy.threads || proof.maxMemoryMb !== policy.maxMemoryMb ||
       !Number.isFinite(probedAt) || probedAt < startedAt || probedAt > Date.now() ||
-      !Number.isSafeInteger(proof.generatedTokens) || Number(proof.generatedTokens) < 0 || Number(proof.generatedTokens) > 8 ||
+      !Number.isSafeInteger(proof.generatedTokens) || Number(proof.generatedTokens) < 0 || Number(proof.generatedTokens) > Math.max(8, entry.probeMaxTokens) ||
       !Number.isSafeInteger(proof.peakRssMb) || Number(proof.peakRssMb) < 0) throw Error("Invalid local probe observation");
   for (const name of ["nativePid", "guardianPid"]) {
     if (proof[name] !== undefined && (!Number.isSafeInteger(proof[name]) || Number(proof[name]) < 1)) throw Error("Invalid local probe process identity");
