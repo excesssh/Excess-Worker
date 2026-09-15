@@ -28,6 +28,18 @@ export function mediaRuntimeSpec(root:string,entry:MediaModelEntry,backend:Backe
   if(!limits)throw new AdapterError("BACKEND_UNSUPPORTED_ON_PLATFORM");
   return {directory:sdRuntimeDirectory(root,backend),artifacts:sdRuntimeArtifacts(backend,platform),server:sdServerExecutable(platform),limits,redist:SD_RUNTIME_REDIST,platform};
 }
+/** The running process's glibc version on Linux ("2.35"), or null elsewhere or when unknown. */
+export function runtimeGlibcVersion():string|null {
+  const header=(process.report?.getReport() as {header?:{glibcVersionRuntime?:unknown}}|undefined)?.header;
+  return typeof header?.glibcVersionRuntime==="string"?header.glibcVersionRuntime:null;
+}
+/** Whether a glibc version string is at least major.minor; an unknown version is treated as too old. */
+export function glibcAtLeast(version:string|null,major:number,minor:number):boolean {
+  const match=/^(\d+)\.(\d+)/.exec(version??"");
+  if(!match)return false;
+  const [have,haveMinor]=[Number(match[1]),Number(match[2])];
+  return have>major||(have===major&&haveMinor>=minor);
+}
 /** What installing one media model on one backend downloads on this platform (the shared runtime plus the model files). */
 export function mediaInstallationPlan(directory:string,modelId:string,backend:Backend="cpu") {
   if(typeof directory!=="string"||!directory||directory.length>1024)throw new AdapterError("INVALID_INSTALL_DIRECTORY");
@@ -62,6 +74,8 @@ export async function installMediaModel(directory:string,options:{consent:true;m
   if(options?.consent!==true)throw new AdapterError("MODEL_INSTALL_CONSENT_REQUIRED");
   const {entry,backend}=selected(options.modelId,options.backend??"cpu"),platform=platformOf(),root=resolve(directory);
   const spec=mediaRuntimeSpec(root,entry,backend,platform);
+  // The pinned stable-diffusion.cpp Linux build links against glibc 2.38 (Ubuntu 24.04 or newer); refuse before any download.
+  if(entry.runtime==="stable-diffusion.cpp"&&platform==="linux-x64"&&!glibcAtLeast(runtimeGlibcVersion(),2,38))throw new AdapterError("SD_RUNTIME_NEEDS_GLIBC_2_38");
   await mkdir(root,{recursive:true});await noLinks(root);
   const signal=options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(6*60*60*1000)]):AbortSignal.timeout(6*60*60*1000);
   await installComponent(root,spec.directory,spec.artifacts,spec.limits,()=>verifyRuntimeAt(spec),{backend,platform,runtime:entry.runtime},signal,options.onProgress);
