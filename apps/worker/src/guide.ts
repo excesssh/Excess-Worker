@@ -15,13 +15,13 @@ export async function workerGuide(identityPath: string, stateDir: string, instal
   let state: string | null = null;
   try { state = (await readWorkerStatus(stateDir)).state; } catch { /* Never run. */ }
   const installed = await installedComponents(installDir);
-  const gpu = policy.backend === "cuda" ? " --gpu" : "";
+  const gpu = policy.backend !== "cpu" ? " --gpu" : "";
   const steps = [
     { step: "pair", done: Boolean(identity?.deviceId),
       command: identity ? "excess-worker complete-pairing" : "excess-worker pair <exchange address, for example https://excess.sh> \"<device name>\"",
       note: identity ? "Approve the pairing code in the web app (Supply, Pair a device) first." : "Prints a code to approve in the web app under Supply, Pair a device." },
     { step: "choose-model", done: true, command: "excess-worker models, then excess-worker use <model id> [--gpu]",
-      note: `Serving ${entry.displayName} on ${policy.backend === "cuda" ? "an NVIDIA GPU" : "the CPU"}. Bigger models earn more per token but need more memory.` },
+      note: `Serving ${entry.displayName} on ${policy.backend === "cuda" ? "an NVIDIA GPU" : policy.backend === "vulkan" ? "a GPU through Vulkan" : "the CPU"}. Bigger models earn more per token but need more memory.` },
     { step: "install-model", done: installed.models.includes(policy.model) && installed.runtimes.includes(policy.backend),
       command: `excess-worker install-model ${policy.model}${gpu} --accept-download --accept-licenses`,
       note: "Downloads pinned, hash-checked files: llama.cpp (MIT) and the Qwen3 model (Apache-2.0)." },

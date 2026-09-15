@@ -2,13 +2,17 @@ import { createHash,randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile,lstat,mkdir,open,readFile,readdir,rename,rm,writeFile } from "node:fs/promises";
 import { dirname,isAbsolute,join,parse,relative,resolve,sep } from "node:path";
-import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,RUNTIME_ARTIFACTS,RUNTIME_REDIST,catalogEntry,type Artifact,type Backend } from "./manifest.js";
-import { scanSafeZip,DEFAULT_ZIP_LIMITS,type ZipLimits } from "./zip.js";
+import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,RUNTIME_REDIST,catalogEntry,currentPlatform,runtimeArtifacts,serverExecutable,type Artifact,type Backend,type Platform } from "./manifest.js";
+import { scanSafeZip,DEFAULT_ZIP_LIMITS,type ZipEntry,type ZipLimits } from "./zip.js";
+import { scanSafeTarGz } from "./tar.js";
 
 const hosts=new Set(["github.com","release-assets.githubusercontent.com","objects.githubusercontent.com","raw.githubusercontent.com","huggingface.co","us.aws.cdn.hf.co","cas-bridge.xethub.hf.co"]);
-const GiB=1024*1024*1024;
-// CUDA runtime archives are far larger than the CPU build; each backend has its own reviewed bounds.
-const ZIP_LIMITS:Record<Backend,ZipLimits>={cpu:DEFAULT_ZIP_LIMITS,cuda:{maxInputBytes:512*1024*1024,maxTotalBytes:4*GiB,maxEntryBytes:2*GiB}};
+const MiB=1024*1024,GiB=1024*MiB;
+// Each platform and backend archive has its own reviewed bounds; CUDA runtimes are far larger than the CPU builds.
+const ARCHIVE_LIMITS:Readonly<Record<Platform,Partial<Record<Backend,ZipLimits>>>>={
+  "win32-x64":{cpu:DEFAULT_ZIP_LIMITS,cuda:{maxInputBytes:512*MiB,maxTotalBytes:4*GiB,maxEntryBytes:2*GiB}},
+  "linux-x64":{cpu:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB},vulkan:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:256*MiB}},
+};
 export interface InstallProgress { artifact:string; receivedBytes:number; totalBytes:number }
 export interface Installation {directory:string;serverPath:string;modelPath:string;capabilityDigest:string;modelId:string;backend:Backend}
 
@@ -16,20 +20,36 @@ function backendOf(value:unknown):Backend {
   if(!BACKENDS.includes(value as Backend))throw new AdapterError("INVALID_BACKEND");
   return value as Backend;
 }
+function platformOf():Platform {
+  const platform=currentPlatform();
+  if(!platform)throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
+  return platform;
+}
+function limitsFor(platform:Platform,backend:Backend):ZipLimits {
+  const limits=ARCHIVE_LIMITS[platform][backend];
+  if(!limits)throw new AdapterError("BACKEND_UNSUPPORTED_ON_PLATFORM");
+  return limits;
+}
+const isArchive=(name:string)=>name.endsWith(".zip")||name.endsWith(".tar.gz");
+function scanArchive(name:string,input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEntry)=>void):void {
+  if(name.endsWith(".zip"))scanSafeZip(input,limits,onEntry);else scanSafeTarGz(input,limits,onEntry);
+}
+// Windows file names are case-insensitive, so runtime files are compared case-insensitively there only.
+const fileKey=(platform:Platform,name:string)=>platform==="win32-x64"?name.toLowerCase():name;
 const runtimeDirectory=(root:string,backend:Backend)=>join(resolve(root),"runtimes",backend);
 const modelDirectory=(root:string,modelId:string)=>join(resolve(root),"models",modelId);
 
-/** What installing one catalog model on one backend downloads, and what it needs. The root holds shared
+/** What installing one catalog model on one backend downloads on this platform, and what it needs. The root holds shared
  * runtimes (`runtimes/<backend>`), models (`models/<id>`) and an optional offline cache (`downloads/<sha256>`). */
 export function textInstallationPlan(directory:string,modelId:string=DEFAULT_MODEL_ID,backend:Backend="cpu") {
   if(typeof directory!=="string"||!directory||directory.length>1024)throw new AdapterError("INVALID_INSTALL_DIRECTORY");
-  const entry=catalogEntry(modelId),selected=backendOf(backend);
-  const artifacts=[...RUNTIME_ARTIFACTS[selected],...entry.artifacts];
+  const entry=catalogEntry(modelId),selected=backendOf(backend),platform=currentPlatform()??"win32-x64";
+  const artifacts=[...runtimeArtifacts(selected,platform),...entry.artifacts];
   const downloadBytes=artifacts.reduce((sum,artifact)=>sum+artifact.bytes,0);
-  return {directory:resolve(directory),modelId:entry.id,backend:selected,capabilityDigest:entry.capabilityDigest,platform:"win32-x64",
+  return {directory:resolve(directory),modelId:entry.id,backend:selected,capabilityDigest:entry.capabilityDigest,platform,
     model:{displayName:entry.displayName,parameters:entry.parameters,quantization:entry.quantization,minMemoryMb:entry.minMemoryMb,minVramMb:entry.minVramMb},
     artifacts,licences:{runtime:"MIT",model:"Apache-2.0"},downloadBytes,
-    diskBudgetBytes:downloadBytes+ZIP_LIMITS[selected].maxTotalBytes,requiresExplicitConsent:true};
+    diskBudgetBytes:downloadBytes+limitsFor(platform,selected).maxTotalBytes,requiresExplicitConsent:true};
 }
 export async function noLinks(path:string):Promise<void> {
   const absolute=resolve(path),root=parse(absolute).root;
@@ -55,31 +75,33 @@ async function hashFile(path:string,expectedBytes:number):Promise<string> {
   return hash.digest("hex");
 }
 async function verifyRuntime(root:string,backend:Backend):Promise<string> {
+  const platform=platformOf(),limits=limitsFor(platform,backend),server=fileKey(platform,serverExecutable(platform));
   const directory=runtimeDirectory(root,backend);await noLinks(directory);
   const expected=new Map<string,{bytes:number;sha256:string}>();let servers=0;
-  for(const artifact of RUNTIME_ARTIFACTS[backend]) {
+  for(const artifact of runtimeArtifacts(backend,platform)) {
     if(await hashFile(inside(directory,artifact.name),artifact.bytes)!==artifact.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
-    if(!artifact.name.endsWith(".zip"))continue;
-    scanSafeZip(await readFile(inside(directory,artifact.name)),ZIP_LIMITS[backend],entry=>{
-      if(expected.has(entry.name.toLowerCase()))throw new AdapterError("UNSAFE_RUNTIME_ARCHIVE");
-      if(entry.name.split("/").at(-1)==="llama-server.exe")servers++;
-      expected.set(entry.name.toLowerCase(),{bytes:entry.data.length,sha256:createHash("sha256").update(entry.data).digest("hex")});
+    if(!isArchive(artifact.name))continue;
+    scanArchive(artifact.name,await readFile(inside(directory,artifact.name)),limits,entry=>{
+      const key=fileKey(platform,entry.name);
+      if(expected.has(key))throw new AdapterError("UNSAFE_RUNTIME_ARCHIVE");
+      if(key.split("/").at(-1)===server)servers++;
+      expected.set(key,{bytes:entry.data.length,sha256:createHash("sha256").update(entry.data).digest("hex")});
     });
   }
-  const serverEntries=[...expected.keys()].filter(name=>name.split("/").at(-1)==="llama-server.exe");
+  const serverEntries=[...expected.keys()].filter(name=>name.split("/").at(-1)===server);
   if(servers!==1||serverEntries.length!==1)throw new AdapterError("RUNTIME_SERVER_MISSING");
   const directories=new Set<string>();
   for(const name of expected.keys()){const parts=name.split("/");for(let n=1;n<parts.length;n++)directories.add(parts.slice(0,n).join("/"));}
   const seen=new Set<string>();
   async function inspect(relativeDirectory="") {
     for(const entry of await readdir(join(directory,"runtime",relativeDirectory),{withFileTypes:true})) {
-      const name=(relativeDirectory?relativeDirectory+"/":"")+entry.name,key=name.toLowerCase();
+      const name=(relativeDirectory?relativeDirectory+"/":"")+entry.name,key=fileKey(platform,name);
       if(entry.isSymbolicLink()||(!entry.isFile()&&!entry.isDirectory()))throw new AdapterError("UNEXPECTED_RUNTIME_FILE");
       if(entry.isDirectory()){if(!directories.has(key))throw new AdapterError("UNEXPECTED_RUNTIME_FILE");await inspect(name);continue;}
       const file=expected.get(key);
       if(!file){
-        // Only the pinned Visual C++ runtime files may sit beside the server, and only with their exact bytes.
-        const redist=relativeDirectory?undefined:RUNTIME_REDIST.find(item=>item.name===key);
+        // Only the pinned Visual C++ runtime files may sit beside a Windows server, and only with their exact bytes.
+        const redist=relativeDirectory||platform!=="win32-x64"?undefined:RUNTIME_REDIST.find(item=>item.name===key);
         if(!redist)throw new AdapterError("UNEXPECTED_RUNTIME_FILE");
         if(await hashFile(inside(join(directory,"runtime"),name),redist.bytes)!==redist.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
         continue;
@@ -162,16 +184,18 @@ async function installComponent(root:string,target:string,artifacts:readonly Art
   await mkdir(dirname(target),{recursive:true});await noLinks(dirname(target));
   const stage=target+".install-"+randomUUID();
   await mkdir(stage,{mode:0o700});
+  // Linux runtime files must be executable by their owner; nobody else gets access on either platform.
+  const mode=process.platform==="win32"?0o600:0o700;
   try {
     for(const artifact of artifacts) {
       const path=inside(stage,artifact.name);await mkdir(dirname(path),{recursive:true});
       await download(artifact,path,join(root,"downloads"),signal,onProgress);
     }
-    if(limits)for(const artifact of artifacts.filter(item=>item.name.endsWith(".zip"))) {
+    if(limits)for(const artifact of artifacts.filter(item=>isArchive(item.name))) {
       const writes:Promise<void>[]=[];
-      scanSafeZip(await readFile(inside(stage,artifact.name)),limits,entry=>{
+      scanArchive(artifact.name,await readFile(inside(stage,artifact.name)),limits,entry=>{
         const path=inside(join(stage,"runtime"),entry.name);
-        writes.push(mkdir(dirname(path),{recursive:true}).then(()=>writeFile(path,entry.data,{flag:"wx",mode:0o600})));
+        writes.push(mkdir(dirname(path),{recursive:true}).then(()=>writeFile(path,entry.data,{flag:"wx",mode})));
       });
       await Promise.all(writes);
     }
@@ -207,12 +231,13 @@ export async function installRuntimeRedist(directory:string,backend:Backend,sour
 /** Installs a catalog model and its backend runtime after explicit consent, reusing whatever is already verified. */
 export async function installTextAdapter(directory:string,options:{consent:true;modelId?:string;backend?:Backend;redistDirectory?:string;signal?:AbortSignal;onProgress?:(value:InstallProgress)=>void}):Promise<Installation> {
   if(options?.consent!==true)throw new AdapterError("MODEL_INSTALL_CONSENT_REQUIRED");
-  if(process.platform!=="win32"||process.arch!=="x64")throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
+  const platform=platformOf();
   const root=resolve(directory),entry=catalogEntry(options.modelId??DEFAULT_MODEL_ID),backend=backendOf(options.backend??"cpu");
+  const artifacts=runtimeArtifacts(backend,platform),limits=limitsFor(platform,backend);
   await mkdir(root,{recursive:true});await noLinks(root);
   const signal=options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(6*60*60*1000)]):AbortSignal.timeout(6*60*60*1000);
-  await installComponent(root,runtimeDirectory(root,backend),RUNTIME_ARTIFACTS[backend],ZIP_LIMITS[backend],()=>verifyRuntime(root,backend),{backend},signal,options.onProgress);
-  if(options.redistDirectory)await installRuntimeRedist(root,backend,options.redistDirectory);
+  await installComponent(root,runtimeDirectory(root,backend),artifacts,limits,()=>verifyRuntime(root,backend),{backend,platform},signal,options.onProgress);
+  if(options.redistDirectory&&platform==="win32-x64")await installRuntimeRedist(root,backend,options.redistDirectory);
   await installComponent(root,modelDirectory(root,entry.id),entry.artifacts,null,()=>verifyModel(root,entry.id),{modelId:entry.id,capabilityDigest:entry.capabilityDigest},signal,options.onProgress);
   return verifyInstallation(root,entry.id,backend);
 }

@@ -11,7 +11,8 @@ export type ResourceObservation = { freeMemoryMb: number | null; idleSeconds: nu
 // Qwen3-4B Q4_K_M with an 8,192-token context needs about 3 GB of resident memory on CPU.
 // A 2,048-token answer at CPU speeds of a few tokens per second needs several
 // minutes, so the default run time is the approved maximum rather than 60 seconds.
-export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 4096, runSeconds: TEXT_LIMITS.maxRunSeconds, idleOnly: true, idleSeconds: 60, model: DEFAULT_MODEL_ID, backend: "cpu" });
+// Idle detection exists only on Windows desktops, so Linux workers (usually servers) default to running whenever allowed.
+export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 4096, runSeconds: TEXT_LIMITS.maxRunSeconds, idleOnly: process.platform === "win32", idleSeconds: 60, model: DEFAULT_MODEL_ID, backend: "cpu" });
 export function parseWorkerPolicy(input: unknown): WorkerPolicy {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw Error("Invalid worker policy");
   const value = input as Record<string, unknown>;

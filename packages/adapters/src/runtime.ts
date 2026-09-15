@@ -5,7 +5,7 @@ import { dirname,join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { TEXT_LIMITS } from "@excess/protocol";
-import { AdapterError,DEFAULT_MODEL_ID,catalogEntry,parseTextRequest,parseTextResult,type Backend,type TextRequest,type TextResult } from "./manifest.js";
+import { AdapterError,DEFAULT_MODEL_ID,catalogEntry,currentPlatform,parseTextRequest,parseTextResult,type Backend,type TextRequest,type TextResult } from "./manifest.js";
 import { verifyInstallation } from "./install.js";
 import { startSupervisedProcess,type ManagedProcess } from "./process.js";
 import { readLlamaStream,type ChunkCallback } from "./stream.js";
@@ -14,7 +14,7 @@ export interface AdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:num
 export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
 export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal;onChunk?:ChunkCallback}):Promise<TextResult>;stop():Promise<void>}
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
-  modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda"]).optional()});
+  modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
 // Internal supervisor state (not re-exported by the adapter package entry point).
 // A failed reap retains both its process and rejected barrier: replacement must
 // fail closed instead of forgetting a possibly live native process.
@@ -58,18 +58,26 @@ export function createTextAdapter(installDir:string,inputOptions:AdapterOptions)
   async function ensure(signal:AbortSignal) {
     if(processes.process?.alive())return;
     await processes.stop();signal.throwIfAborted();
-    if(process.platform!=="win32"||process.arch!=="x64")throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
+    const platform=currentPlatform();
+    if(!platform)throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
     const installed=await verifyInstallation(installDir,entry.id,backend);signal.throwIfAborted();
     // On CPU the whole model lives in system memory; refuse before starting a runtime the memory cap would kill.
     if(backend==="cpu"&&options.maxMemoryMb<entry.minMemoryMb)throw new AdapterError("ADAPTER_MEMORY_BELOW_MODEL_REQUIREMENT");
     const selectedPort=await port();signal.throwIfAborted();secret=randomBytes(32).toString("base64url");origin=`http://127.0.0.1:${selectedPort}`;
-    const systemRoot=process.env.SystemRoot??"C:\\Windows";
-    const env:NodeJS.ProcessEnv={SystemRoot:systemRoot,WINDIR:systemRoot,PATH:join(systemRoot,"System32"),LLAMA_API_KEY:secret,OMP_NUM_THREADS:String(options.threads)};
-    for(const key of ["TEMP","TMP"])if(process.env[key])env[key]=process.env[key];
+    let env:NodeJS.ProcessEnv;
+    if(platform==="win32-x64") {
+      const systemRoot=process.env.SystemRoot??"C:\\Windows";
+      env={SystemRoot:systemRoot,WINDIR:systemRoot,PATH:join(systemRoot,"System32"),LLAMA_API_KEY:secret,OMP_NUM_THREADS:String(options.threads)};
+      for(const key of ["TEMP","TMP"])if(process.env[key])env[key]=process.env[key];
+    } else {
+      // The Linux build loads its shared libraries from the server's own folder.
+      env={PATH:"/usr/bin:/bin",LD_LIBRARY_PATH:dirname(installed.serverPath),LLAMA_API_KEY:secret,OMP_NUM_THREADS:String(options.threads)};
+      for(const key of ["HOME","TMPDIR"])if(process.env[key])env[key]=process.env[key];
+    }
     processes.attach(startSupervisedProcess(installed.serverPath,["--model",installed.modelPath,"--host","127.0.0.1","--port",String(selectedPort),
       "--threads",String(options.threads),"--threads-batch",String(options.threads),"--threads-http","2","--ctx-size",String(entry.capability.contextTokens),
-      // The CUDA build offloads every layer; the CPU build keeps them all on the processor.
-      "--parallel","1","--n-gpu-layers",backend==="cuda"?"999":"0","--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"],
+      // GPU builds (CUDA, Vulkan) offload every layer; the CPU build keeps them all on the processor.
+      "--parallel","1","--n-gpu-layers",backend==="cpu"?"0":"999","--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"],
       {cwd:dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576}));
     for(;;) {
       signal.throwIfAborted();if(!processes.process?.alive())throw processes.process?.error()??new AdapterError("RUNTIME_EXITED");

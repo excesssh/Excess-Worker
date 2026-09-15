@@ -44,7 +44,9 @@ try {
   const flags = new Set(args.filter(arg => arg.startsWith("--"))), positional = args.filter(arg => !arg.startsWith("--"));
   const stateDir = resolve(process.env.EXCESS_WORKER_HOME ?? ".local/worker"), installDir = resolve(process.env.EXCESS_MODEL_DIR ?? ".local/ai");
   const path = resolve(stateDir, "identity.json");
-  const chosenBackend = (fallback: Backend): Backend => flags.has("--gpu") ? "cuda" : flags.has("--cpu") ? "cpu" : fallback;
+  // --gpu means CUDA on Windows and Vulkan on Linux.
+  const gpuBackend: Backend = process.platform === "win32" ? "cuda" : "vulkan";
+  const chosenBackend = (fallback: Backend): Backend => flags.has("--gpu") ? gpuBackend : flags.has("--cpu") ? "cpu" : fallback;
   if (command === "doctor") print(await diagnostics());
   else if (command === "pair") {
     let exists = false;
@@ -74,7 +76,7 @@ try {
     const current = await readWorkerPolicy(stateDir), entry = catalogEntry(positional[0]!), backend = chosenBackend("cpu");
     const policy = await writeWorkerPolicy(stateDir, { ...current, model: entry.id, backend,
       maxMemoryMb: backend === "cpu" ? Math.max(current.maxMemoryMb, entry.minMemoryMb) : current.maxMemoryMb });
-    print({ product: "EXCESS", policy, next: `excess-worker install-model ${entry.id}${backend === "cuda" ? " --gpu" : ""} --accept-download --accept-licenses (if not installed), then excess-worker offer <SYMBOL> <price per million tokens>` });
+    print({ product: "EXCESS", policy, next: `excess-worker install-model ${entry.id}${backend !== "cpu" ? " --gpu" : ""} --accept-download --accept-licenses (if not installed), then excess-worker offer <SYMBOL> <price per million tokens>` });
   } else if (command === "model-plan") {
     const policy = await readWorkerPolicy(stateDir);
     print(textInstallationPlan(installDir, positional[0] ?? policy.model, chosenBackend(policy.backend)));

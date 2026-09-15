@@ -6,8 +6,17 @@ const artifact=(value:Artifact):Artifact=>Object.freeze({...value});
 const RELEASE="https://github.com/ggml-org/llama.cpp/releases/download/b10809/";
 const RUNTIME_LICENCE=artifact({ name:"licences/llama.cpp-MIT.txt", bytes:1078, sha256:"94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d", url:"https://raw.githubusercontent.com/ggml-org/llama.cpp/5266f24da75dc449bd56cbed7addb9c8e4a6a73e/LICENSE" });
 
-/** Pinned llama.cpp b10809 builds. Every backend runs the same release, so a model's capability is backend-independent. */
-export type Backend="cpu"|"cuda";
+/** Pinned llama.cpp b10809 builds. Every platform and backend runs the same release, so a model's capability is
+ * platform- and backend-independent. Windows GPUs use CUDA; Linux GPUs use Vulkan (llama.cpp publishes no Linux CUDA build). */
+export type Platform="win32-x64"|"linux-x64";
+export type Backend="cpu"|"cuda"|"vulkan";
+export const PLATFORM_BACKENDS:Readonly<Record<Platform,readonly Backend[]>>=Object.freeze({"win32-x64":Object.freeze(["cpu","cuda"] as Backend[]),"linux-x64":Object.freeze(["cpu","vulkan"] as Backend[])});
+export const GPU_BACKEND:Readonly<Record<Platform,Backend>>=Object.freeze({"win32-x64":"cuda","linux-x64":"vulkan"});
+export function currentPlatform():Platform|null {
+  if(process.arch!=="x64")return null;
+  return process.platform==="win32"?"win32-x64":process.platform==="linux"?"linux-x64":null;
+}
+export const serverExecutable=(platform:Platform):string=>platform==="win32-x64"?"llama-server.exe":"llama-server";
 /** Microsoft Visual C++ runtime files (14.51.36247.0) that llama.cpp needs and a clean Windows Server lacks
  * (it ships 14.0 without vcruntime140_1.dll). The worker package bundles them; the installer copies only these exact files beside the server. */
 export interface RedistFile { readonly name:string; readonly bytes:number; readonly sha256:string }
@@ -16,8 +25,9 @@ export const RUNTIME_REDIST:readonly RedistFile[]=Object.freeze([
   Object.freeze({name:"vcruntime140_1.dll",bytes:50112,sha256:"a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"}),
   Object.freeze({name:"msvcp140.dll",bytes:643512,sha256:"7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"}),
 ]);
-export const BACKENDS:readonly Backend[]=Object.freeze(["cpu","cuda"]);
-export const RUNTIME_ARTIFACTS:Readonly<Record<Backend,readonly Artifact[]>>=Object.freeze({
+export const BACKENDS:readonly Backend[]=Object.freeze(["cpu","cuda","vulkan"]);
+/** The Windows runtimes, kept under their original name for existing callers. */
+export const RUNTIME_ARTIFACTS:Readonly<Record<"cpu"|"cuda",readonly Artifact[]>>=Object.freeze({
   cpu:Object.freeze([
     artifact({ name:"runtime.zip", bytes:18407457, sha256:"9df3158ed228a641a4b127942d7f459f24c9e13f04682659d05c00c80099b6b5", url:RELEASE+"llama-b10809-bin-win-cpu-x64.zip" }),
     RUNTIME_LICENCE]),
@@ -27,6 +37,22 @@ export const RUNTIME_ARTIFACTS:Readonly<Record<Backend,readonly Artifact[]>>=Obj
     artifact({ name:"cudart.zip", bytes:391443627, sha256:"8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6", url:RELEASE+"cudart-llama-bin-win-cuda-12.4-x64.zip" }),
     RUNTIME_LICENCE]),
 });
+/** Ubuntu x64 builds of the same release, checked on 15 September 2026. Their archives hold one top-level folder. */
+const LINUX_RUNTIME_ARTIFACTS:Readonly<Partial<Record<Backend,readonly Artifact[]>>>=Object.freeze({
+  cpu:Object.freeze([
+    artifact({ name:"runtime.tar.gz", bytes:16734586, sha256:"5e34434ddc6d03cd1584f403201aff0d4bd1a5793a72ff7e286532dfd1e4b941", url:RELEASE+"llama-b10809-bin-ubuntu-x64.tar.gz" }),
+    RUNTIME_LICENCE]),
+  // Vulkan runs on NVIDIA, AMD and Intel GPUs with a Vulkan driver and the system Vulkan loader (libvulkan1).
+  vulkan:Object.freeze([
+    artifact({ name:"runtime.tar.gz", bytes:33799345, sha256:"07f029cef440c82c3cff5310641eb6347e5cbcd865a5d88990215058aa049e93", url:RELEASE+"llama-b10809-bin-ubuntu-vulkan-x64.tar.gz" }),
+    RUNTIME_LICENCE]),
+});
+/** The pinned runtime files for a backend on a platform (the current machine's by default). */
+export function runtimeArtifacts(backend:Backend,platform:Platform=currentPlatform()??"win32-x64"):readonly Artifact[] {
+  const artifacts=platform==="win32-x64"?(RUNTIME_ARTIFACTS as Partial<Record<Backend,readonly Artifact[]>>)[backend]:LINUX_RUNTIME_ARTIFACTS[backend];
+  if(!artifacts)throw new AdapterError("BACKEND_UNSUPPORTED_ON_PLATFORM");
+  return artifacts;
+}
 
 const QWEN_LICENCE={bytes:11544,sha256:"5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd"};
 export interface ModelEntry {
@@ -40,7 +66,8 @@ export interface ModelEntry {
 function qwen3(id:string,displayName:string,parameters:string,repository:string,revision:string,file:string,bytes:number,sha256:string,minMemoryMb:number,minVramMb:number):ModelEntry {
   const model=artifact({name:"model.gguf",bytes,sha256,url:`https://huggingface.co/Qwen/${repository}/resolve/${revision}/${file}`});
   const capability=Object.freeze({
-    version:2,adapterId:"excess.llama-text",adapterVersion:"0.3.0",platform:"win32-x64",
+    // Version 3 drops the platform field: Windows and Linux suppliers run the same pinned release and model file.
+    version:3,adapterId:"excess.llama-text",adapterVersion:"0.4.0",
     runtime:"llama.cpp-b10809",runtimeCommit:"5266f24da75dc449bd56cbed7addb9c8e4a6a73e",
     modelId:id,model:file.replace(/\.gguf$/,""),modelRevision:revision,modelSha256:sha256,
     runtimeLicence:"MIT",modelLicence:"Apache-2.0",meteringUnit:"output_token",trustClass:"supplier_visible",
