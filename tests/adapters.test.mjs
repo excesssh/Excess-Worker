@@ -31,7 +31,7 @@ async function temporary(run) {
 }
 test("adapter manifest is immutable, exact and import-only; requests and outputs reject extra control fields",()=>{
   assert.equal(capabilityDigest,requestDigest(TEXT_CAPABILITY));
-  assert.equal(TEXT_CAPABILITY.backend,"cpu");assert.equal(TEXT_CAPABILITY.trustClass,"supplier_visible");
+  assert.equal(TEXT_CAPABILITY.trustClass,"supplier_visible");
   assert.equal(textInstallationPlan(".local/models/qwen3-4b-cpu-v1").downloadBytes,2515700335);
   assert.equal(TEXT_CAPABILITY.model,"Qwen3-4B-Q4_K_M");
   for(const artifact of Object.values(ARTIFACTS)) {
@@ -58,7 +58,8 @@ test("reviewed ZIP reader rejects traversal, Windows aliases, links, duplicate n
 test("installer fails before download without consent and rejects corrupt local artifacts",async()=>temporary(async dir=>{
   await assert.rejects(installTextAdapter(join(dir,"absent"),{consent:false}),/MODEL_INSTALL_CONSENT_REQUIRED/);
   await assert.rejects(verifyInstallation(join(dir,"absent")),/ADAPTER_NOT_INSTALLED_OR_CORRUPT/);
-  await writeFile(join(dir,"runtime.zip"),"FAKE CORRUPT ARCHIVE");
+  await mkdir(join(dir,"runtimes","cpu"),{recursive:true});
+  await writeFile(join(dir,"runtimes","cpu","runtime.zip"),"FAKE CORRUPT ARCHIVE");
   await assert.rejects(verifyInstallation(dir),/INSTALLED_ARTIFACT_MISMATCH/);
   const adapter=createTextAdapter(dir,{threads:1,maxMemoryMb:1024,timeoutMs:2000});
   await assert.rejects(adapter.probe(),/INSTALLED_ARTIFACT_MISMATCH|UNSUPPORTED_ADAPTER_PLATFORM/);

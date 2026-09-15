@@ -12,7 +12,7 @@ import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 
-const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60 };
+const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu" };
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
 const output = { text: "TEST FIXTURE OUTPUT", generatedTokens: 3, finishReason: "stop" };
 const ready = { freeMemoryMb: 8192, idleSeconds: 120 };
@@ -106,7 +106,7 @@ async function fixture() {
 
 test("worker policy and controls fail closed and fence concurrent foreground runtimes", async () => {
   assert.equal(parseWorkerPolicy({}).idleOnly, true);
-  for (const value of [{ threads: 0 }, { threads: 9 }, { maxMemoryMb: 512 }, { maxMemoryMb: 8193 }, { runSeconds: 121 }, { idleOnly: "false" }, { gpu: true }]) assert.throws(() => parseWorkerPolicy(value));
+  for (const value of [{ threads: 0 }, { threads: 65 }, { maxMemoryMb: 512 }, { maxMemoryMb: 262145 }, { model: "not-in-catalog" }, { backend: "rocm" }, { runSeconds: 121 }, { idleOnly: "false" }, { gpu: true }]) assert.throws(() => parseWorkerPolicy(value));
   assert.equal(policyDecision({ ...policy, idleOnly: true }, { ...ready, idleSeconds: null }).reason, "idle_observation_unavailable");
   assert.equal(policyDecision(policy, { ...ready, freeMemoryMb: null }).allowed, false);
   assert.equal(policyDecision(policy, { ...ready, freeMemoryMb: 100 }).allowed, false);

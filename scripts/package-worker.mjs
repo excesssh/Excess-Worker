@@ -36,7 +36,7 @@ await copyTree(join(root,"node_modules","zod"),join(stage,"app","node_modules","
 await writeFile(join(stage,"excess-worker.cmd"),[
   "@echo off","setlocal",
   "if not defined EXCESS_WORKER_HOME set \"EXCESS_WORKER_HOME=%LOCALAPPDATA%\\EXCESS\\worker\"",
-  "if not defined EXCESS_MODEL_DIR set \"EXCESS_MODEL_DIR=%LOCALAPPDATA%\\EXCESS\\models\\qwen3-4b-cpu-v1\"",
+  "if not defined EXCESS_MODEL_DIR set \"EXCESS_MODEL_DIR=%LOCALAPPDATA%\\EXCESS\\ai\"",
   "\"%~dp0node\\node.exe\" \"%~dp0app\\worker\\dist\\main.js\" %*","exit /b %ERRORLEVEL%",""].join("\r\n"));
 await writeFile(join(stage,"ONBOARDING.txt"),[
   "EXCESS supplier worker (Windows x64, CPU)","",
@@ -45,8 +45,9 @@ await writeFile(join(stage,"ONBOARDING.txt"),[
   "  1. excess-worker guide                      shows your next step at any time",
   "  2. excess-worker pair https://<exchange> \"My PC\"   then approve the printed code in the web app (Supplier, Pair a device)",
   "  3. excess-worker complete-pairing",
-  "  4. excess-worker model-plan                 review the pinned download (about 2.5 GB) and licences",
-  "  5. excess-worker install-model --accept-download --accept-licenses",
+  "  4. excess-worker models                     see which models this computer can run (CPU or NVIDIA GPU)",
+  "     excess-worker use qwen3-8b --gpu         choose one (omit --gpu to run on the CPU)",
+  "  5. excess-worker install-model --accept-download --accept-licenses   downloads the chosen model (2.5 to 19 GB)",
   "  6. excess-worker offer USDG <price per million output tokens>",
   "  7. excess-worker run                        keep this window open to receive jobs",
   "","Stop: excess-worker drain (finish current work) or excess-worker stop-now. Status: excess-worker status.",

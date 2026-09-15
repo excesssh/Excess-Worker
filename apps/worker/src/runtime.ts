@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { createTextAdapter, capabilityDigest, TEXT_CAPABILITY, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
+import { createTextAdapter, catalogEntry, parseTextRequest, parseTextResult, type TextAdapter, type TextResult } from "@excess/adapters";
 import { requestDigest, textChunkSchema, type TextChunk } from "@excess/protocol";
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
@@ -29,10 +29,11 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number): WorkerProbe {
-  const proof = record(value);
+  const proof = record(value), entry = catalogEntry(policy.model);
   const probedAt = typeof proof.probedAt === "string" ? Date.parse(proof.probedAt) : NaN;
-  if (proof.ok !== true || proof.capabilityDigest !== capabilityDigest || proof.backend !== "cpu" ||
-      proof.model !== TEXT_CAPABILITY.model || proof.runtime !== TEXT_CAPABILITY.runtime ||
+  if (proof.ok !== true || proof.capabilityDigest !== entry.capabilityDigest || proof.backend !== policy.backend ||
+      (proof.modelId !== undefined && proof.modelId !== entry.id) ||
+      proof.model !== entry.capability.model || proof.runtime !== entry.capability.runtime ||
       proof.threads !== policy.threads || proof.maxMemoryMb !== policy.maxMemoryMb ||
       !Number.isFinite(probedAt) || probedAt < startedAt || probedAt > Date.now() ||
       !Number.isSafeInteger(proof.generatedTokens) || Number(proof.generatedTokens) < 0 || Number(proof.generatedTokens) > 8 ||
@@ -41,7 +42,7 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
     if (proof[name] !== undefined && (!Number.isSafeInteger(proof[name]) || Number(proof[name]) < 1)) throw Error("Invalid local probe process identity");
   }
   return {
-    ok: true, capabilityDigest, backend: "cpu", model: TEXT_CAPABILITY.model, runtime: TEXT_CAPABILITY.runtime,
+    ok: true, capabilityDigest: entry.capabilityDigest, backend: policy.backend, model: entry.capability.model, runtime: entry.capability.runtime,
     threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, probedAt: String(proof.probedAt),
     generatedTokens: Number(proof.generatedTokens), peakRssMb: Number(proof.peakRssMb),
     ...(proof.nativePid === undefined ? {} : { nativePid: Number(proof.nativePid) }),
@@ -137,7 +138,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   let connection: WorkerConnection | undefined;
   let lastProbe: WorkerProbe | undefined;
   let active: { assignment: Assignment | null; abort: AbortController } | null = null;
-  let closing = false, mode: WorkerMode = "stop", connected = false, probed = false;
+  let closing = false, mode: WorkerMode = "stop", connected = false, probed = false, capabilityDigest = "";
   let fatal: string | null = null, statusState = "starting", statusReason = "initializing";
   let observation: ResourceObservation = { freeMemoryMb: null, idleSeconds: null }, observedAt = 0;
   let tasks: Promise<void>[] = [];
@@ -153,7 +154,9 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   };
   try {
     const policy = options.policy ? parseWorkerPolicy(options.policy) : await readWorkerPolicy(dir);
-    const offer = options.offer !== undefined ? options.offer : await readWorkerOffer(dir);
+    // The worker serves exactly one catalog model at a time, chosen in its policy.
+    capabilityDigest = catalogEntry(policy.model).capabilityDigest;
+    const offer = options.offer !== undefined ? options.offer : await readWorkerOffer(dir, policy.model);
     mode = await readWorkerControl(dir);
     if (mode !== "run") {
       statusState = "stopped"; statusReason = mode === "drain" ? "drained" : "explicit_resume_required";
@@ -167,7 +170,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       if (entry.state === "seen" || entry.state === "running") await journal.set(entry.assignment, "abandoned", "interrupted_before_receipt");
       if (entry.state !== "result_pending") await journal.removeOutput(entry.assignment);
     }
-    adapter = options.adapter ?? createTextAdapter(options.installDir, { threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, timeoutMs: policy.runSeconds * 1000 });
+    adapter = options.adapter ?? createTextAdapter(options.installDir, { threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, timeoutMs: policy.runSeconds * 1000, modelId: policy.model, backend: policy.backend });
     const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null);
     const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, deviceId: connection!.deviceId,
       activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null,

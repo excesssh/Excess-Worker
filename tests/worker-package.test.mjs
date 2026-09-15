@@ -38,11 +38,19 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const diagnostics=JSON.parse(doctor.stdout);
   assert.deepEqual([diagnostics.product,diagnostics.kind,diagnostics.architecture],["EXCESS","local_diagnostics","x64"]);
   let guide=JSON.parse(run("guide").stdout);
-  assert.deepEqual([guide.next,guide.origin,guide.steps.map(s=>s.done)],["pair",null,[false,false,false,false]]);
+  assert.deepEqual([guide.next,guide.origin,guide.model,guide.backend,guide.steps.map(s=>s.done)],["pair",null,"qwen3-4b","cpu",[false,true,false,false,false]]);
+  const models=JSON.parse(run("models").stdout);
+  assert.deepEqual(models.models.map(m=>m.id),["qwen3-4b","qwen3-8b","qwen3-14b","qwen3-30b-a3b"]);
+  assert.deepEqual(models.active,{model:"qwen3-4b",backend:"cpu"});
+  const chosen=run("use","qwen3-8b","--gpu");
+  assert.equal(chosen.status,0,chosen.stderr);assert.deepEqual([JSON.parse(chosen.stdout).policy.model,JSON.parse(chosen.stdout).policy.backend],["qwen3-8b","cuda"]);
+  assert.equal(JSON.parse(run("model-plan").stdout).backend,"cuda","the plan follows the chosen model and backend");
+  assert.notEqual(run("use","not-a-model").status,0);
+  assert.equal(run("use","qwen3-4b").status,0);
   assert.match(guide.disclosure,/see their prompts and outputs/);
   assert.deepEqual(JSON.parse(run("offer").stdout).offer,null);
   const plan=JSON.parse(run("model-plan").stdout);
-  assert.equal(plan.directory,join(home,"EXCESS","models","qwen3-4b-cpu-v1"),"models install under the user's local app data");
+  assert.deepEqual([plan.directory,plan.modelId,plan.backend],[join(home,"EXCESS","ai"),"qwen3-4b","cpu"],"models install under the user's local app data");
   assert.notEqual(run("no-such-command").status,0);
   assert.notEqual(run("install-model").status,0,"model download still requires explicit consent flags");
 
@@ -68,5 +76,5 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const fractional=await runAsync("offer","TEST","2.5");
   assert.notEqual(fractional.status,0);assert.match(fractional.stderr,/multiple of 1 TEST/);
   guide=JSON.parse(run("guide").stdout);
-  assert.deepEqual([guide.next,guide.steps.map(s=>s.done)],["install-model",[true,false,true,false]]);
+  assert.deepEqual([guide.next,guide.steps.map(s=>s.done)],["install-model",[true,true,false,true,false]]);
 });
