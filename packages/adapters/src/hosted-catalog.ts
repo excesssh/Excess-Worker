@@ -16,6 +16,10 @@ export const HOSTED_CONTEXT_TOKENS = INPUT_PRICING.maxPromptTokens + TEXT_LIMITS
 export const OPENROUTER_IGNORED_PROVIDERS: readonly string[] = Object.freeze(["amazon-bedrock", "groq", "modal", "google-vertex", "google-ai-studio",
   "minimax", "perplexity", "mistral", "ai21", "featherless"]);
 
+/** Smallest output budget a reasoning house model accepts, the same as local reasoning models (REASONING_MIN_OUTPUT_TOKENS).
+ * On testnet on 15 September 2026, house gpt-oss-20b given 16 tokens reasoned until the budget ran out and answered nothing,
+ * which fails the job while the prompt is still charged. */
+export const HOSTED_REASONING_MIN_OUTPUT_TOKENS = 256;
 /** How reasoning is requested: never offered, turned off, or kept (the model always reasons) with its text excluded from the
  * answer. Kept reasoning tokens are provider completion tokens and are billed as output tokens. */
 export type HostedReasoning = "none" | "disabled" | "hidden" | "hidden_low";
@@ -48,6 +52,7 @@ function hosted(input: Input): HostedModelEntry {
     promptTemplateTokens: INPUT_PRICING.promptTemplateTokens, maxOutputBytes: TEXT_LIMITS.maxOutputBytes, maxOutputTokens: TEXT_LIMITS.maxOutputTokens,
     promptFormat: "single-user-message-v1", sampling: "provider-default", seed: "not_forwarded",
     quantizations: [...entry.quantizations], reasoning: entry.reasoning, ignoredProviders: [...OPENROUTER_IGNORED_PROVIDERS],
+    ...(entry.reasoning === "hidden" || entry.reasoning === "hidden_low" ? { minOutputTokens: HOSTED_REASONING_MIN_OUTPUT_TOKENS } : {}),
   });
   const reasoning = entry.reasoning === "hidden" || entry.reasoning === "hidden_low";
   const precision = entry.quantizations.includes("fp4") || entry.quantizations.includes("int4") ? "native low-bit or higher precision" : "FP8 or higher precision";
