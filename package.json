@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "test": "npm run build && node --test --test-concurrency=4"
+    "test": "npm run build && node --test --test-concurrency=4",
+    "package:worker": "npm run build && node scripts/package-worker.mjs"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

@@ -10,7 +10,8 @@ import { readWorkerStatus, setWorkerControl } from "./control.js";
 import { readWorkerPolicy, writeWorkerPolicy } from "./policy.js";
 import { observeLocalResources } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
-import { readWorkerOffer, writeWorkerOffer } from "./offer.js";
+import { readWorkerOffer, writeWorkerOffer, offerFromSymbol } from "./offer.js";
+import { workerGuide } from "./guide.js";
 const execute = promisify(execFile);
 
 export async function diagnostics() {
@@ -61,11 +62,19 @@ try {
       policy=await writeWorkerPolicy(stateDir,JSON.parse(raw));
     } else policy=await readWorkerPolicy(stateDir);
     process.stdout.write(JSON.stringify({product:"EXCESS",policy},null,2)+"\n");
+  } else if(command==="guide") {
+    process.stdout.write(JSON.stringify(await workerGuide(path,stateDir,installDir),null,2)+"\n");
   } else if(command==="offer") {
     if(process.argv.length===3) process.stdout.write(JSON.stringify({product:"EXCESS",offer:await readWorkerOffer(stateDir)},null,2)+"\n");
-    else if(process.argv.length===5) process.stdout.write(JSON.stringify({product:"EXCESS",offer:await writeWorkerOffer(stateDir,{assetId:process.argv[3],netUnits:process.argv[4]}),
-      next:"While running, the worker publishes this net price per output token after its local probe passes."},null,2)+"\n");
-    else throw Error("Usage: worker offer [assetId netUnitsPerOutputToken]");
+    else if(process.argv.length===5) {
+      const [target,price]=[process.argv[3]!,process.argv[4]!];
+      // An asset ID takes exact base units per token; a symbol takes a human price per million tokens.
+      const input=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(target)?{assetId:target,netUnits:price}
+        :await offerFromSymbol((JSON.parse(await readFile(path,"utf8")) as {origin:string}).origin,target,price);
+      process.stdout.write(JSON.stringify({product:"EXCESS",offer:await writeWorkerOffer(stateDir,input),
+        next:"While running, the worker publishes this net price per output token after its local probe passes."},null,2)+"\n");
+    }
+    else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens | assetId netUnitsPerOutputToken]");
   } else if(command==="status") process.stdout.write(JSON.stringify({product:"EXCESS",...await readWorkerStatus(stateDir)},null,2)+"\n");
   else if(command==="drain" || command==="stop-now") {
     await setWorkerControl(stateDir,command==="drain"?"drain":"stop");
@@ -80,7 +89,7 @@ try {
     const controller=new AbortController();
     process.once("SIGINT",()=>controller.abort());process.once("SIGTERM",()=>controller.abort());
     process.stdout.write(JSON.stringify(await runLocalProbe({stateDir,installDir,signal:controller.signal}),null,2)+"\n");
-  } else throw Error("Usage: worker doctor | pair [origin] [label] | complete-pairing | heartbeat | model-plan | install-model --accept-download --accept-licenses | policy [file] | offer [assetId netUnitsPerOutputToken] | status | run | drain | stop-now | resume | probe");
+  } else throw Error("Usage: worker guide | doctor | pair [origin] [label] | complete-pairing | heartbeat | model-plan | install-model --accept-download --accept-licenses | policy [file] | offer [SYMBOL pricePerMillionTokens | assetId netUnitsPerOutputToken] | status | run | drain | stop-now | resume | probe");
 } catch (error) {
   const safe = error instanceof Error && !/private|secret|password/i.test(error.message) ? error.message : "Worker identity operation failed";
   process.stderr.write(safe + "\n"); process.exitCode = 1;
