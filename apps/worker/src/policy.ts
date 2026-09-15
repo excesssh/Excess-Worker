@@ -13,25 +13,31 @@ export type ResourceObservation = { freeMemoryMb: number | null; idleSeconds: nu
 // minutes, so the default run time is the approved maximum rather than 60 seconds.
 // Idle detection exists only on Windows desktops, so Linux workers (usually servers) default to running whenever allowed.
 export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 4096, runSeconds: TEXT_LIMITS.maxRunSeconds, idleOnly: process.platform === "win32", idleSeconds: 60, model: DEFAULT_MODEL_ID, backend: "cpu" });
+/** Errors name the failing setting, so a supplier whose policy file is refused (and who keeps the previous policy) can fix it. */
 export function parseWorkerPolicy(input: unknown): WorkerPolicy {
-  if (!input || typeof input !== "object" || Array.isArray(input)) throw Error("Invalid worker policy");
+  function invalid(detail: string): never { throw Error("Invalid worker policy: " + detail); }
+  if (!input || typeof input !== "object" || Array.isArray(input)) invalid("expected a JSON object");
   const value = input as Record<string, unknown>;
-  if (Object.keys(value).some(key => !Object.hasOwn(DEFAULT_WORKER_POLICY, key))) throw Error("Invalid worker policy");
+  const unknown = Object.keys(value).filter(key => !Object.hasOwn(DEFAULT_WORKER_POLICY, key));
+  if (unknown.length) invalid("unknown setting " + unknown.slice(0, 4).join(", ").slice(0, 120));
   const policy = { ...DEFAULT_WORKER_POLICY, ...value } as WorkerPolicy;
+  const whole = (key: "threads" | "maxMemoryMb" | "runSeconds" | "idleSeconds", minimum: number, maximum: number) => {
+    if (!Number.isInteger(policy[key]) || policy[key] < minimum || policy[key] > maximum) invalid(`${key} must be a whole number from ${minimum} to ${maximum}`);
+  };
+  whole("threads", 1, 64); whole("maxMemoryMb", 1024, 262144); whole("runSeconds", 1, TEXT_LIMITS.maxRunSeconds); whole("idleSeconds", 1, 3600);
+  if (typeof policy.idleOnly !== "boolean") invalid("idleOnly must be true or false");
   // A text or media catalog model; GPU-only media models never run on the CPU backend.
   const entry = MODEL_CATALOG.find(item => item.id === policy.model) ?? MEDIA_CATALOG.find(item => item.id === policy.model);
-  if (!Number.isInteger(policy.threads) || policy.threads < 1 || policy.threads > 64 ||
-      !Number.isInteger(policy.maxMemoryMb) || policy.maxMemoryMb < 1024 || policy.maxMemoryMb > 262144 ||
-      !Number.isInteger(policy.runSeconds) || policy.runSeconds < 1 || policy.runSeconds > TEXT_LIMITS.maxRunSeconds ||
-      typeof policy.idleOnly !== "boolean" || !Number.isInteger(policy.idleSeconds) || policy.idleSeconds < 1 || policy.idleSeconds > 3600 ||
-      !entry || !BACKENDS.includes(policy.backend) || ("gpuOnly" in entry && entry.gpuOnly && policy.backend === "cpu")) throw Error("Invalid worker policy");
+  if (!entry) invalid("model must be a catalog model id");
+  if (!BACKENDS.includes(policy.backend)) invalid("backend must be one of " + BACKENDS.join(", "));
+  if ("gpuOnly" in entry && entry.gpuOnly && policy.backend === "cpu") invalid(`${entry.id} runs on a GPU only`);
   // Whether the memory cap covers the chosen model is checked by the adapter when it loads the model.
   return policy;
 }
 export async function readWorkerPolicy(stateDir: string): Promise<WorkerPolicy> {
   try {
     const text = await readPrivateText(join(resolve(stateDir), "policy.json"), 4096);
-    if (Buffer.byteLength(text) > 4096) throw Error("Invalid worker policy");
+    if (Buffer.byteLength(text) > 4096) throw Error("Invalid worker policy: the file is larger than 4 KB");
     return parseWorkerPolicy(JSON.parse(text));
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { ...DEFAULT_WORKER_POLICY }; throw error; }
 }

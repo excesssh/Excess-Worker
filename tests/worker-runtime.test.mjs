@@ -106,6 +106,11 @@ async function fixture() {
 
 test("worker policy and controls fail closed and fence concurrent foreground runtimes", async () => {
   assert.equal(parseWorkerPolicy({}).idleOnly, true);
+  // A refused policy names the setting, since the worker keeps its previous policy (GPU session 2: runSeconds 900).
+  for (const [input, message] of [[{ runSeconds: 900 }, /Invalid worker policy: runSeconds must be a whole number from 1 to 600/],
+    [{ maxMemoryMb: 512 }, /maxMemoryMb must be a whole number from 1024 to 262144/], [{ extra: 1 }, /unknown setting extra/],
+    [null, /expected a JSON object/], [{ model: "flux1-schnell", backend: "cpu" }, /flux1-schnell runs on a GPU only/], [{ model: "nope" }, /model must be a catalog model id/]])
+    assert.throws(() => parseWorkerPolicy(input), message);
   assert.equal(parseWorkerPolicy({}).runSeconds, 600, "the default allows a normal 2,048-token CPU job");
   assert.equal(parseWorkerPolicy({ runSeconds: 600 }).runSeconds, 600);
   for (const value of [{ threads: 0 }, { threads: 65 }, { maxMemoryMb: 512 }, { maxMemoryMb: 262145 }, { model: "not-in-catalog" }, { backend: "rocm" }, { runSeconds: 0 }, { runSeconds: 601 }, { idleOnly: "false" }, { gpu: true }]) assert.throws(() => parseWorkerPolicy(value));
