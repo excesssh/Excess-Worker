@@ -17,6 +17,9 @@ const out=resolve(option("--out")??join(root,".cache","package")),zip=!args.incl
 if(!linux&&(process.platform!=="win32"||process.arch!=="x64"))throw new Error("PACKAGE_REQUIRES_WINDOWS_X64");
 if(!/^v24\./.test(process.version))throw new Error("PACKAGE_REQUIRES_NODE_24");
 const LINUX_NODE={version:"v24.11.1",file:"node-v24.11.1-linux-x64.tar.gz",sha256:"58a5ff5cc8f2200e458bea22e329d5c1994aa1b111d499ca46ec2411d58239ca"};
+// Pinned like the Linux runtime so a Windows package is reproducible and carries Node's own licence, rather than
+// copying whatever node.exe built it (Node ships no LICENSE beside the Windows binary).
+const WINDOWS_NODE={version:"v24.11.1",file:"node-v24.11.1-win-x64.zip",sha256:"5355ae6d7c49eddcfde7d34ac3486820600a831bf81dc3bdca5c8db6a9bb0e76"};
 const tarTool=process.platform==="win32"?join(process.env.SystemRoot??"C:\\Windows","System32","tar.exe"):"tar";
 const version=JSON.parse(await readFile(join(root,"apps/worker/package.json"),"utf8")).version;
 const name=`excess-worker-${version}-${linux?"linux-x64":"win-x64"}`,stage=join(out,name);
@@ -51,8 +54,25 @@ if(linux) {
   nodeVersion=LINUX_NODE.version;nodeLicenseIncluded=true;
 } else {
   await mkdir(join(stage,"node"),{recursive:true});
-  await copyFile(process.execPath,join(stage,"node","node.exe"));
-  if(nodeLicense){await copyFile(resolve(nodeLicense),join(stage,"licenses","node-LICENSE.txt"));nodeLicenseIncluded=true;}
+  const cacheDir=join(root,".cache","node"),archive=join(cacheDir,WINDOWS_NODE.file);
+  await mkdir(cacheDir,{recursive:true});
+  let bytes=await readFile(archive).catch(()=>null);
+  if(!bytes||sha256(bytes)!==WINDOWS_NODE.sha256){
+    const response=await fetch(`https://nodejs.org/dist/${WINDOWS_NODE.version}/${WINDOWS_NODE.file}`);
+    if(!response.ok)throw new Error("PACKAGE_NODE_DOWNLOAD_FAILED");
+    bytes=Buffer.from(await response.arrayBuffer());
+    if(sha256(bytes)!==WINDOWS_NODE.sha256)throw new Error("PACKAGE_NODE_HASH_MISMATCH");
+    await writeFile(archive,bytes);
+  }
+  const unpack=await mkdtemp(join(cacheDir,"unpack-"));
+  try{
+    const top=WINDOWS_NODE.file.replace(/\.zip$/,"");
+    execFileSync(tarTool,["-xf",archive,"-C",unpack,`${top}/node.exe`,`${top}/LICENSE`],{stdio:["ignore","ignore","pipe"]});
+    await copyFile(join(unpack,top,"node.exe"),join(stage,"node","node.exe"));
+    await copyFile(join(unpack,top,"LICENSE"),join(stage,"licenses","node-LICENSE.txt"));
+  }finally{await rm(unpack,{recursive:true,force:true});}
+  nodeVersion=WINDOWS_NODE.version;nodeLicenseIncluded=true;
+  if(nodeLicense){await copyFile(resolve(nodeLicense),join(stage,"licenses","node-LICENSE.txt"));}
 }
 await mkdir(join(stage,"app","worker"),{recursive:true});
 await copyFile(join(root,"apps/worker/package.json"),join(stage,"app","worker","package.json"));

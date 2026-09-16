@@ -16,9 +16,12 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const built=spawnSync(process.execPath,["scripts/package-worker.mjs","--out",out,"--no-zip"],{encoding:"utf8"});
   assert.equal(built.status,0,built.stderr);
   const summary=JSON.parse(built.stdout.trim().split("\n").at(-1)),dir=summary.directory;
-  assert.equal(summary.publicDistributionReady,false,"without the Node licence text the package is marked not for public distribution");
+  assert.equal(summary.publicDistributionReady,true,"the pinned Node runtime ships with its own licence text");
   const manifest=JSON.parse(await readFile(join(dir,"manifest.json"),"utf8"));
-  assert.deepEqual([manifest.platform,manifest.node,manifest.codeSigned],["win32-x64",process.version,false]);
+  assert.deepEqual([manifest.platform,manifest.node,manifest.codeSigned],["win32-x64","v24.11.1",false],
+    "the package pins its Node runtime rather than copying whichever node.exe built it");
+  assert.ok((await readFile(join(dir,"licenses","node-LICENSE.txt"),"utf8")).includes("Node.js is licensed for use as follows"),
+    "Node's own licence text is bundled for public distribution");
 
   const all=(await files(dir)).map(file=>relative(dir,file).split(sep).join("/"));
   assert.ok(all.includes("node/node.exe")&&all.includes("app/worker/dist/main.js")&&all.includes("app/node_modules/@excess/adapters/dist/index.js"));
