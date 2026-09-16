@@ -23,13 +23,31 @@ export async function diagnostics() {
     const { stdout } = await execute("nvidia-smi", ["--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"], { timeout: 5000, maxBuffer: 16384, windowsHide: true });
     nvidia = { status: "detected_not_execution_verified", devices: stdout.trim().split(/\r?\n/).filter(Boolean) };
   } catch { /* A missing NVIDIA utility does not imply an unsupported machine. */ }
+  // An installed llama.cpp runtime whose shared libraries do not resolve dies at start with a bare RUNTIME_EXITED,
+  // so name the missing libraries here instead. A clean Ubuntu has no libgomp.so.1, which llama.cpp always needs.
+  const runtimeLibraries: { backend: string; missing: string[] }[] = [];
+  if (os.platform() === "linux") {
+    const root = process.env.EXCESS_MODEL_DIR ?? resolve(os.homedir(), ".local/share/excess/ai");
+    for (const backend of ["cpu", "gpu"]) {
+      const server = resolve(root, "runtimes", backend, "runtime", "llama-server");
+      try { await access(server); } catch { continue; }
+      try {
+        const { stdout } = await execute("ldd", [server], { timeout: 5000, maxBuffer: 65536 });
+        const missing = stdout.split(/\r?\n/).filter(line => /not found/.test(line)).map(line => line.trim().split(/\s+/)[0]!).filter(Boolean);
+        runtimeLibraries.push({ backend, missing });
+      } catch { /* ldd is absent on some images; that is not itself a fault. */ }
+    }
+  }
+  const unresolved = runtimeLibraries.flatMap(entry => entry.missing);
   return {
     product: "EXCESS", kind: "local_diagnostics", protocolVersion: 1,
     platform: os.platform(), release: os.release(), architecture: os.arch(),
     cpu: os.cpus()[0]?.model.trim() ?? "unknown", logicalCpus: os.cpus().length,
     memoryBytes: String(os.totalmem()), nvidia,
+    ...(runtimeLibraries.length ? { runtimeLibraries } : {}),
     executionBackends: [], verifiedCapabilities: [], registrationChecked: false,
-    notes: ["Hardware discovery is not an execution probe.", "This command does not download models or accept jobs.", "Use probe for installed-model execution checks and status for local worker state; this inventory does not establish live supply."],
+    notes: ["Hardware discovery is not an execution probe.", "This command does not download models or accept jobs.", "Use probe for installed-model execution checks and status for local worker state; this inventory does not establish live supply.",
+      ...(unresolved.length ? [`The installed runtime cannot load: ${[...new Set(unresolved)].join(", ")}. On Debian or Ubuntu run: sudo apt-get update && sudo apt-get install -y libgomp1`] : [])],
   };
 }
 const print = (value: unknown) => process.stdout.write(JSON.stringify(value, null, 2) + "\n");

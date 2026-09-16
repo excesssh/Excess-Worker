@@ -16,7 +16,7 @@ export async function runLocalProbe(options:{stateDir:string;installDir:string;p
     const observe=options.telemetry??observeLocalResources;
     observation=await observe();observedAt=Date.now();
     const allowed=policyDecision(policy,observation);
-    if(!allowed.allowed){reason=allowed.reason;throw Error("Probe blocked: "+reason);}
+    if(!allowed.allowed){reason=allowed.reason;throw Error("Probe blocked: "+reason+(allowed.detail?" ("+allowed.detail+")":""));}
     if(options.signal?.aborted)throw Error("Probe stopped");
     adapter=options.adapter??createServedAdapter(options.installDir,policy);
     await setWorkerControl(options.stateDir,"run");

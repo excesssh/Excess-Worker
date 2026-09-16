@@ -161,7 +161,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   let lastProbe: WorkerProbe | undefined;
   let active: { assignment: Assignment | null; abort: AbortController } | null = null;
   let closing = false, mode: WorkerMode = "stop", connected = false, probed = false, capabilityDigest = "";
-  let fatal: string | null = null, statusState = "starting", statusReason = "initializing";
+  let fatal: string | null = null, statusState = "starting", statusReason = "initializing", statusDetail: string | undefined;
   let observation: ResourceObservation = { freeMemoryMb: null, idleSeconds: null }, observedAt = 0;
   let tasks: Promise<void>[] = [];
   const lifetime = new AbortController();
@@ -196,7 +196,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     adapter = options.adapter ?? createServedAdapter(options.installDir, policy);
     if ((served.kind === "text") === isMediaAdapter(adapter)) throw Error("Adapter does not match the served model kind");
     const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null);
-    const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, deviceId: connection!.deviceId,
+    const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(statusDetail ? { detail: statusDetail } : {}), deviceId: connection!.deviceId,
       activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null,
       ...(lastProbe ? { lastProbe } : {}) });
     tasks.push((async () => {
@@ -528,7 +528,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
           for (const a of fresh) { await journal.set(a, "seen", "execution_disabled"); await journal.set(a, "abandoned", "execution_disabled"); await reportFailure(a, "busy"); }
         }
         const decision = decide();
-        if (!decision.allowed) { statusState = "blocked"; statusReason = decision.reason; await pause(timing.pollMs); continue; }
+        if (!decision.allowed) { statusState = "blocked"; statusReason = decision.reason; statusDetail = decision.detail; await pause(timing.pollMs); continue; }
         if (probed && lastProbe && !fresh.length && Date.now() - Date.parse(lastProbe.probedAt) > REPROBE_MS) probed = false;
         if (!probed) {
           const controller = new AbortController(); active = { assignment: null, abort: controller };
@@ -548,7 +548,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         if (mode !== "run" || !decide().allowed) continue;
         if (response.executionEnabled && fresh.length && connected && ![...journal.entries.values()].some(e => e.state === "result_pending")) {
           await perform(fresh[0]!);
-        } else { statusState = "idle"; statusReason = "waiting_for_assignment"; await pause(timing.pollMs); }
+        } else { statusState = "idle"; statusReason = "waiting_for_assignment"; statusDetail = undefined; await pause(timing.pollMs); }
       } catch (error) {
         if (error instanceof WorkerConnectionError) { disconnected(error); await pause(timing.pollMs); }
         else { fatal = safeReason(error); mode = "stop"; }

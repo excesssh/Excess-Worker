@@ -47,10 +47,14 @@ export async function writeWorkerPolicy(stateDir: string, input: unknown): Promi
   await atomicPrivateJson(join(resolve(stateDir), "policy.json"), policy);
   return policy;
 }
-export function policyDecision(policy: WorkerPolicy, observation: ResourceObservation, active = false): { allowed: boolean; reason: string } {
-  if (policy.threads > os.availableParallelism()) return { allowed: false, reason: "cpu_threads_unavailable" };
+export function policyDecision(policy: WorkerPolicy, observation: ResourceObservation, active = false): { allowed: boolean; reason: string; detail?: string } {
+  if (policy.threads > os.availableParallelism()) return { allowed: false, reason: "cpu_threads_unavailable",
+    detail: `the policy asks for ${policy.threads} threads; this machine reports ${os.availableParallelism()}` };
   if (observation.freeMemoryMb === null || !Number.isFinite(observation.freeMemoryMb) || observation.freeMemoryMb < 0) return { allowed: false, reason: "memory_observation_unavailable" };
-  if (observation.freeMemoryMb < (active ? 128 : policy.maxMemoryMb + 128)) return { allowed: false, reason: "memory_headroom" };
+  // Say what was needed and what was seen: a supplier whose machine is simply too small cannot tell that from the reason alone.
+  const requiredMb = active ? 128 : policy.maxMemoryMb + 128;
+  if (observation.freeMemoryMb < requiredMb) return { allowed: false, reason: "memory_headroom",
+    detail: `needs ${requiredMb} MB free (maxMemoryMb ${policy.maxMemoryMb} plus 128 MB); the machine reports ${observation.freeMemoryMb} MB` };
   if (policy.idleOnly) {
     if (observation.idleSeconds === null || !Number.isFinite(observation.idleSeconds) || observation.idleSeconds < 0) return { allowed: false, reason: "idle_observation_unavailable" };
     if (observation.idleSeconds < policy.idleSeconds) return { allowed: false, reason: "user_active" };

@@ -80,6 +80,9 @@ if(linux){
   await writeFile(join(stage,"excess-worker"),[
     "#!/bin/sh","set -eu",
     "DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)",
+    // systemd and other supervisors start services with no HOME; resolve it from the passwd entry so `set -u` cannot abort.
+    ": \"${HOME:=$(getent passwd \"$(id -u)\" 2>/dev/null | cut -d: -f6)}\"",
+    "[ -n \"$HOME\" ] || HOME=/tmp","export HOME",
     "DATA=${XDG_DATA_HOME:-$HOME/.local/share}/excess",
     ": \"${EXCESS_WORKER_HOME:=$DATA/worker}\"",": \"${EXCESS_MODEL_DIR:=$DATA/ai}\"","export EXCESS_WORKER_HOME EXCESS_MODEL_DIR",
     // Archives built on Windows carry no executable bits; restore them for the bundled Node only.
