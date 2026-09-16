@@ -66,7 +66,7 @@ export function createOpenRouterClient(options: OpenRouterClientOptions) {
   if (!base.pathname.endsWith("/")) base.pathname += "/";
   if (base.protocol !== "https:" && !(base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname))) throw new AdapterError("OPENROUTER_BASE_URL_INVALID");
   const call = options.fetch ?? fetch;
-  const headers = (json: boolean): Record<string, string> => ({ authorization: "Bearer " + options.apiKey, "x-title": options.title ?? "EXCESS house supply",
+  const headers = (json: boolean): Record<string, string> => ({ authorization: "Bearer " + options.apiKey, "x-title": options.title ?? "EXCESS Compute",
     ...(json ? { "content-type": "application/json" } : {}) });
   const url = (path: string) => new URL(path, base);
   async function readJson(response: Response, maxBytes: number): Promise<unknown> {

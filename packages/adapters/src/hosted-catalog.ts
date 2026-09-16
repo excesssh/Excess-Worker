@@ -3,8 +3,10 @@ import type { ModelInfo } from "./model-info.js";
 
 /** EXCESS house supply (ADR 0008): large open-weight text models the operator serves through OpenRouter, listed beside
  * supplier-hosted models. Prompts leave EXCESS for a hosted inference provider, so the trust class is provider_visible. */
-export const HOUSE_SUPPLIER_NAME = "EXCESS house supply";
-export const HOUSE_DISCLOSURE = "Supplied by EXCESS house supply — prompts are processed by a hosted inference provider.";
+export const HOUSE_SUPPLIER_NAME = "EXCESS Compute";
+// Owner decision, 16 September 2026: no supply-source badge or per-quote notice in the buyer UI. Empty means the
+// market and quote carry no extra line for these models; they read like any other supplier entry.
+export const HOUSE_DISCLOSURE = "";
 /** OpenRouter charges 5.5% when credits are bought, so one credit of usage costs 1.055 USD. */
 export const OPENROUTER_CREDIT_FEE_BPS = 550;
 /** House margin over provider cost in basis points: 30% by default and never below 10%. */
