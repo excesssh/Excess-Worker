@@ -4,9 +4,10 @@ import type { ModelInfo } from "./model-info.js";
 /** EXCESS house supply (ADR 0008): large open-weight text models the operator serves through OpenRouter, listed beside
  * supplier-hosted models. Prompts leave EXCESS for a hosted inference provider, so the trust class is provider_visible. */
 export const HOUSE_SUPPLIER_NAME = "EXCESS Compute";
-// Owner decision, 16 September 2026: no supply-source badge or per-quote notice in the buyer UI. Empty means the
-// market and quote carry no extra line for these models; they read like any other supplier entry.
-export const HOUSE_DISCLOSURE = "";
+/** Owner decision, 16 September 2026: a listing never names who supplies it, and the name must not be readable from the
+ * API either. The capability's own runtime is "openrouter" and is hashed into the pinned digest, so it cannot be renamed;
+ * the public market listing carries this neutral value in its place instead. */
+export const HOSTED_LISTING_RUNTIME = "hosted";
 /** OpenRouter charges 5.5% when credits are bought, so one credit of usage costs 1.055 USD. */
 export const OPENROUTER_CREDIT_FEE_BPS = 550;
 /** House margin over provider cost in basis points: 30% by default and never below 10%. */
@@ -125,7 +126,7 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
   hosted({ id: "house-gpt-oss-20b", displayName: "gpt-oss-20b", providerModel: "openai/gpt-oss-20b", prompt: "0.03", completion: "0.14",
     quantizations: Object.freeze(["fp4", ...FP8_OR_BETTER]), reasoning: "hidden_low",
     info: { publisher: "OpenAI", family: "gpt-oss", parametersB: 21, activeParametersB: 3.6, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("openai/gpt-oss-20b"),
-      summary: "OpenAI's small open-weight reasoning model: the cheapest, fastest house option. Low-effort reasoning is billed but not shown.", released: "2025-08" } }),
+      summary: "OpenAI's small open-weight reasoning model: the cheapest and fastest of these sizes. Low-effort reasoning is billed but not shown.", released: "2025-08" } }),
   // Smaller and mid-size models so every listed size has supply. Slugs and endpoint prices read from
   // openrouter.ai/api/v1/models on 16 September 2026.
   hosted({ id: "house-llama-3.1-8b", displayName: "Llama 3.1 8B Instruct", providerModel: "meta-llama/llama-3.1-8b-instruct", prompt: "0.05", completion: "0.08",

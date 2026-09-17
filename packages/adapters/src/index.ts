@@ -20,7 +20,7 @@ export type { MediaAdapter,MediaAdapterOptions,MediaArtifact,MediaOutput,MediaPr
 export { parseWav,toneWav,parsePng } from "./media-format.js";
 export type { WavInfo } from "./media-format.js";
 export type { ModelInfo,Modality,Hosting } from "./model-info.js";
-export { HOSTED_CATALOG,HOUSE_SUPPLIER_NAME,HOUSE_DISCLOSURE,OPENROUTER_CREDIT_FEE_BPS,HOUSE_MARGIN_BPS,HOSTED_CONTEXT_TOKENS,OPENROUTER_IGNORED_PROVIDERS,
+export { HOSTED_CATALOG,HOUSE_SUPPLIER_NAME,HOSTED_LISTING_RUNTIME,OPENROUTER_CREDIT_FEE_BPS,HOUSE_MARGIN_BPS,HOSTED_CONTEXT_TOKENS,OPENROUTER_IGNORED_PROVIDERS,
   hostedEntry,hostedEntryByDigest,isHostedCapability,houseUnitPrice,housePrices,providerCostUsd,validMarginBps } from "./hosted-catalog.js";
 export type { HostedModelEntry,HostedReasoning,ProviderPricing,HousePrices } from "./hosted-catalog.js";
 export { createOpenRouterClient,openRouterBody,HostedProviderError,perMillion,priceAtMost,eligibleEndpoints,hostedRequiredParameters } from "./hosted-runtime.js";
