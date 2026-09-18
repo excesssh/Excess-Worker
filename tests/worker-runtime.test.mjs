@@ -105,7 +105,8 @@ async function fixture() {
 }
 
 test("worker policy and controls fail closed and fence concurrent foreground runtimes", async () => {
-  assert.equal(parseWorkerPolicy({}).idleOnly, true);
+  // Idle-only is the default on Windows desktops; a Linux supplier is usually a headless server with no idle signal.
+  assert.equal(parseWorkerPolicy({}).idleOnly, process.platform === "win32");
   // A refused policy names the setting, since the worker keeps its previous policy (GPU session 2: runSeconds 900).
   for (const [input, message] of [[{ runSeconds: 900 }, /Invalid worker policy: runSeconds must be a whole number from 1 to 600/],
     [{ maxMemoryMb: 512 }, /maxMemoryMb must be a whole number from 1024 to 262144/], [{ extra: 1 }, /unknown setting extra/],

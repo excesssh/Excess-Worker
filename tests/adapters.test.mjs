@@ -33,7 +33,9 @@ async function temporary(run) {
 test("adapter manifest is immutable, exact and import-only; requests and outputs reject extra control fields",()=>{
   assert.equal(capabilityDigest,requestDigest(TEXT_CAPABILITY));
   assert.equal(TEXT_CAPABILITY.trustClass,"supplier_visible");
-  assert.equal(textInstallationPlan(".local/models/qwen3-4b-cpu-v1").downloadBytes,2515700335);
+  // The model is the same everywhere; the pinned llama.cpp CPU runtime differs by platform.
+  const plan=textInstallationPlan(".local/models/qwen3-4b-cpu-v1");
+  assert.equal(plan.downloadBytes,{"win32-x64":2515700335,"linux-x64":2514027464}[plan.platform]);
   assert.equal(TEXT_CAPABILITY.model,"Qwen3-4B-Q4_K_M");
   for(const artifact of Object.values(ARTIFACTS)) {
     assert.equal(Object.isFrozen(artifact),true);
@@ -62,7 +64,8 @@ test("installer fails before download without consent and rejects corrupt local 
   await assert.rejects(installTextAdapter(join(dir,"absent"),{consent:false}),/MODEL_INSTALL_CONSENT_REQUIRED/);
   await assert.rejects(verifyInstallation(join(dir,"absent")),/ADAPTER_NOT_INSTALLED_OR_CORRUPT/);
   await mkdir(join(dir,"runtimes","cpu"),{recursive:true});
-  await writeFile(join(dir,"runtimes","cpu","runtime.zip"),"FAKE CORRUPT ARCHIVE");
+  const archive=textInstallationPlan(dir).artifacts.find(item=>item.name.startsWith("runtime.")).name;
+  await writeFile(join(dir,"runtimes","cpu",archive),"FAKE CORRUPT ARCHIVE");
   await assert.rejects(verifyInstallation(dir),/INSTALLED_ARTIFACT_MISMATCH/);
   const adapter=createTextAdapter(dir,{threads:1,maxMemoryMb:1024,timeoutMs:2000});
   await assert.rejects(adapter.probe(),/INSTALLED_ARTIFACT_MISMATCH|UNSUPPORTED_ADAPTER_PLATFORM/);

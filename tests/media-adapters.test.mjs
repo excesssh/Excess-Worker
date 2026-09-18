@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve, join, dirname, basename } from "node:path";
+import { totalmem } from "node:os";
 import { createMediaAdapterWith, cleanTranscript } from "../packages/adapters/dist/media-runtime.js";
 import { MEDIA_CATALOG, toneWav } from "../packages/adapters/dist/index.js";
 
@@ -20,7 +21,9 @@ async function harness(dir, modelId, { backend = "cpu", timeoutMs = 30000 } = {}
   const configure = async (value = {}) => { await writeFile(config, JSON.stringify({ log: logPath, ...value })); };
   await configure();
   const files = Object.fromEntries(entry.artifacts.map(item => [item.name, config]));
-  const adapter = createMediaAdapterWith({ threads: 1, maxMemoryMb: Math.max(2048, entry.minMemoryMb), timeoutMs, modelId, backend },
+  // A GPU model's memory floor can exceed a small CI runner; the policy refuses more memory than the machine has.
+  const maxMemoryMb = Math.min(Math.max(2048, entry.minMemoryMb), Math.floor(totalmem() / 1048576));
+  const adapter = createMediaAdapterWith({ threads: 1, maxMemoryMb, timeoutMs, modelId, backend },
     { resolve: async () => ({ serverPath: fixture, files }), executable: process.execPath, prefixArgs: [fixture] });
   const log = async () => { try { return (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse); } catch { return []; } };
   return { adapter, configure, log };
