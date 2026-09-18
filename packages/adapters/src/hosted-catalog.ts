@@ -119,7 +119,7 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     quantizations: FP8_OR_BETTER, reasoning: "disabled",
     info: { publisher: "Alibaba Qwen", family: "Qwen3", parametersB: 32.8, maxContextTokens: 40960, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-32B"),
       summary: "Qwen's largest dense Qwen3 model: a fast, capable general assistant, served with thinking turned off.", released: "2025-04" } }),
-  hosted({ id: "house-gemma-3-27b", displayName: "Gemma 3 27B", providerModel: "google/gemma-3-27b-it", prompt: "0.1", completion: "0.3",
+  hosted({ id: "house-gemma-3-27b", displayName: "Gemma 3 27B", providerModel: "google/gemma-3-27b-it", prompt: "0.119", completion: "0.45",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Google", family: "Gemma 3", parametersB: 27, maxContextTokens: 131072, licence: "Gemma", sourceUrl: HF("google/gemma-3-27b-it"),
       summary: "Google's largest Gemma 3 model: a compact multilingual assistant with good reasoning for its size; served for text only.", released: "2025-03" } }),
@@ -128,8 +128,12 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     info: { publisher: "OpenAI", family: "gpt-oss", parametersB: 21, activeParametersB: 3.6, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("openai/gpt-oss-20b"),
       summary: "OpenAI's small open-weight reasoning model: the cheapest and fastest of these sizes. Low-effort reasoning is billed but not shown.", released: "2025-08" } }),
   // Smaller and mid-size models so every listed size has supply. Slugs and endpoint prices read from
-  // openrouter.ai/api/v1/models on 16 September 2026.
-  hosted({ id: "house-llama-3.1-8b", displayName: "Llama 3.1 8B Instruct", providerModel: "meta-llama/llama-3.1-8b-instruct", prompt: "0.05", completion: "0.08",
+  // openrouter.ai/api/v1/models on 16 September 2026. On 19 September 2026 four ceilings were raised to admit more
+  // providers (Llama 3.1 8B: cloudflare, coreweave; Qwen3 30B-A3B: alibaba; Llama 4 Scout: novita; Gemma 3 27B above:
+  // parasail, novita), so one provider's outage no longer withdraws the model. Each still sells at the one-unit floor
+  // per token, above its ceiling plus the default margin, so buyer prices are unchanged. Qwen3 14B's only alternative
+  // (alibaba, 0.91 per million output tokens) would double its output price and was left out.
+  hosted({ id: "house-llama-3.1-8b", displayName: "Llama 3.1 8B Instruct", providerModel: "meta-llama/llama-3.1-8b-instruct", prompt: "0.22", completion: "0.287",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Meta", family: "Llama 3.1", parametersB: 8, maxContextTokens: 131072, licence: "Llama 3.1 Community", sourceUrl: HF("meta-llama/Llama-3.1-8B-Instruct"),
       summary: "Meta's small Llama 3.1: quick, inexpensive and dependable for everyday text work.", released: "2024-07" } }),
@@ -145,7 +149,7 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Alibaba", family: "Qwen3", parametersB: 14, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-14B"),
       summary: "Qwen3 at a mid size: noticeably stronger than the 8B while staying inexpensive.", released: "2025-04" } }),
-  hosted({ id: "house-qwen3-30b-a3b", displayName: "Qwen3 30B-A3B", providerModel: "qwen/qwen3-30b-a3b", prompt: "0.12", completion: "0.5",
+  hosted({ id: "house-qwen3-30b-a3b", displayName: "Qwen3 30B-A3B", providerModel: "qwen/qwen3-30b-a3b", prompt: "0.13", completion: "0.52",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Alibaba", family: "Qwen3", parametersB: 30, activeParametersB: 3, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-30B-A3B"),
       summary: "A mixture-of-experts Qwen3: 30B of weights with about 3B active per token, so it answers quickly.", released: "2025-04" } }),
@@ -157,7 +161,7 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Mistral AI", family: "Mistral Small", parametersB: 24, maxContextTokens: 256000, licence: "Apache-2.0", sourceUrl: HF("mistralai/Mistral-Small-3.2-24B-Instruct-2506"),
       summary: "Mistral's compact instruct model: a long context and good instruction following at low cost.", released: "2025-06" } }),
-  hosted({ id: "house-llama-4-scout", displayName: "Llama 4 Scout", providerModel: "meta-llama/llama-4-scout", prompt: "0.1", completion: "0.3",
+  hosted({ id: "house-llama-4-scout", displayName: "Llama 4 Scout", providerModel: "meta-llama/llama-4-scout", prompt: "0.18", completion: "0.59",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Meta", family: "Llama 4", parametersB: 109, activeParametersB: 17, maxContextTokens: 1310720, licence: "Llama 4 Community", sourceUrl: HF("meta-llama/Llama-4-Scout-17B-16E-Instruct"),
       summary: "Meta's mixture-of-experts Llama 4 with an unusually long context; served for text only.", released: "2025-04" } }),
