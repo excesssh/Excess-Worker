@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { beginPairing, writeIdentity, finishPairing, sendHeartbeat } from "./identity.js";
 import { textInstallationPlan, installTextAdapter, installMediaModel, mediaInstallationPlan, installedComponents, textInstallDiskCheck, mediaInstallDiskCheck, importModelFiles, type Backend, type DiskCheck } from "@excess/adapters";
 import { priceUnit, servedModel, servedModels } from "./served.js";
-import { runWorker } from "./runtime.js";
+import { runWorker, unpairDevice } from "./runtime.js";
 import { readWorkerStatus, setWorkerControl } from "./control.js";
 import { describeSchedule, parseScheduleSpec, readWorkerPolicy, writeWorkerPolicy, THERMAL_STOP_MARGIN_C } from "./policy.js";
 import { observeLocalResources, observeTemperatures } from "./telemetry.js";
@@ -65,7 +65,7 @@ try {
   else if (command === "pair") {
     let exists = false;
     try { await access(path); exists = true; } catch { /* New identity. */ }
-    if (exists) throw Error("Device identity already exists; use complete-pairing or heartbeat");
+    if (exists) throw Error("Device identity already exists; use complete-pairing or heartbeat, or excess-worker unpair to pair this computer again");
     const origin = process.argv[3] ?? "http://127.0.0.1:4310";
     const result = await beginPairing(origin, process.argv[4] ?? os.hostname());
     await mkdir(stateDir, { recursive: true });
@@ -73,6 +73,11 @@ try {
     print({ product: "EXCESS", code: result.code, fingerprint: result.fingerprint, expiresAt: result.expiresAt, identityFile: path,
       next: "Approve this code and fingerprint with your wallet, then run complete-pairing." });
   } else if (command === "complete-pairing") process.stdout.write(JSON.stringify(await finishPairing(path)) + "\n");
+  else if (command === "unpair") {
+    const result = await unpairDevice(stateDir);
+    print({ product: "EXCESS", ...result, next: result.retired ? "Revoke the old device on the Supply page if it is still listed, then: excess-worker pair <exchange address> \"<device name>\""
+      : "Nothing to unpair; excess-worker pair <exchange address> \"<device name>\" pairs this computer" });
+  }
   else if (command === "heartbeat") process.stdout.write(JSON.stringify(await sendHeartbeat(path)) + "\n");
   else if (command === "models") {
     // What this computer can run: system memory for CPU inference, NVIDIA GPU memory for full offload. Models that fit come first.
@@ -213,7 +218,7 @@ try {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
     print(await runLocalProbe({ stateDir, installDir, signal: controller.signal }));
-  } else throw Error("Usage: worker guide | doctor | service install|remove|status | update [--check|--force|--auto on|off] | schedule [off | \"[days] HH:MM-HH:MM\" ...] | thermal [cpu <C|off>] [gpu <C|off>] | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit | SYMBOL off] | status | run | drain | stop-now | resume | probe");
+  } else throw Error("Usage: worker guide | doctor | service install|remove|status | update [--check|--force|--auto on|off] | schedule [off | \"[days] HH:MM-HH:MM\" ...] | thermal [cpu <C|off>] [gpu <C|off>] | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | unpair | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit | SYMBOL off] | status | run | drain | stop-now | resume | probe");
 } catch (error) {
   const safe = error instanceof Error && !/private|secret|password/i.test(error.message) ? error.message : "Worker identity operation failed";
   // Only a system error code (such as EPERM or ENOSPC) is added; paths and messages stay out of the output.

@@ -90,6 +90,35 @@ async function writePrivateFile(path: string, data: Buffer): Promise<void> {
   await rename(temporary, path);
 }
 
+/** Retires this computer's device identity so it can be paired again: after revoking it on the Supply page, or to move it to
+ * another wallet or exchange. Refuses while the worker runs or while a finished job's result still waits for the exchange
+ * (it may still be paid). The identity, attempt journal and any local result files move to a dated folder under
+ * retired/; nothing is deleted. */
+export async function unpairDevice(stateDir: string): Promise<{ retired: string | null; deviceId: string | null; origin: string | null }> {
+  const dir = resolve(stateDir), release = await acquireRuntimeLock(dir);
+  try {
+    let identity: { deviceId?: unknown; origin?: unknown } | null = null;
+    try { identity = JSON.parse(await readFile(join(dir, "identity.json"), "utf8")); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    let owner: { deviceId?: unknown } | null = null;
+    try { owner = JSON.parse(await readFile(join(dir, "journal-owner.json"), "utf8")); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (owner) {
+      const journal = await AttemptJournal.load(dir, String(owner.deviceId));
+      const pending = [...journal.entries.values()].filter(entry => entry.state === "result_pending").length;
+      if (pending) throw Error(`${pending} finished job result${pending === 1 ? "" : "s"} still wait${pending === 1 ? "s" : ""} for the exchange; run the worker until accepted, then unpair`);
+    }
+    const names = (await readdir(dir)).filter(name => ["identity.json", "attempts.jsonl", "journal-owner.json"].includes(name) ||
+      /\.result\.json$/.test(name) || /\.artifact\.[0-9a-f]{64}\.bin$/.test(name));
+    const deviceId = typeof identity?.deviceId === "string" ? identity.deviceId : null, origin = typeof identity?.origin === "string" ? identity.origin : null;
+    if (!names.length) return { retired: null, deviceId, origin };
+    const folder = join(dir, "retired", new Date().toISOString().replace(/[:.]/g, "-") + "-" + (deviceId ?? "unfinished-pairing"));
+    await mkdir(folder, { recursive: true, mode: 0o700 });
+    for (const name of names) await rename(join(dir, name), join(folder, name));
+    return { retired: folder, deviceId, origin };
+  } finally { await release(); }
+}
+
 class AttemptJournal {
   private constructor(readonly dir: string, readonly deviceId: string, private bytes: number, readonly entries: Map<string, Entry>) {}
   static async load(dir: string, deviceId: string): Promise<AttemptJournal> {
@@ -98,7 +127,7 @@ class AttemptJournal {
     let initialized = false;
     try {
       const owner = JSON.parse(await readFile(markerPath, "utf8")) as { version?: unknown; deviceId?: unknown };
-      if (owner.version !== 1 || owner.deviceId !== deviceId) throw Error("Attempt journal belongs to another device");
+      if (owner.version !== 1 || owner.deviceId !== deviceId) throw Error("Attempt journal belongs to another device (an earlier pairing); run excess-worker unpair, then pair again");
       initialized = true;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     let data: Buffer;

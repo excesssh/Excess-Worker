@@ -98,4 +98,14 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   assert.notEqual(tooFine.status,0);assert.match(tooFine.stderr,/more decimal places than the asset supports/);
   guide=JSON.parse(run("guide").stdout);
   assert.deepEqual([guide.next,guide.steps.map(s=>s.done)],["install-model",[true,true,false,true,false]]);
+  // A revoked device is paired again after unpair, which the guide names; unpair keeps the old identity in retired/.
+  await writeFile(join(workerHome,"status.json"),JSON.stringify({version:1,state:"revoked",reason:"device_revoked_or_unauthorized",deviceId:"PAIRED-FIXTURE",
+    activeAttemptId:null,capabilityDigest:null,updatedAt:new Date().toISOString()}));
+  guide=JSON.parse(run("guide").stdout);
+  assert.deepEqual([guide.next,guide.steps[0].done,guide.steps[0].command],["pair",false,'excess-worker unpair, then excess-worker pair <exchange address> "<device name>"']);
+  const unpaired=run("unpair");
+  assert.equal(unpaired.status,0,unpaired.stderr);
+  assert.equal(JSON.parse(unpaired.stdout).deviceId,"PAIRED-FIXTURE");
+  await assert.rejects(readFile(join(workerHome,"identity.json")),{code:"ENOENT"});
+  assert.equal((await readdir(join(workerHome,"retired"))).length,1);
 });

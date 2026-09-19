@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile, access, unlink, readdir } from "no
 import { resolve, join } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { runWorker } from "../apps/worker/dist/runtime.js";
+import { runWorker, unpairDevice } from "../apps/worker/dist/runtime.js";
 import { setWorkerControl, readWorkerControl, readWorkerStatus, acquireRuntimeLock } from "../apps/worker/dist/control.js";
 import { parseWorkerPolicy, policyDecision, readWorkerPolicy, writeWorkerPolicy } from "../apps/worker/dist/policy.js";
 import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
@@ -249,6 +249,28 @@ test("fixture pending result survives restart and retries lost receipt without e
   assert.equal(f.counts.executions, 0);
   assert.equal(f.calls.filter(c => c.type === "job.result").length, 2);
   await assert.rejects(access(join(f.dir, f.a.attemptId + ".result.json")), { code: "ENOENT" });
+});
+
+test("unpair retires the identity and journal for a new pairing, never while the worker runs or a result waits", async () => {
+  // The failover rehearsal re-paired a machine to another wallet: pair refused the old identity, and after moving it by
+  // hand the worker stopped with "Attempt journal belongs to another device".
+  const f = await fixture();
+  await writeFile(join(f.dir, "identity.json"), JSON.stringify({ version: 1, origin: "https://exchange.test", deviceId: f.a.deviceId }), { mode: 0o600 });
+  await writeFile(join(f.dir, "journal-owner.json"), JSON.stringify({ version: 1, deviceId: f.a.deviceId }), { mode: 0o600 });
+  const line = state => JSON.stringify({ assignment: f.a, state, reason: "TEST FIXTURE", updatedAt: new Date().toISOString(),
+    ...(state === "result_pending" ? { resultDigest: requestDigest(output) } : {}) }) + "\n";
+  await writeFile(join(f.dir, "attempts.jsonl"), ["seen", "running", "result_pending"].map(line).join(""), { mode: 0o600 });
+  await writeFile(join(f.dir, f.a.attemptId + ".result.json"), JSON.stringify(output), { mode: 0o600 });
+  await assert.rejects(unpairDevice(f.dir), /1 finished job result still waits for the exchange/);
+  await writeFile(join(f.dir, "attempts.jsonl"), line("finished"), { flag: "a" });
+  const lock = await acquireRuntimeLock(f.dir);
+  await assert.rejects(unpairDevice(f.dir), /already running/);
+  await lock();
+  const retired = await unpairDevice(f.dir);
+  assert.deepEqual([retired.deviceId, retired.origin], [f.a.deviceId, "https://exchange.test"]);
+  assert.deepEqual((await readdir(retired.retired)).sort(), [f.a.attemptId + ".result.json", "attempts.jsonl", "identity.json", "journal-owner.json"].sort());
+  for (const name of ["identity.json", "attempts.jsonl", "journal-owner.json"]) await assert.rejects(access(join(f.dir, name)), { code: "ENOENT" });
+  assert.equal((await unpairDevice(f.dir)).retired, null, "nothing left to unpair");
 });
 
 test("fixture worker never probes with unavailable idle observation and aborts when user returns", async () => {

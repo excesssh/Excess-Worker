@@ -30,10 +30,14 @@ export async function workerGuide(identityPath: string, stateDir: string, instal
   const fitting = rated.filter(item => item.fit.fits !== "no"), textFits = fitting.filter(item => item.entry.kind === "text");
   // The largest text model that fits is usually the best earner.
   const suggestion = textFits.reduce<(typeof textFits)[number] | undefined>((best, item) => !best || item.entry.minMemoryMb > best.entry.minMemoryMb ? item : best, undefined)?.entry;
+  // A revoked device (or one the exchange no longer accepts) is paired again after retiring its identity.
+  const revoked = state === "revoked";
   const steps = [
-    { step: "pair", done: Boolean(identity?.deviceId),
-      command: identity ? "excess-worker complete-pairing" : "excess-worker pair <exchange address, for example https://excess.sh> \"<device name>\"",
-      note: identity ? "Approve the pairing code in the web app (Supply, Pair a device) first." : "Prints a code to approve in the web app under Supply, Pair a device." },
+    { step: "pair", done: Boolean(identity?.deviceId) && !revoked,
+      command: revoked ? "excess-worker unpair, then excess-worker pair <exchange address> \"<device name>\""
+        : identity ? "excess-worker complete-pairing" : "excess-worker pair <exchange address, for example https://excess.sh> \"<device name>\"",
+      note: revoked ? "This device was revoked or its pairing is no longer accepted. unpair keeps the old identity and job journal in a dated folder."
+        : identity ? "Approve the pairing code in the web app (Supply, Pair a device) first." : "Prints a code to approve in the web app under Supply, Pair a device." },
     { step: "choose-model", done: true, command: "excess-worker models, then excess-worker use <model id> [--gpu]",
       note: `${WORK[served.kind]}: ${served.displayName} on ${hardwareName}. ${fitting.length} of ${rated.length} models fit this computer` +
         (suggestion ? `; the largest text model that fits is ${suggestion.id} (${rated.find(item => item.entry.id === suggestion.id)!.fit.fits}).` : ".") +
