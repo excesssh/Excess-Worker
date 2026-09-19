@@ -50,6 +50,16 @@ export const comparePrices = (a: string, b: string): number => { const x = price
 export const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/)
   .refine(value => value.toLowerCase() !== "0x0000000000000000000000000000000000000000")
   .transform(value => value.toLowerCase());
+/** A wallet's chain family (ADR 0011): EVM addresses are hex, Solana addresses are base58 and case sensitive. */
+export type WalletFamily = "evm" | "solana";
+export const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+export const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+export const walletFamily = (address: string): WalletFamily | null =>
+  EVM_ADDRESS.test(address) ? "evm" : SOLANA_ADDRESS.test(address) ? "solana" : null;
+/** A wallet address of either family, stored as the chain writes it: EVM lowercase, Solana exactly as given. */
+export const walletAddressSchema = z.string().refine(value => walletFamily(value) !== null)
+  .refine(value => value.toLowerCase() !== "0x0000000000000000000000000000000000000000")
+  .transform(value => EVM_ADDRESS.test(value) ? value.toLowerCase() : value);
 export const assetSchema = z.discriminatedUnion("kind", [
   z.strictObject({ chainId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), kind: z.literal("native") }),
   z.strictObject({ chainId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), kind: z.literal("erc20"), address: addressSchema }),
