@@ -134,7 +134,7 @@ await writeFile(join(stage,"ONBOARDING.txt"),[
   "",`Stop: ${cli} drain (finish current work) or ${cli} stop-now. Status: ${cli} status.`,
   linux?"Data lives in ~/.local/share/excess. The device key is stored in a file readable only by your user and cannot move your wallet's funds."
     :"Data lives in %LOCALAPPDATA%\\EXCESS. The device key is protected with Windows DPAPI for your user and cannot move your wallet's funds.",
-  "Earnings appear in the web app and become withdrawable after the review window. Withdrawals go to your paired wallet.",""].join(newline));
+  "Earnings appear in the web app once each job settles and can be withdrawn from there. Withdrawals go to your paired wallet.",""].join(newline));
 await copyFile(join(root,"node_modules/zod/LICENSE"),join(stage,"licenses","zod-LICENSE.txt")).catch(()=>{});
 await writeFile(join(stage,"licenses","NOTICE.txt"),[
   `Bundles Node.js ${nodeVersion} (MIT and bundled third-party licences): https://github.com/nodejs/node/blob/${nodeVersion}/LICENSE`,
