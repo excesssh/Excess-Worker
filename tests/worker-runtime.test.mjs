@@ -118,6 +118,14 @@ test("worker policy and controls fail closed and fence concurrent foreground run
   assert.equal(policyDecision({ ...policy, idleOnly: true }, { ...ready, idleSeconds: null }).reason, "idle_observation_unavailable");
   assert.equal(policyDecision(policy, { ...ready, freeMemoryMb: null }).allowed, false);
   assert.equal(policyDecision(policy, { ...ready, freeMemoryMb: 100 }).allowed, false);
+  // The loaded runtime's own memory counts toward the allowance (the 8 GB Debian droplet, 19 September 2026: Qwen3-4B
+  // held 3,632 MB after its probe and the machine reported 3,770 MB free, so a 6,144 MB policy refused every job).
+  const warm = { ...policy, maxMemoryMb: 6144 }, afterProbe = { ...ready, freeMemoryMb: 3770 };
+  assert.equal(policyDecision(warm, afterProbe).reason, "memory_headroom");
+  assert.equal(policyDecision(warm, afterProbe, false, 3632).allowed, true);
+  assert.match(policyDecision(warm, { ...ready, freeMemoryMb: 2000 }, false, 3632).detail, /needs 2640 MB free \(maxMemoryMb 6144 plus 128 MB, less 3632 MB the loaded model already holds\)/);
+  assert.equal(policyDecision(warm, { ...ready, freeMemoryMb: 127 }, false, 99999).allowed, false, "the credit never exceeds the policy's own allowance");
+  assert.equal(policyDecision(warm, { ...ready, freeMemoryMb: 128 }, false, 99999).allowed, true);
   const f = await fixture();
   assert.equal(await readWorkerControl(f.dir), "stop");
   assert.deepEqual(await writeWorkerPolicy(f.dir, policy), policy);

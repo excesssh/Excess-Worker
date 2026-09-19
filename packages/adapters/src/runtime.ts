@@ -13,7 +13,10 @@ import { PROMPT_FORMATS } from "./prompt-format.js";
 
 export interface AdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:number;modelId?:string;backend?:Backend}
 export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
-export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal;onChunk?:ChunkCallback}):Promise<TextResult>;stop():Promise<void>}
+export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal;onChunk?:ChunkCallback}):Promise<TextResult>;stop():Promise<void>;
+  /** Memory the loaded runtime already holds (its peak resident size), or 0 when no runtime is running. A job runs in that
+   * process, so this memory counts toward the job's allowance rather than against the machine's free memory. */
+  residentMb?():number}
 /** Internal seam: where the verified server and model are. Tests substitute a fixture server; the package entry point exposes
  * only createTextAdapter, which always re-verifies the pinned installation. */
 export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}>;executable?:string;prefixArgs?:readonly string[]}
@@ -151,6 +154,7 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
   }
   return {
     supportsStreaming:true,execute:(request,execution={})=>run(parseTextRequest(request),execution.signal,execution.onChunk),stop,
+    residentMb(){const runtime=processes.process;return runtime?.alive()?Math.ceil(runtime.peakRssBytes()/1048576):0;},
     async probe(){
       const result=await run({prompt:"Reply with the word ready.",maxTokens:textProbeTokens(entry),seed:42});
       const runtime=processes.process;

@@ -47,14 +47,19 @@ export async function writeWorkerPolicy(stateDir: string, input: unknown): Promi
   await atomicPrivateJson(join(resolve(stateDir), "policy.json"), policy);
   return policy;
 }
-export function policyDecision(policy: WorkerPolicy, observation: ResourceObservation, active = false): { allowed: boolean; reason: string; detail?: string } {
+/** `residentMb` is memory the worker's own loaded runtime already holds. After the probe the runtime stays loaded, and
+ * without this credit a model that needs half the machine blocked itself: on an 8 GB Debian droplet on 19 September 2026
+ * Qwen3-4B held 3.6 GB, left 3.7 GB free and the worker refused every job for want of 6.2 GB. */
+export function policyDecision(policy: WorkerPolicy, observation: ResourceObservation, active = false, residentMb = 0): { allowed: boolean; reason: string; detail?: string } {
   if (policy.threads > os.availableParallelism()) return { allowed: false, reason: "cpu_threads_unavailable",
     detail: `the policy asks for ${policy.threads} threads; this machine reports ${os.availableParallelism()}` };
   if (observation.freeMemoryMb === null || !Number.isFinite(observation.freeMemoryMb) || observation.freeMemoryMb < 0) return { allowed: false, reason: "memory_observation_unavailable" };
   // Say what was needed and what was seen: a supplier whose machine is simply too small cannot tell that from the reason alone.
-  const requiredMb = active ? 128 : policy.maxMemoryMb + 128;
+  const held = Number.isSafeInteger(residentMb) && residentMb > 0 ? Math.min(residentMb, policy.maxMemoryMb) : 0;
+  const requiredMb = active ? 128 : policy.maxMemoryMb - held + 128;
   if (observation.freeMemoryMb < requiredMb) return { allowed: false, reason: "memory_headroom",
-    detail: `needs ${requiredMb} MB free (maxMemoryMb ${policy.maxMemoryMb} plus 128 MB); the machine reports ${observation.freeMemoryMb} MB` };
+    detail: `needs ${requiredMb} MB free (maxMemoryMb ${policy.maxMemoryMb} plus 128 MB` + (held ? `, less ${held} MB the loaded model already holds` : "") +
+      `); the machine reports ${observation.freeMemoryMb} MB` };
   if (policy.idleOnly) {
     if (observation.idleSeconds === null || !Number.isFinite(observation.idleSeconds) || observation.idleSeconds < 0) return { allowed: false, reason: "idle_observation_unavailable" };
     if (observation.idleSeconds < policy.idleSeconds) return { allowed: false, reason: "user_active" };

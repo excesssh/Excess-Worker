@@ -24,6 +24,8 @@ export interface MediaAdapter {
   probe():Promise<MediaProbe>;
   execute(request:unknown,options?:{signal?:AbortSignal;inputs?:ReadonlyMap<string,Buffer>}):Promise<MediaOutput>;
   stop():Promise<void>;
+  /** Memory the loaded runtime already holds (its peak resident size), or 0 when none is running (see TextAdapter). */
+  residentMb?():number;
 }
 /** Internal seam: where the verified server and model files are. Tests substitute a fixture server; the package entry point
  * exposes only createMediaAdapter, which always re-verifies the pinned installation. */
@@ -193,6 +195,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
   }
   return {
     kind:entry.kind,check,stop,
+    residentMb(){const runtime=processes.process;return runtime?.alive()?Math.ceil(runtime.peakRssBytes()/MiB):0;},
     // Async so an invalid request rejects like every other execution failure instead of throwing synchronously.
     execute:async(request,execution={})=>run(check(request),execution.signal,execution.inputs),
     async probe(){

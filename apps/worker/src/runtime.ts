@@ -195,7 +195,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     }
     adapter = options.adapter ?? createServedAdapter(options.installDir, policy);
     if ((served.kind === "text") === isMediaAdapter(adapter)) throw Error("Adapter does not match the served model kind");
-    const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null);
+    const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null,
+      adapter?.residentMb?.() ?? 0);
     const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(statusDetail ? { detail: statusDetail } : {}), deviceId: connection!.deviceId,
       activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null,
       ...(lastProbe ? { lastProbe } : {}) });
