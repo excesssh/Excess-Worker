@@ -149,7 +149,7 @@ try {
       const input = isAssetId(target) ? { assetId: target, netUnits: price } : await offerFromSymbol(await origin(), target, price, unit);
       const offers = await writeWorkerOffer(stateDir, input, policy.model);
       print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offer: offers.find(item => item.assetId === input.assetId), offers,
-        next: `While running, the worker publishes these net prices per ${unit.unit} for the selected model, one offer per asset, after its local probe passes.` });
+        next: `While running, the worker publishes these net prices per ${unit.unit} for the selected model, one offer per asset, after its local probe passes. A running worker picks up a change within 30 seconds.` });
     } else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens|pricePerAudioHour|pricePerImage | assetId netUnitsPerMeteringUnit | SYMBOL|assetId off]");
   } else if (command === "status") print({ product: "EXCESS", ...await readWorkerStatus(stateDir) });
   else if (command === "drain" || command === "stop-now") {

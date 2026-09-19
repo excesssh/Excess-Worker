@@ -9,6 +9,7 @@ import { runWorker } from "../apps/worker/dist/runtime.js";
 import { setWorkerControl, readWorkerControl, readWorkerStatus, acquireRuntimeLock } from "../apps/worker/dist/control.js";
 import { parseWorkerPolicy, policyDecision, readWorkerPolicy, writeWorkerPolicy } from "../apps/worker/dist/policy.js";
 import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
+import { removeWorkerOffer, writeWorkerOffer } from "../apps/worker/dist/offer.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 
@@ -368,6 +369,29 @@ test("fixture worker publishes its configured offer only after a probe, and a re
   await setWorkerControl(quiet.dir, "stop");
   await idle;
   assert.equal(published, 0, "a worker without a configured price publishes nothing");
+});
+
+test("fixture worker applies price changes made while it runs and stops renewing an asset switched off", async () => {
+  // The failover rehearsal found prices were read once at start, although `offer ... off` promised the worker would stop
+  // renewing that offer.
+  const f = await fixture(); f.state.assigned = false;
+  const first = randomUUID(), second = randomUUID(), published = [];
+  f.connection.offer = async data => { published.push(structuredClone(data)); return { published: true, offerId: randomUUID() }; };
+  await writeWorkerOffer(f.dir, { assetId: first, netUnits: "5" }, policy.model);
+  const running = f.start();
+  await waitFor(() => published.some(o => o.assetId === first && o.netUnits === "5"), "the starting price is published");
+  await writeWorkerOffer(f.dir, { assetId: first, netUnits: "4.5" }, policy.model);
+  await writeWorkerOffer(f.dir, { assetId: second, netUnits: "900" }, policy.model);
+  await waitFor(() => published.some(o => o.assetId === first && o.netUnits === "4.5") && published.some(o => o.assetId === second && o.netUnits === "900"),
+    "a changed price and a new asset are published without a restart");
+  await removeWorkerOffer(f.dir, first, policy.model);
+  const mark = published.length;
+  await waitFor(() => published.slice(mark).filter(o => o.assetId === second).length >= 3, "the remaining asset keeps renewing");
+  // A publication already under way when the file changed may renew the removed asset once; after that, never again.
+  const settled = mark + published.slice(mark).findIndex(o => o.assetId === second) + 1;
+  assert.deepEqual(published.slice(settled).filter(o => o.assetId === first), []);
+  await setWorkerControl(f.dir, "stop");
+  assert.equal((await running).state, "stopped");
 });
 
 test("fixture malformed probe observations never become retained evidence or advertised capability", async () => {

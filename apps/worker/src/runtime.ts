@@ -187,7 +187,10 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     // The worker serves exactly one catalog model at a time, chosen in its policy: text or a buffered media kind.
     const served = servedModel(policy.model);
     capabilityDigest = served.capabilityDigest;
-    const offers = options.offers ?? (options.offer !== undefined ? (options.offer ? [options.offer] : []) : await readWorkerOffers(dir, policy.model));
+    // Prices set with `excess-worker offer` while the worker runs take effect at the next publication (within 30 seconds);
+    // an asset switched off is no longer renewed and lapses with its offer. Offers passed in options are fixed.
+    const fixedOffers = options.offers ?? (options.offer !== undefined ? (options.offer ? [options.offer] : []) : undefined);
+    let offers = fixedOffers ?? await readWorkerOffers(dir, policy.model);
     mode = await readWorkerControl(dir);
     if (mode !== "run") {
       statusState = "stopped"; statusReason = mode === "drain" ? "drained" : "explicit_resume_required";
@@ -242,6 +245,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     tasks.push((async () => {
       let published = false;
       while (!closing && !lifetime.signal.aborted) {
+        // A malformed or unreadable offers file keeps the last good prices rather than stopping supply.
+        if (!fixedOffers) offers = await readWorkerOffers(dir, policy.model).catch(() => offers);
         // One offer per priced asset, each at its own price; they share the device's single slot.
         published = offers.length > 0;
         for (const offer of offers) {
