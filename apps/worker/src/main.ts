@@ -8,13 +8,14 @@ import { textInstallationPlan, installTextAdapter, installMediaModel, mediaInsta
 import { priceUnit, servedModel, servedModels } from "./served.js";
 import { runWorker } from "./runtime.js";
 import { readWorkerStatus, setWorkerControl } from "./control.js";
-import { readWorkerPolicy, writeWorkerPolicy } from "./policy.js";
+import { describeSchedule, parseScheduleSpec, readWorkerPolicy, writeWorkerPolicy } from "./policy.js";
 import { observeLocalResources } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
 import { readWorkerOffer, writeWorkerOffer, offerFromSymbol } from "./offer.js";
 import { workerGuide } from "./guide.js";
 import { detectHardware, modelsByFit } from "./hardware.js";
 import { workerService } from "./service.js";
+import { checkForUpdate, currentRelease, runInstaller, supervisedBySystemd, UPDATED_EXIT_CODE } from "./update.js";
 const execute = promisify(execFile);
 const gigabytes = (bytes: number) => (bytes / 1073741824).toFixed(1) + " GB";
 const diskMessage = (disk: DiskCheck) => `INSUFFICIENT_DISK_SPACE: this install needs ${gigabytes(disk.requiredBytes)} free on the model drive and ${gigabytes(disk.freeBytes ?? 0)} is free. Free space or set EXCESS_MODEL_DIR to a larger drive.`;
@@ -150,14 +151,45 @@ try {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
     await setWorkerControl(stateDir, "run");
-    await runWorker({ identityPath: path, stateDir, installDir, telemetry: observeLocalResources, signal: controller.signal });
+    // The paired exchange is where updates come from; auto-install needs a supervisor to start the new version.
+    let origin: string | undefined;
+    try { origin = (JSON.parse(await readFile(path, "utf8")) as { origin?: string }).origin; } catch { /* runWorker reports a missing identity */ }
+    const autoUpdate = (await readWorkerPolicy(stateDir)).autoUpdate;
+    const update = origin?.startsWith("https://") ? { origin, current: await currentRelease(), autoInstall: autoUpdate && supervisedBySystemd() } : undefined;
+    const result = await runWorker({ identityPath: path, stateDir, installDir, telemetry: observeLocalResources, signal: controller.signal, ...(update ? { update } : {}) });
     print({ product: "EXCESS", ...await readWorkerStatus(stateDir) });
+    if (result.reason === "updated") process.exitCode = UPDATED_EXIT_CODE;
   } else if (command === "service") print(await workerService(positional[0]));
+  else if (command === "update") {
+    if (flags.has("--auto")) {
+      const choice = positional[0];
+      if (choice !== "on" && choice !== "off") throw Error("Usage: worker update --auto on|off");
+      const policy = await writeWorkerPolicy(stateDir, { ...await readWorkerPolicy(stateDir), autoUpdate: choice === "on" });
+      print({ product: "EXCESS", autoUpdate: policy.autoUpdate,
+        note: policy.autoUpdate ? "Installs new versions by itself when idle, while running as a Linux service (excess-worker service install). Elsewhere, run excess-worker update." : "Run excess-worker update to install new versions." });
+    } else {
+      const origin = (JSON.parse(await readFile(path, "utf8")) as { origin?: string }).origin ?? "";
+      const check = await checkForUpdate(origin, await currentRelease());
+      if (flags.has("--check") || (!check.available && !flags.has("--force"))) print({ product: "EXCESS", ...check });
+      else {
+        const code = await runInstaller(origin);
+        if (code !== 0) throw Error(`The installer failed with exit code ${code}; the current version is unchanged`);
+        print({ product: "EXCESS", installed: check.latest, previous: check.current,
+          next: "Restart the worker to use it: excess-worker drain, then run it again. As a Linux service: systemctl --user restart excess-worker." });
+      }
+    }
+  } else if (command === "schedule") {
+    const current = await readWorkerPolicy(stateDir);
+    const policy = positional.length === 0 ? current
+      : await writeWorkerPolicy(stateDir, { ...current, schedule: positional.length === 1 && positional[0] === "off" ? [] : parseScheduleSpec(positional) });
+    print({ product: "EXCESS", schedule: policy.schedule, runs: describeSchedule(policy.schedule) + (policy.schedule.length ? " (local time)" : ""),
+      pauseOnBattery: policy.pauseOnBattery, note: "Outside these times, or on battery, the worker takes no new jobs; a running job finishes." });
+  }
   else if (command === "probe") {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
     print(await runLocalProbe({ stateDir, installDir, signal: controller.signal }));
-  } else throw Error("Usage: worker guide | doctor | service install|remove|status | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit] | status | run | drain | stop-now | resume | probe");
+  } else throw Error("Usage: worker guide | doctor | service install|remove|status | update [--check|--force|--auto on|off] | schedule [off | \"[days] HH:MM-HH:MM\" ...] | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit] | status | run | drain | stop-now | resume | probe");
 } catch (error) {
   const safe = error instanceof Error && !/private|secret|password/i.test(error.message) ? error.message : "Worker identity operation failed";
   // Only a system error code (such as EPERM or ENOSPC) is added; paths and messages stay out of the output.

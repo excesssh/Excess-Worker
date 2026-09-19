@@ -11,6 +11,8 @@ export type WorkerStatus = {
   deviceId?: string; activeAttemptId?: string | null; capabilityDigest?: string | null;
   // Historical observation from the current run, not a live-capacity flag.
   lastProbe?: WorkerProbe;
+  // The last check of the paired exchange for a newer published worker.
+  update?: { current: string | null; latest: string; available: boolean; checkedAt: string; installFailed?: true };
 };
 const privateFileOperations = new Map<string, Promise<unknown>>();
 async function withPrivateFile<T>(path: string, action: () => Promise<T>): Promise<T> {

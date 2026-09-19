@@ -12,7 +12,7 @@ import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 
-const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu" };
+const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false };
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
 const output = { text: "TEST FIXTURE OUTPUT", generatedTokens: 3, finishReason: "stop" };
 const ready = { freeMemoryMb: 8192, idleSeconds: 120 };
@@ -362,4 +362,35 @@ test("fixture malformed probe observations never become retained evidence or adv
     assert.equal((await readWorkerStatus(f.dir)).lastProbe, undefined);
     assert.ok(f.heartbeats.every(heartbeat => heartbeat.capabilityDigests.length === 0));
   }
+});
+
+test("fixture worker reports a newer published version, installs it only when idle, and returns updated for its supervisor", async () => {
+  const newer = { current: "0.1.0-aaaaaaaaaaaa", latest: "0.1.0-bbbbbbbbbbbb", available: true, checkedAt: new Date().toISOString() };
+  // Report only: without auto-install the check is shown in status and nothing is installed.
+  const quiet = await fixture(); quiet.state.assigned = false;
+  let installs = 0;
+  const reporting = quiet.start({ update: { origin: "https://exchange.example", current: newer.current, autoInstall: false, firstCheckMs: 10, intervalMs: 50,
+    check: async () => newer, install: async () => { installs++; return 0; } } });
+  await waitFor(async () => (await readWorkerStatus(quiet.dir)).update?.available === true, "update reported");
+  await setWorkerControl(quiet.dir, "stop");
+  assert.equal((await reporting).reason, "stopped_locally");
+  assert.equal(installs, 0);
+
+  // Auto-install waits for the running job to finish and its result to be accepted, then installs once.
+  const busy = await fixture();
+  let checks = 0;
+  const running = busy.start({ update: { origin: "https://exchange.example", current: newer.current, autoInstall: true, firstCheckMs: 300, intervalMs: 50,
+    check: async () => { checks++; return newer; }, install: async () => { installs++; return 0; } } });
+  await waitFor(() => busy.counts.executions === 1, "job running");
+  // The first check comes while the job runs; later checks keep finding it busy.
+  await waitFor(() => checks >= 3, "update checks while busy");
+  assert.equal(installs, 0, "never installs while a job runs");
+  assert.equal(busy.counts.aborts, 0, "and never interrupts it");
+  busy.complete(output);
+  const result = await running;
+  assert.equal(result.reason, "updated");
+  assert.equal(installs, 1);
+  assert.equal(busy.state.acceptedResult, true, "the job's result was delivered before updating");
+  assert.equal(busy.heartbeats.at(-1).availableSlots, 0, "capacity is withdrawn while updating");
+  assert.equal(await readWorkerControl(busy.dir), "run", "an update is not a stop: the restarted worker keeps serving");
 });

@@ -10,6 +10,7 @@ import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
 import { readWorkerOffer, type WorkerOffer } from "./offer.js";
 import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, WorkerShutdownError, type WorkerMode, type WorkerProbe } from "./control.js";
+import { checkForUpdate, runInstaller, type UpdateCheck } from "./update.js";
 
 type Assignment = {
   jobId: string; attemptId: string; deviceId: string; fence: string; leaseExpiresAt: string;
@@ -22,6 +23,10 @@ export type WorkerRuntimeOptions = {
   telemetry?: () => Promise<ResourceObservation>; signal?: AbortSignal;
   // Dependency injection is for explicit local tests, never a CLI fallback.
   adapter?: ServedAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null;
+  /** Checks the paired exchange for a newer published worker (first after firstCheckMs, then every intervalMs) and reports
+   * it in status. With autoInstall, an idle worker installs it and returns reason "updated" so its supervisor restarts it. */
+  update?: { origin: string; current: string | null; autoInstall: boolean; firstCheckMs?: number; intervalMs?: number;
+    check?: () => Promise<UpdateCheck>; install?: () => Promise<number> };
 };
 // Listed offers need a probe newer than the coordinator's five-minute window.
 const REPROBE_MS = 240_000;
@@ -163,6 +168,9 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   let closing = false, mode: WorkerMode = "stop", connected = false, probed = false, capabilityDigest = "";
   let fatal: string | null = null, statusState = "starting", statusReason = "initializing", statusDetail: string | undefined;
   let observation: ResourceObservation = { freeMemoryMb: null, idleSeconds: null }, observedAt = 0;
+  // `claimed` is set in the same synchronous step that decides to take an assignment, before perform() awaits anything,
+  // so an update can never start between that decision and `active` being set.
+  let updateState: (UpdateCheck & { installFailed?: true }) | null = null, updating = false, updated = false, claimed = false;
   let tasks: Promise<void>[] = [];
   const lifetime = new AbortController();
   const timing: Timing = { pollMs: 1000, heartbeatMs: 5000, renewMs: 5000, monitorMs: 100, ...options.timings };
@@ -195,11 +203,12 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     }
     adapter = options.adapter ?? createServedAdapter(options.installDir, policy);
     if ((served.kind === "text") === isMediaAdapter(adapter)) throw Error("Adapter does not match the served model kind");
-    const decide = () => policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null,
-      adapter?.residentMb?.() ?? 0);
+    // Updating only refuses new work: decide() also aborts a running job when it turns false, and an update must never do that.
+    const decide = () => updating && active === null ? { allowed: false, reason: "updating", detail: undefined as string | undefined }
+      : policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null, adapter?.residentMb?.() ?? 0);
     const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(statusDetail ? { detail: statusDetail } : {}), deviceId: connection!.deviceId,
       activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null,
-      ...(lastProbe ? { lastProbe } : {}) });
+      ...(lastProbe ? { lastProbe } : {}), ...(updateState ? { update: updateState } : {}) });
     tasks.push((async () => {
       let lastStatus = 0;
       while (!closing && !lifetime.signal.aborted) {
@@ -244,6 +253,29 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
           if (!closing && !(error instanceof WorkerConnectionError && [400, 403, 409].includes(error.status ?? 0))) disconnected(error);
         }
         await pause(published ? timing.heartbeatMs * 6 : timing.heartbeatMs, lifetime.signal);
+      }
+    })());
+
+    if (options.update) tasks.push((async () => {
+      const u = options.update!, pending = () => [...journal.entries.values()].some(entry => entry.state === "result_pending");
+      await pause(u.firstCheckMs ?? 60_000, lifetime.signal);
+      while (!closing && !lifetime.signal.aborted) {
+        let retryMs = u.intervalMs ?? 6 * 3_600_000;
+        try {
+          updateState = await (u.check ?? (() => checkForUpdate(u.origin, u.current)))();
+          if (updateState.available && u.autoInstall && mode === "run") {
+            // Stop advertising capacity first, then install only if no job arrived in the meantime.
+            updating = true;
+            await pause(Math.max(timing.heartbeatMs, timing.pollMs) * 2, lifetime.signal);
+            if (active || claimed || pending()) { updating = false; retryMs = Math.min(60_000, retryMs); }
+            else {
+              statusState = "updating"; statusReason = "installing_" + updateState.latest; statusDetail = undefined; await state();
+              if (await (u.install ?? (() => runInstaller(u.origin, true)))() === 0) { updated = true; mode = "stop"; lifetime.abort(); return; }
+              updateState = { ...updateState, installFailed: true }; updating = false;
+            }
+          }
+        } catch { updating = false; /* offline or nothing published: check again later */ }
+        await pause(retryMs, lifetime.signal);
       }
     })());
 
@@ -548,7 +580,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         }
         if (mode !== "run" || !decide().allowed) continue;
         if (response.executionEnabled && fresh.length && connected && ![...journal.entries.values()].some(e => e.state === "result_pending")) {
-          await perform(fresh[0]!);
+          claimed = true;
+          try { await perform(fresh[0]!); } finally { claimed = false; }
         } else { statusState = "idle"; statusReason = "waiting_for_assignment"; statusDetail = undefined; await pause(timing.pollMs); }
       } catch (error) {
         if (error instanceof WorkerConnectionError) { disconnected(error); await pause(timing.pollMs); }
@@ -557,7 +590,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     }
     if (fatal) await setWorkerControl(dir, "stop");
     statusState = fatal ? (fatal === "device_revoked_or_unauthorized" ? "revoked" : "error") : "stopped";
-    statusReason = fatal ?? ((mode as WorkerMode) === "drain" ? "drained" : "stopped_locally");
+    statusReason = fatal ?? (updated ? "updated" : (mode as WorkerMode) === "drain" ? "drained" : "stopped_locally");
     return { state: statusState, reason: statusReason };
   } catch (error) {
     statusState = "error"; statusReason = safeReason(error);
