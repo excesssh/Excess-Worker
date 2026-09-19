@@ -22,7 +22,9 @@ export interface HostedStreamOptions {
 }
 export interface GenerationStats { promptTokens: number | null; completionTokens: number | null; costCredits: number | null; cancelled: boolean | null }
 export interface LiveEndpoint { provider: string; tag: string; quantization: string; contextLength: number | null; maxCompletionTokens: number | null;
-  promptUsdPerM: string; completionUsdPerM: string; status: number | null; supportedParameters: string[] }
+  promptUsdPerM: string; completionUsdPerM: string; status: number | null; supportedParameters: string[];
+  /** USD per million output image tokens for image models; "unknown" when the endpoint lists none. */
+  imageOutputUsdPerM: string }
 export class HostedProviderError extends AdapterError {
   constructor(code: string, readonly status: number | null = null, readonly charged: "none" | "unknown" = "unknown") { super(code); this.name = "HostedProviderError"; }
 }
@@ -185,7 +187,8 @@ export function createOpenRouterClient(options: OpenRouterClientOptions) {
       const e = item as Record<string, unknown>, pricing = (e.pricing ?? {}) as Record<string, unknown>;
       return { provider: String(e.provider_name ?? ""), tag: String(e.tag ?? ""), quantization: String(e.quantization ?? "unknown"),
         contextLength: count(e.context_length), maxCompletionTokens: count(e.max_completion_tokens),
-        promptUsdPerM: perMillion(pricing.prompt), completionUsdPerM: perMillion(pricing.completion), status: Number.isSafeInteger(e.status) ? Number(e.status) : null,
+        promptUsdPerM: perMillion(pricing.prompt), completionUsdPerM: perMillion(pricing.completion), imageOutputUsdPerM: perMillion(pricing.image_output),
+        status: Number.isSafeInteger(e.status) ? Number(e.status) : null,
         supportedParameters: Array.isArray(e.supported_parameters) ? e.supported_parameters.filter((p): p is string => typeof p === "string") : [] };
     });
   }
