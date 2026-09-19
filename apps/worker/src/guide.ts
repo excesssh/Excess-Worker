@@ -45,7 +45,8 @@ export async function workerGuide(identityPath: string, stateDir: string, instal
     { step: "set-price", done: offer !== null, command: `excess-worker offer <ASSET SYMBOL> <price per ${unit.label}>`,
       note: `You are paid this net price per ${unit.label} for the selected model; buyers also pay the exchange fee. Your worker publishes it only after its local check passes.` },
     { step: "run", done: state !== null && ["running", "idle", "blocked", "starting"].includes(state), command: "excess-worker run",
-      note: "Keep it running to receive jobs. excess-worker drain finishes current work; excess-worker stop-now stops immediately." },
+      note: "Keep it running to receive jobs. excess-worker drain finishes current work; excess-worker stop-now stops immediately." +
+        (process.platform === "linux" ? " On Linux, excess-worker service install runs it in the background as your own systemd service, including after a restart." : "") },
   ];
   return {
     product: "EXCESS", origin: identity?.origin ?? null, deviceId: identity?.deviceId ?? null, model: policy.model, kind: served.kind, backend: policy.backend, steps,

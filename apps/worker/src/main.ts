@@ -14,6 +14,7 @@ import { runLocalProbe } from "./probe.js";
 import { readWorkerOffer, writeWorkerOffer, offerFromSymbol } from "./offer.js";
 import { workerGuide } from "./guide.js";
 import { detectHardware, modelsByFit } from "./hardware.js";
+import { workerService } from "./service.js";
 const execute = promisify(execFile);
 const gigabytes = (bytes: number) => (bytes / 1073741824).toFixed(1) + " GB";
 const diskMessage = (disk: DiskCheck) => `INSUFFICIENT_DISK_SPACE: this install needs ${gigabytes(disk.requiredBytes)} free on the model drive and ${gigabytes(disk.freeBytes ?? 0)} is free. Free space or set EXCESS_MODEL_DIR to a larger drive.`;
@@ -151,11 +152,12 @@ try {
     await setWorkerControl(stateDir, "run");
     await runWorker({ identityPath: path, stateDir, installDir, telemetry: observeLocalResources, signal: controller.signal });
     print({ product: "EXCESS", ...await readWorkerStatus(stateDir) });
-  } else if (command === "probe") {
+  } else if (command === "service") print(await workerService(positional[0]));
+  else if (command === "probe") {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
     print(await runLocalProbe({ stateDir, installDir, signal: controller.signal }));
-  } else throw Error("Usage: worker guide | doctor | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit] | status | run | drain | stop-now | resume | probe");
+  } else throw Error("Usage: worker guide | doctor | service install|remove|status | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit] | status | run | drain | stop-now | resume | probe");
 } catch (error) {
   const safe = error instanceof Error && !/private|secret|password/i.test(error.message) ? error.message : "Worker identity operation failed";
   // Only a system error code (such as EPERM or ENOSPC) is added; paths and messages stay out of the output.
