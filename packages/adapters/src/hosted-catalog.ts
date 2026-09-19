@@ -182,20 +182,22 @@ export function validMarginBps(marginBps: number): number {
   return marginBps;
 }
 /** The one house pricing function: supplier net base units per token =
- * ceil(providerUsdPerToken × (1 + credit fee) × (1 + margin) × 10^decimals), at least one base unit. Exact integer arithmetic.
- * Buyers pay this net plus the platform fee on top. */
-export function houseUnitPrice(usdPerMillion: string, marginBps: number = HOUSE_MARGIN_BPS.default, decimals = 6): bigint {
-  const { numerator, scale } = decimal(usdPerMillion);
+ * ceil(providerUsdPerToken × (1 + credit fee) × (1 + margin) × 10^decimals / usdPerToken), at least one base unit, where
+ * usdPerToken is the asset's USD rate ("1" for a USD stablecoin). Exact integer arithmetic. Buyers pay this net plus the
+ * platform fee on top. */
+export function houseUnitPrice(usdPerMillion: string, marginBps: number = HOUSE_MARGIN_BPS.default, decimals = 6, usdPerToken = "1"): bigint {
+  const { numerator, scale } = decimal(usdPerMillion), rate = decimal(usdPerToken);
   if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 36) throw new RangeError("Invalid asset decimals");
-  const top = numerator * BigInt(10000 + OPENROUTER_CREDIT_FEE_BPS) * BigInt(10000 + validMarginBps(marginBps)) * 10n ** BigInt(decimals);
-  const bottom = scale * 100_000_000n * 1_000_000n;
+  if (rate.numerator <= 0n) throw new RangeError("Invalid USD rate");
+  const top = numerator * BigInt(10000 + OPENROUTER_CREDIT_FEE_BPS) * BigInt(10000 + validMarginBps(marginBps)) * 10n ** BigInt(decimals) * rate.scale;
+  const bottom = scale * 100_000_000n * 1_000_000n * rate.numerator;
   const units = (top + bottom - 1n) / bottom;
   return units < 1n ? 1n : units;
 }
 export interface HousePrices { inputNetUnits: bigint; outputNetUnits: bigint }
-export const housePrices = (entry: HostedModelEntry, marginBps: number = HOUSE_MARGIN_BPS.default, decimals = 6): HousePrices => ({
-  inputNetUnits: houseUnitPrice(entry.providerPricing.promptUsdPerM, marginBps, decimals),
-  outputNetUnits: houseUnitPrice(entry.providerPricing.completionUsdPerM, marginBps, decimals),
+export const housePrices = (entry: HostedModelEntry, marginBps: number = HOUSE_MARGIN_BPS.default, decimals = 6, usdPerToken = "1"): HousePrices => ({
+  inputNetUnits: houseUnitPrice(entry.providerPricing.promptUsdPerM, marginBps, decimals, usdPerToken),
+  outputNetUnits: houseUnitPrice(entry.providerPricing.completionUsdPerM, marginBps, decimals, usdPerToken),
 });
 /** Worst-case provider cost of a job in USD, including the credit fee, as an exact fraction numerator / denominator. */
 export function providerCostUsd(pricing: Pick<ProviderPricing, "promptUsdPerM" | "completionUsdPerM">, promptTokens: number, completionTokens: number): { numerator: bigint; denominator: bigint } {
