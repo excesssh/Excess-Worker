@@ -8,7 +8,7 @@ import { createServedAdapter, isMediaAdapter, servedModel, type ServedAdapter } 
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
-import { readWorkerOffer, type WorkerOffer } from "./offer.js";
+import { readWorkerOffers, type WorkerOffer } from "./offer.js";
 import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, WorkerShutdownError, type WorkerMode, type WorkerProbe } from "./control.js";
 import { checkForUpdate, runInstaller, type UpdateCheck } from "./update.js";
 
@@ -22,7 +22,7 @@ export type WorkerRuntimeOptions = {
   identityPath: string; stateDir: string; installDir: string; policy?: WorkerPolicy;
   telemetry?: () => Promise<ResourceObservation>; signal?: AbortSignal;
   // Dependency injection is for explicit local tests, never a CLI fallback.
-  adapter?: ServedAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null;
+  adapter?: ServedAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null; offers?: WorkerOffer[];
   /** Checks the paired exchange for a newer published worker (first after firstCheckMs, then every intervalMs) and reports
    * it in status. With autoInstall, an idle worker installs it and returns reason "updated" so its supervisor restarts it. */
   update?: { origin: string; current: string | null; autoInstall: boolean; firstCheckMs?: number; intervalMs?: number;
@@ -187,7 +187,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     // The worker serves exactly one catalog model at a time, chosen in its policy: text or a buffered media kind.
     const served = servedModel(policy.model);
     capabilityDigest = served.capabilityDigest;
-    const offer = options.offer !== undefined ? options.offer : await readWorkerOffer(dir, policy.model);
+    const offers = options.offers ?? (options.offer !== undefined ? (options.offer ? [options.offer] : []) : await readWorkerOffers(dir, policy.model));
     mode = await readWorkerControl(dir);
     if (mode !== "run") {
       statusState = "stopped"; statusReason = mode === "drain" ? "drained" : "explicit_resume_required";
@@ -242,15 +242,19 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     tasks.push((async () => {
       let published = false;
       while (!closing && !lifetime.signal.aborted) {
-        try {
-          published = false;
-          if (offer && connection!.offer && mode === "run" && probed && connected && lastProbe) {
+        // One offer per priced asset, each at its own price; they share the device's single slot.
+        published = offers.length > 0;
+        for (const offer of offers) {
+          try {
+            if (!(connection!.offer && mode === "run" && probed && connected && lastProbe)) { published = false; break; }
             record(await connection!.offer({ capabilityDigest, assetId: offer.assetId, netUnits: offer.netUnits, slots: 1, probedAt: lastProbe.probedAt }, lifetime.signal));
-            published = true;
+          } catch (error) {
+            // A refused offer (such as a probe the coordinator considers stale, or an asset closed to new jobs) retries soon
+            // without holding back the other assets; lost transport is a disconnect.
+            published = false;
+            if (closing) break;
+            if (!(error instanceof WorkerConnectionError && [400, 403, 409].includes(error.status ?? 0))) { disconnected(error); break; }
           }
-        } catch (error) {
-          // A refused offer (such as a probe the coordinator considers stale) retries; lost transport is a disconnect.
-          if (!closing && !(error instanceof WorkerConnectionError && [400, 403, 409].includes(error.status ?? 0))) disconnected(error);
         }
         await pause(published ? timing.heartbeatMs * 6 : timing.heartbeatMs, lifetime.signal);
       }

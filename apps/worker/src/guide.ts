@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { installedComponents } from "@excess/adapters";
-import { readWorkerOffer } from "./offer.js";
+import { readWorkerOffers } from "./offer.js";
 import { readWorkerStatus } from "./control.js";
 import { readWorkerPolicy } from "./policy.js";
 import { priceUnit, servedModel, servedModels } from "./served.js";
@@ -18,8 +18,8 @@ export async function workerGuide(identityPath: string, stateDir: string, instal
   let identity: { origin?: string; deviceId?: string } | null = null;
   try { identity = JSON.parse(await readFile(identityPath, "utf8")); } catch { /* Not paired yet. */ }
   const policy = await readWorkerPolicy(stateDir), served = servedModel(policy.model), unit = priceUnit(served.kind);
-  let offer = null;
-  try { offer = await readWorkerOffer(stateDir, policy.model); } catch { /* An unreadable offer is shown as not set. */ }
+  let offers: unknown[] = [];
+  try { offers = await readWorkerOffers(stateDir, policy.model); } catch { /* An unreadable offer is shown as not set. */ }
   let state: string | null = null;
   try { state = (await readWorkerStatus(stateDir)).state; } catch { /* Never run. */ }
   const installed = await installedComponents(installDir);
@@ -42,8 +42,9 @@ export async function workerGuide(identityPath: string, stateDir: string, instal
       command: `excess-worker install-model ${policy.model}${gpu} --accept-download --accept-licenses`,
       note: `Downloads pinned, hash-checked files: ${served.engine} (MIT) and ${served.displayName}, after checking free disk space. ` +
         `Already have the exact model file? excess-worker import ${policy.model} <file.gguf ...> --accept-licenses uses it instead of downloading it again.` },
-    { step: "set-price", done: offer !== null, command: `excess-worker offer <ASSET SYMBOL> <price per ${unit.label}>`,
-      note: `You are paid this net price per ${unit.label} for the selected model; buyers also pay the exchange fee. Your worker publishes it only after its local check passes.` },
+    { step: "set-price", done: offers.length > 0, command: `excess-worker offer <ASSET SYMBOL> <price per ${unit.label}>`,
+      note: `You are paid this net price per ${unit.label} for the selected model; buyers also pay the exchange fee. Your worker publishes it only after its local check passes. ` +
+        "Run it once per asset to sell in several (for example USDG and ETH); excess-worker offer <ASSET SYMBOL> off withdraws one." },
     { step: "run", done: state !== null && ["running", "idle", "blocked", "starting"].includes(state), command: "excess-worker run",
       note: "Keep it running to receive jobs. excess-worker drain finishes current work; excess-worker stop-now stops immediately." +
         (process.platform === "linux" ? " On Linux, excess-worker service install runs it in the background as your own systemd service, including after a restart." : "") },

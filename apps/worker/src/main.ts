@@ -8,10 +8,10 @@ import { textInstallationPlan, installTextAdapter, installMediaModel, mediaInsta
 import { priceUnit, servedModel, servedModels } from "./served.js";
 import { runWorker } from "./runtime.js";
 import { readWorkerStatus, setWorkerControl } from "./control.js";
-import { describeSchedule, parseScheduleSpec, readWorkerPolicy, writeWorkerPolicy } from "./policy.js";
-import { observeLocalResources } from "./telemetry.js";
+import { describeSchedule, parseScheduleSpec, readWorkerPolicy, writeWorkerPolicy, THERMAL_STOP_MARGIN_C } from "./policy.js";
+import { observeLocalResources, observeTemperatures } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
-import { readWorkerOffer, writeWorkerOffer, offerFromSymbol } from "./offer.js";
+import { readWorkerOffers, writeWorkerOffer, removeWorkerOffer, offerFromSymbol, assetFromSymbol } from "./offer.js";
 import { workerGuide } from "./guide.js";
 import { detectHardware, modelsByFit } from "./hardware.js";
 import { workerService } from "./service.js";
@@ -45,7 +45,7 @@ export async function diagnostics() {
     product: "EXCESS", kind: "local_diagnostics", protocolVersion: 1,
     platform: os.platform(), release: os.release(), architecture: os.arch(),
     cpu: os.cpus()[0]?.model.trim() ?? "unknown", logicalCpus: os.cpus().length,
-    memoryBytes: String(os.totalmem()), nvidia,
+    memoryBytes: String(os.totalmem()), nvidia, temperatures: await observeTemperatures(),
     ...(runtimeLibraries.length ? { runtimeLibraries } : {}),
     executionBackends: [], verifiedCapabilities: [], registrationChecked: false,
     notes: ["Hardware discovery is not an execution probe.", "This command does not download models or accept jobs.", "Use probe for installed-model execution checks and status for local worker state; this inventory does not establish live supply.",
@@ -134,15 +134,23 @@ try {
     print(await workerGuide(path, stateDir, installDir, await detectHardware()));
   } else if (command === "offer") {
     const policy = await readWorkerPolicy(stateDir), unit = priceUnit(servedModel(policy.model).kind);
-    if (positional.length === 0) print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offer: await readWorkerOffer(stateDir, policy.model) });
-    else if (positional.length === 2) {
+    const origin = async () => (JSON.parse(await readFile(path, "utf8")) as { origin: string }).origin;
+    const isAssetId = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
+    if (positional.length === 0) print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offers: await readWorkerOffers(stateDir, policy.model) });
+    else if (positional.length === 2 && positional[1] === "off") {
+      // Withdraws the price in one asset; prices in other assets stay.
+      const target = positional[0]!, assetId = isAssetId(target) ? target : (await assetFromSymbol(await origin(), target)).id;
+      print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, removed: assetId, offers: await removeWorkerOffer(stateDir, assetId, policy.model),
+        next: "The worker stops renewing that offer; buyers can no longer pick it once it lapses, within a few minutes." });
+    } else if (positional.length === 2) {
       const [target, price] = [positional[0]!, positional[1]!];
       // An asset ID takes exact base units per metering unit; a symbol takes a human price per million tokens, audio hour or image.
-      const input = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(target) ? { assetId: target, netUnits: price }
-        : await offerFromSymbol((JSON.parse(await readFile(path, "utf8")) as { origin: string }).origin, target, price, unit);
-      print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offer: await writeWorkerOffer(stateDir, input, policy.model),
-        next: `While running, the worker publishes this net price per ${unit.unit} for the selected model after its local probe passes.` });
-    } else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens|pricePerAudioHour|pricePerImage | assetId netUnitsPerMeteringUnit]");
+      // Each asset has its own price: setting one replaces only the price in that asset.
+      const input = isAssetId(target) ? { assetId: target, netUnits: price } : await offerFromSymbol(await origin(), target, price, unit);
+      const offers = await writeWorkerOffer(stateDir, input, policy.model);
+      print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offer: offers.find(item => item.assetId === input.assetId), offers,
+        next: `While running, the worker publishes these net prices per ${unit.unit} for the selected model, one offer per asset, after its local probe passes.` });
+    } else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens|pricePerAudioHour|pricePerImage | assetId netUnitsPerMeteringUnit | SYMBOL|assetId off]");
   } else if (command === "status") print({ product: "EXCESS", ...await readWorkerStatus(stateDir) });
   else if (command === "drain" || command === "stop-now") {
     await setWorkerControl(stateDir, command === "drain" ? "drain" : "stop");
@@ -185,11 +193,27 @@ try {
     print({ product: "EXCESS", schedule: policy.schedule, runs: describeSchedule(policy.schedule) + (policy.schedule.length ? " (local time)" : ""),
       pauseOnBattery: policy.pauseOnBattery, note: "Outside these times, or on battery, the worker takes no new jobs; a running job finishes." });
   }
+  else if (command === "thermal") {
+    // excess-worker thermal [cpu <C|off>] [gpu <C|off>]
+    const current = await readWorkerPolicy(stateDir), changes: Record<string, number | null> = {};
+    if (positional.length % 2) throw Error("Usage: worker thermal [cpu <degrees C|off>] [gpu <degrees C|off>]");
+    for (let index = 0; index < positional.length; index += 2) {
+      const part = positional[index]!.toLowerCase(), value = positional[index + 1]!.toLowerCase();
+      if (part !== "cpu" && part !== "gpu") throw Error("Usage: worker thermal [cpu <degrees C|off>] [gpu <degrees C|off>]");
+      if (value !== "off" && !/^[0-9]{1,3}$/.test(value)) throw Error("A thermal limit is a whole number of degrees Celsius, or off");
+      changes[part === "cpu" ? "maxCpuTempC" : "maxGpuTempC"] = value === "off" ? null : Number(value);
+    }
+    const policy = positional.length ? await writeWorkerPolicy(stateDir, { ...current, ...changes }) : current;
+    print({ product: "EXCESS", maxCpuTempC: policy.maxCpuTempC, maxGpuTempC: policy.maxGpuTempC, readings: await observeTemperatures(),
+      gpuChecked: policy.backend !== "cpu",
+      note: `At a limit the worker takes no new jobs until the reading is below it; a running job is stopped at ${THERMAL_STOP_MARGIN_C} C over the limit. ` +
+        "A reading of null means this computer exposes no sensor for it, and that limit cannot apply. A running worker picks up a change when it restarts." });
+  }
   else if (command === "probe") {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
     print(await runLocalProbe({ stateDir, installDir, signal: controller.signal }));
-  } else throw Error("Usage: worker guide | doctor | service install|remove|status | update [--check|--force|--auto on|off] | schedule [off | \"[days] HH:MM-HH:MM\" ...] | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit] | status | run | drain | stop-now | resume | probe");
+  } else throw Error("Usage: worker guide | doctor | service install|remove|status | update [--check|--force|--auto on|off] | schedule [off | \"[days] HH:MM-HH:MM\" ...] | thermal [cpu <C|off>] [gpu <C|off>] | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit | SYMBOL off] | status | run | drain | stop-now | resume | probe");
 } catch (error) {
   const safe = error instanceof Error && !/private|secret|password/i.test(error.message) ? error.message : "Worker identity operation failed";
   // Only a system error code (such as EPERM or ENOSPC) is added; paths and messages stay out of the output.

@@ -10,17 +10,26 @@ import { atomicPrivateJson, readPrivateText } from "./control.js";
 export type ScheduleWindow = { days: number[]; from: string; to: string };
 /** The supplier's local policy, including which catalog model to serve and on which backend. An empty schedule means any
  * time; pauseOnBattery stops taking new jobs while a laptop runs on battery; autoUpdate lets a worker running as a Linux
- * user service install a newly published version by itself when idle. */
+ * user service install a newly published version by itself when idle. maxCpuTempC and maxGpuTempC are thermal limits in
+ * degrees Celsius (null turns one off): at the limit the worker takes no new jobs, and a running job is stopped once the
+ * reading reaches the limit plus THERMAL_STOP_MARGIN_C. */
 export type WorkerPolicy = { threads: number; maxMemoryMb: number; runSeconds: number; idleOnly: boolean; idleSeconds: number; model: string; backend: Backend;
-  schedule: ScheduleWindow[]; pauseOnBattery: boolean; autoUpdate: boolean };
-/** `onBattery` is null when there is no battery or its state is unknown. */
-export type ResourceObservation = { freeMemoryMb: number | null; idleSeconds: number | null; onBattery?: boolean | null };
+  schedule: ScheduleWindow[]; pauseOnBattery: boolean; autoUpdate: boolean; maxCpuTempC: number | null; maxGpuTempC: number | null };
+/** `onBattery` is null when there is no battery or its state is unknown. Temperatures are the hottest CPU and GPU sensor
+ * readings in degrees Celsius, null when the machine exposes none (many virtual machines and Windows desktops). */
+export type ResourceObservation = { freeMemoryMb: number | null; idleSeconds: number | null; onBattery?: boolean | null; cpuTempC?: number | null; gpuTempC?: number | null };
+/** A running job is stopped only this far above a thermal limit; between the two the job finishes and no new one starts. */
+export const THERMAL_STOP_MARGIN_C = 5;
+/** The range a thermal limit may take. */
+export const THERMAL_LIMIT_RANGE = Object.freeze({ min: 50, max: 100 });
 // Qwen3-4B Q4_K_M with an 8,192-token context needs about 3 GB of resident memory on CPU.
 // A 2,048-token answer at CPU speeds of a few tokens per second needs several
 // minutes, so the default run time is the approved maximum rather than 60 seconds.
 // Idle detection exists only on Windows desktops, so Linux workers (usually servers) default to running whenever allowed.
+// Thermal defaults: desktop CPUs are designed to run up to about 95 C under load (AMD's limit; Intel's is 100 C), and
+// consumer NVIDIA GPUs start slowing themselves at about 87-93 C, so new work pauses a little below those points.
 export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 4096, runSeconds: TEXT_LIMITS.maxRunSeconds, idleOnly: process.platform === "win32", idleSeconds: 60, model: DEFAULT_MODEL_ID, backend: "cpu",
-  schedule: Object.freeze([]) as unknown as ScheduleWindow[], pauseOnBattery: true, autoUpdate: false });
+  schedule: Object.freeze([]) as unknown as ScheduleWindow[], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 });
 const TIME = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/;
 const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
 const DAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -67,6 +76,9 @@ export function parseWorkerPolicy(input: unknown): WorkerPolicy {
   if (typeof policy.idleOnly !== "boolean") invalid("idleOnly must be true or false");
   if (typeof policy.pauseOnBattery !== "boolean") invalid("pauseOnBattery must be true or false");
   if (typeof policy.autoUpdate !== "boolean") invalid("autoUpdate must be true or false");
+  for (const key of ["maxCpuTempC", "maxGpuTempC"] as const)
+    if (policy[key] !== null && (!Number.isInteger(policy[key]) || policy[key]! < THERMAL_LIMIT_RANGE.min || policy[key]! > THERMAL_LIMIT_RANGE.max))
+      invalid(`${key} must be null (off) or a whole number of degrees Celsius from ${THERMAL_LIMIT_RANGE.min} to ${THERMAL_LIMIT_RANGE.max}`);
   if (!Array.isArray(policy.schedule) || policy.schedule.length > 14) invalid("schedule must be a list of at most 14 windows");
   for (const window of policy.schedule) {
     const item = window as Record<string, unknown>;
@@ -113,6 +125,17 @@ export function policyDecision(policy: WorkerPolicy, observation: ResourceObserv
   if (policy.idleOnly) {
     if (observation.idleSeconds === null || !Number.isFinite(observation.idleSeconds) || observation.idleSeconds < 0) return { allowed: false, reason: "idle_observation_unavailable" };
     if (observation.idleSeconds < policy.idleSeconds) return { allowed: false, reason: "user_active" };
+  }
+  // Heat: at the limit no new job starts; a running job is stopped only well past it. A machine without a sensor is not
+  // refused, since most servers and virtual machines report none and have their own cooling control. A worker on the CPU
+  // backend ignores the GPU, which it does not use.
+  for (const [part, limit, reading] of [["CPU", policy.maxCpuTempC, observation.cpuTempC], ["GPU", policy.backend === "cpu" ? null : policy.maxGpuTempC, observation.gpuTempC]] as const) {
+    if (limit === null || typeof reading !== "number" || !Number.isFinite(reading)) continue;
+    const setting = part === "CPU" ? "maxCpuTempC" : "maxGpuTempC";
+    if (active && reading >= limit + THERMAL_STOP_MARGIN_C) return { allowed: false, reason: "overheating",
+      detail: `${part} at ${Math.round(reading)} C, ${THERMAL_STOP_MARGIN_C} C or more over the ${limit} C limit (${setting}); the running job was stopped` };
+    if (!active && reading >= limit) return { allowed: false, reason: "too_hot",
+      detail: `${part} at ${Math.round(reading)} C; new jobs wait until it is below ${limit} C (${setting})` };
   }
   // Schedule and battery only stop new work; a running job finishes (at most runSeconds).
   if (!active && policy.pauseOnBattery && observation.onBattery === true) return { allowed: false, reason: "on_battery" };

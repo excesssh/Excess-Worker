@@ -12,7 +12,7 @@ import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 
-const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false };
+const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 };
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
 const output = { text: "TEST FIXTURE OUTPUT", generatedTokens: 3, finishReason: "stop" };
 const ready = { freeMemoryMb: 8192, idleSeconds: 120 };
@@ -262,6 +262,28 @@ test("fixture worker never probes with unavailable idle observation and aborts w
   const running = f.start({ policy: { ...policy, idleOnly: true }, telemetry: async () => ({ ...ready, idleSeconds }) });
   await waitFor(() => f.counts.executions === 1);
   idleSeconds = 0;
+  await waitFor(() => f.counts.aborts === 1);
+  await waitFor(() => f.calls.some(c => c.type === "job.failed"));
+  await setWorkerControl(f.dir, "stop"); await running;
+  assert.equal((await f.journal()).at(-1).state, "abandoned");
+});
+
+test("fixture worker takes no work while too hot, finishes a job that warms past the limit, and stops one that overheats", async () => {
+  const hot = await fixture(); hot.state.assigned = false;
+  const waiting = hot.start({ telemetry: async () => ({ ...ready, cpuTempC: 96 }) });
+  await waitFor(() => hot.heartbeats.length >= 3);
+  await waitFor(async () => (await readWorkerStatus(hot.dir)).reason === "too_hot");
+  assert.match((await readWorkerStatus(hot.dir)).detail, /^CPU at 96 C; new jobs wait until it is below 95 C \(maxCpuTempC\)$/);
+  await setWorkerControl(hot.dir, "stop"); await waiting;
+  assert.equal(hot.counts.probes, 0); assert.equal(hot.counts.executions, 0);
+  assert.ok(hot.heartbeats.every(h => h.availableSlots === 0), "a hot worker advertises no free slot");
+  const f = await fixture(); let cpuTempC = 70;
+  const running = f.start({ telemetry: async () => ({ ...ready, cpuTempC }) });
+  await waitFor(() => f.counts.executions === 1);
+  cpuTempC = 97;
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(f.counts.aborts, 0, "between the limit and the margin the running job continues");
+  cpuTempC = 100;
   await waitFor(() => f.counts.aborts === 1);
   await waitFor(() => f.calls.some(c => c.type === "job.failed"));
   await setWorkerControl(f.dir, "stop"); await running;

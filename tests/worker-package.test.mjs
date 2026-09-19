@@ -65,7 +65,7 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   assert.notEqual(run("use","not-a-model").status,0);
   assert.equal(run("use","qwen3-4b").status,0);
   assert.match(guide.disclosure,/see their prompts and outputs/);
-  assert.deepEqual(JSON.parse(run("offer").stdout).offer,null);
+  assert.deepEqual(JSON.parse(run("offer").stdout).offers,[]);
   const plan=JSON.parse(run("model-plan").stdout);
   assert.deepEqual([plan.directory,plan.modelId,plan.backend],[join(home,"EXCESS","ai"),"qwen3-4b","cpu"],"models install under the user's local app data");
   assert.notEqual(run("no-such-command").status,0);
