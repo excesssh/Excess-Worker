@@ -21,13 +21,15 @@ export interface HostedMediaPricing {
 }
 export interface HostedMediaEntry extends MediaListing {
   readonly hosting: "house"; readonly provider: "openrouter"; readonly providerModel: string;
+  /** The supplier catalog model whose market this house model joins, as for hosted text (HostedModelEntry.market). */
+  readonly market?: string;
   readonly providerPricing: HostedMediaPricing;
   /** Request options: `dimensions` asks a Matryoshka embedding model for 1,024 values; image sizes are those the provider was
    * seen to honour exactly (a model that returns another size is only offered at the size it returns). */
   readonly options: { readonly dimensions?: number; readonly seed?: boolean };
 }
 
-type Input = { id: string; kind: MediaKind; displayName: string; providerModel: string; usdPerMillionUnits: string; listedField: HostedMediaPricing["listedField"];
+type Input = { id: string; market?: string; kind: MediaKind; displayName: string; providerModel: string; usdPerMillionUnits: string; listedField: HostedMediaPricing["listedField"];
   listedUsdPerM: string; checkedAt: string; options?: HostedMediaEntry["options"]; sizes?: readonly number[];
   info: Omit<ModelInfo, "format" | "modalities" | "reasoning" | "contextTokens"> & { contextTokens?: number } };
 const HF = (repository: string) => "https://huggingface.co/" + repository;
@@ -115,6 +117,12 @@ export const HOSTED_MEDIA_CATALOG: readonly HostedMediaEntry[] = Object.freeze([
     usdPerMillionUnits: "7.5", listedField: "prompt", listedUsdPerM: "7.5", checkedAt: CHECKED,
     info: { publisher: "Alibaba Qwen", family: "Qwen3-ASR", parametersB: 1.7, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-ASR-1.7B"),
       summary: "The larger Qwen3 speech recogniser: multilingual transcription with good accuracy on accents and noise.", released: "2026-01" } }),
+  // Added 19 September 2026 so the supplier catalog's Qwen3 ASR 0.6B has house supply (one provider, deepinfra; it
+  // transcribed the 7-second check recording correctly on 19 September 2026).
+  hosted({ id: "house-qwen3-asr-0.6b", market: "qwen3-asr-0.6b", kind: "transcription", displayName: "Qwen3 ASR 0.6B", providerModel: "qwen/qwen3-asr-0.6b",
+    usdPerMillionUnits: "3.33", listedField: "prompt", listedUsdPerM: "3.33", checkedAt: CHECKED,
+    info: { publisher: "Alibaba Qwen", family: "Qwen3-ASR", parametersB: 0.6, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-ASR-0.6B"),
+      summary: "The small Qwen3 speech recogniser: fast multilingual transcription.", released: "2026-01" } }),
   hosted({ id: "house-parakeet-tdt-0.6b-v3", kind: "transcription", displayName: "Parakeet TDT 0.6B v3", providerModel: "nvidia/parakeet-tdt-0.6b-v3",
     usdPerMillionUnits: "25", listedField: "prompt", listedUsdPerM: "25", checkedAt: CHECKED,
     info: { publisher: "NVIDIA", family: "Parakeet", parametersB: 0.6, licence: "CC-BY-4.0", sourceUrl: HF("nvidia/parakeet-tdt-0.6b-v3"),

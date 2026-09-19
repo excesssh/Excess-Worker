@@ -31,3 +31,5 @@ export { createOpenRouterClient,openRouterBody,HostedProviderError,perMillion,pr
 export type { OpenRouterClient,OpenRouterClientOptions,HostedExecution,HostedUsage,HostedStreamOptions,GenerationStats,LiveEndpoint } from "./hosted-runtime.js";
 export { createOpenRouterMediaClient,eligibleMediaEndpoints,normalizedVectors,providerSlugs } from "./hosted-media-runtime.js";
 export type { HostedMediaClient,HostedEmbedding,HostedTranscript,HostedImage } from "./hosted-media-runtime.js";
+export { LISTINGS,listingById,listingByDigest,capabilityMarkets } from "./listings.js";
+export type { Listing,ListingVariant } from "./listings.js";

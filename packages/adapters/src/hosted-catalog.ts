@@ -30,6 +30,10 @@ export type HostedReasoning = "none" | "disabled" | "hidden" | "hidden_low";
 export interface ProviderPricing { readonly promptUsdPerM: string; readonly completionUsdPerM: string; readonly checkedAt: string }
 export interface HostedModelEntry {
   readonly id: string; readonly displayName: string; readonly hosting: "house"; readonly info: ModelInfo;
+  /** The supplier catalog model whose market this house model joins (one market per model, 19 September 2026): house supply
+   * and independent suppliers then compete on that one listing, and `id` stays accepted as another name for it. Outside
+   * the capability, so its digest is unchanged. Absent for a model that only EXCESS supplies. */
+  readonly market?: string;
   readonly provider: "openrouter"; readonly providerModel: string; readonly providerPricing: ProviderPricing;
   /** Precisions a provider may serve; OpenRouter provider.quantizations. */
   readonly quantizations: readonly string[];
@@ -106,16 +110,16 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     quantizations: FP8_OR_BETTER, reasoning: "hidden",
     info: { publisher: "MiniMax", family: "MiniMax M2", parametersB: 229, maxContextTokens: 204800, licence: "Modified MIT", sourceUrl: HF("MiniMaxAI/MiniMax-M2.5"),
       summary: "A mixture-of-experts model built for coding and agentic work. It always reasons first; the reasoning is billed but not shown.", released: "2026-02" } }),
-  hosted({ id: "house-gpt-oss-120b", displayName: "gpt-oss-120b", providerModel: "openai/gpt-oss-120b", prompt: "0.037", completion: "0.17",
+  hosted({ id: "house-gpt-oss-120b", market: "gpt-oss-120b", displayName: "gpt-oss-120b", providerModel: "openai/gpt-oss-120b", prompt: "0.037", completion: "0.17",
     // gpt-oss is released with native MXFP4 expert weights.
     quantizations: Object.freeze(["fp4", ...FP8_OR_BETTER]), reasoning: "hidden_low",
     info: { publisher: "OpenAI", family: "gpt-oss", parametersB: 117, activeParametersB: 5.1, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("openai/gpt-oss-120b"),
       summary: "OpenAI's larger open-weight reasoning model, fast and inexpensive. It reasons at low effort first; the reasoning is billed but not shown.", released: "2025-08" } }),
-  hosted({ id: "house-llama-3.3-70b", displayName: "Llama 3.3 70B Instruct", providerModel: "meta-llama/llama-3.3-70b-instruct", prompt: "0.22", completion: "0.52",
+  hosted({ id: "house-llama-3.3-70b", market: "llama-3.3-70b", displayName: "Llama 3.3 70B Instruct", providerModel: "meta-llama/llama-3.3-70b-instruct", prompt: "0.22", completion: "0.52",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Meta", family: "Llama 3.3", parametersB: 70, maxContextTokens: 131072, licence: "Llama 3.3 Community", sourceUrl: HF("meta-llama/Llama-3.3-70B-Instruct"),
       summary: "A dependable 70B dense multilingual chat model for everyday writing, summarising and question answering.", released: "2024-12" } }),
-  hosted({ id: "house-qwen3-32b", displayName: "Qwen3 32B", providerModel: "qwen/qwen3-32b", prompt: "0.14", completion: "0.57",
+  hosted({ id: "house-qwen3-32b", market: "qwen3-32b", displayName: "Qwen3 32B", providerModel: "qwen/qwen3-32b", prompt: "0.14", completion: "0.57",
     quantizations: FP8_OR_BETTER, reasoning: "disabled",
     info: { publisher: "Alibaba Qwen", family: "Qwen3", parametersB: 32.8, maxContextTokens: 40960, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-32B"),
       summary: "Qwen's largest dense Qwen3 model: a fast, capable general assistant, served with thinking turned off.", released: "2025-04" } }),
@@ -123,7 +127,7 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Google", family: "Gemma 3", parametersB: 27, maxContextTokens: 131072, licence: "Gemma", sourceUrl: HF("google/gemma-3-27b-it"),
       summary: "Google's largest Gemma 3 model: a compact multilingual assistant with good reasoning for its size; served for text only.", released: "2025-03" } }),
-  hosted({ id: "house-gpt-oss-20b", displayName: "gpt-oss-20b", providerModel: "openai/gpt-oss-20b", prompt: "0.03", completion: "0.14",
+  hosted({ id: "house-gpt-oss-20b", market: "gpt-oss-20b", displayName: "gpt-oss-20b", providerModel: "openai/gpt-oss-20b", prompt: "0.03", completion: "0.14",
     quantizations: Object.freeze(["fp4", ...FP8_OR_BETTER]), reasoning: "hidden_low",
     info: { publisher: "OpenAI", family: "gpt-oss", parametersB: 21, activeParametersB: 3.6, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("openai/gpt-oss-20b"),
       summary: "OpenAI's small open-weight reasoning model: the cheapest and fastest of these sizes. Low-effort reasoning is billed but not shown.", released: "2025-08" } }),
@@ -133,7 +137,7 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
   // parasail, novita), so one provider's outage no longer withdraws the model. Each still sells at the one-unit floor
   // per token, above its ceiling plus the default margin, so buyer prices are unchanged. Qwen3 14B's only alternative
   // (alibaba, 0.91 per million output tokens) would double its output price and was left out.
-  hosted({ id: "house-llama-3.1-8b", displayName: "Llama 3.1 8B Instruct", providerModel: "meta-llama/llama-3.1-8b-instruct", prompt: "0.22", completion: "0.287",
+  hosted({ id: "house-llama-3.1-8b", market: "llama-3.1-8b", displayName: "Llama 3.1 8B Instruct", providerModel: "meta-llama/llama-3.1-8b-instruct", prompt: "0.22", completion: "0.287",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Meta", family: "Llama 3.1", parametersB: 8, maxContextTokens: 131072, licence: "Llama 3.1 Community", sourceUrl: HF("meta-llama/Llama-3.1-8B-Instruct"),
       summary: "Meta's small Llama 3.1: quick, inexpensive and dependable for everyday text work.", released: "2024-07" } }),
@@ -141,22 +145,29 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Google", family: "Gemma 3", parametersB: 12, maxContextTokens: 131072, licence: "Gemma", sourceUrl: HF("google/gemma-3-12b-it"),
       summary: "A mid-size multilingual Gemma 3: capable for its cost, served for text only.", released: "2025-03" } }),
-  hosted({ id: "house-qwen3-8b", displayName: "Qwen3 8B", providerModel: "qwen/qwen3-8b", prompt: "0.117", completion: "0.455",
+  hosted({ id: "house-qwen3-8b", market: "qwen3-8b", displayName: "Qwen3 8B", providerModel: "qwen/qwen3-8b", prompt: "0.117", completion: "0.455",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Alibaba", family: "Qwen3", parametersB: 8, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-8B"),
       summary: "A small Qwen3: multilingual and even-handed across general text tasks.", released: "2025-04" } }),
-  hosted({ id: "house-qwen3-14b", displayName: "Qwen3 14B", providerModel: "qwen/qwen3-14b", prompt: "0.12", completion: "0.24",
+  hosted({ id: "house-qwen3-14b", market: "qwen3-14b", displayName: "Qwen3 14B", providerModel: "qwen/qwen3-14b", prompt: "0.12", completion: "0.24",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Alibaba", family: "Qwen3", parametersB: 14, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-14B"),
       summary: "Qwen3 at a mid size: noticeably stronger than the 8B while staying inexpensive.", released: "2025-04" } }),
-  hosted({ id: "house-qwen3-30b-a3b", displayName: "Qwen3 30B-A3B", providerModel: "qwen/qwen3-30b-a3b", prompt: "0.13", completion: "0.52",
+  hosted({ id: "house-qwen3-30b-a3b", market: "qwen3-30b-a3b", displayName: "Qwen3 30B-A3B", providerModel: "qwen/qwen3-30b-a3b", prompt: "0.13", completion: "0.52",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Alibaba", family: "Qwen3", parametersB: 30, activeParametersB: 3, maxContextTokens: 131072, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-30B-A3B"),
       summary: "A mixture-of-experts Qwen3: 30B of weights with about 3B active per token, so it answers quickly.", released: "2025-04" } }),
-  hosted({ id: "house-qwen3-coder-30b-a3b", displayName: "Qwen3 Coder 30B-A3B", providerModel: "qwen/qwen3-coder-30b-a3b-instruct", prompt: "0.07", completion: "0.28",
+  hosted({ id: "house-qwen3-coder-30b-a3b", market: "qwen3-coder-30b-a3b", displayName: "Qwen3 Coder 30B-A3B", providerModel: "qwen/qwen3-coder-30b-a3b-instruct", prompt: "0.07", completion: "0.28",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Alibaba", family: "Qwen3 Coder", parametersB: 30, activeParametersB: 3, maxContextTokens: 262144, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-Coder-30B-A3B-Instruct"),
       summary: "Qwen3 Coder tuned for programming, with a long context for whole files and repositories.", released: "2025-07" } }),
+  // Added 19 September 2026 so the supplier catalog's Qwen3 30B-A3B Instruct 2507 has house supply. Endpoints read that day:
+  // streamlake (0.04815/0.19305, unknown precision), dekallm and siliconflow (0.09/0.3), nebius (0.1/0.3), alibaba (0.13/0.52).
+  hosted({ id: "house-qwen3-30b-a3b-instruct-2507", market: "qwen3-30b-a3b-instruct-2507", displayName: "Qwen3 30B-A3B Instruct 2507",
+    providerModel: "qwen/qwen3-30b-a3b-instruct-2507", prompt: "0.09", completion: "0.3",
+    quantizations: FP8_OR_BETTER, reasoning: "none",
+    info: { publisher: "Alibaba", family: "Qwen3", parametersB: 30, activeParametersB: 3, maxContextTokens: 262144, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-30B-A3B-Instruct-2507"),
+      summary: "The July 2025 update of Qwen3 30B-A3B: an instruct-only mixture-of-experts model that answers directly, quickly and well.", released: "2025-07" } }),
   hosted({ id: "house-mistral-small-3.2", displayName: "Mistral Small 3.2 24B", providerModel: "mistralai/mistral-small-3.2-24b-instruct", prompt: "0.0938", completion: "0.25",
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Mistral AI", family: "Mistral Small", parametersB: 24, maxContextTokens: 256000, licence: "Apache-2.0", sourceUrl: HF("mistralai/Mistral-Small-3.2-24B-Instruct-2506"),
