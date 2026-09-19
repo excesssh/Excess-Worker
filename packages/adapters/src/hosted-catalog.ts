@@ -1,4 +1,4 @@
-import { INPUT_PRICING, requestDigest, TEXT_LIMITS } from "@excess/protocol";
+import { INPUT_PRICING, PRICE_DECIMALS, formatPrice, requestDigest, TEXT_LIMITS } from "@excess/protocol";
 import type { ModelInfo } from "./model-info.js";
 
 /** EXCESS house supply (ADR 0008): large open-weight text models the operator serves through OpenRouter, listed beside
@@ -192,20 +192,23 @@ export function validMarginBps(marginBps: number): number {
   if (!Number.isSafeInteger(marginBps) || marginBps < HOUSE_MARGIN_BPS.minimum || marginBps > HOUSE_MARGIN_BPS.maximum) throw new RangeError("House margin must be 1000..50000 basis points");
   return marginBps;
 }
-/** The one house pricing function: supplier net base units per token =
- * ceil(providerUsdPerToken × (1 + credit fee) × (1 + margin) × 10^decimals / usdPerToken), at least one base unit, where
- * usdPerToken is the asset's USD rate ("1" for a USD stablecoin). Exact integer arithmetic. Buyers pay this net plus the
- * platform fee on top. */
-export function houseUnitPrice(usdPerMillion: string, marginBps: number = HOUSE_MARGIN_BPS.default, decimals = 6, usdPerToken = "1"): bigint {
+/** The one house pricing function: the supplier net price per token, in base units =
+ * providerUsdPerToken × (1 + credit fee) × (1 + margin) × 10^decimals / usdPerToken, rounded up to a millionth of a base unit
+ * (a unit price, migration 0042) and at least one millionth, where usdPerToken is the asset's USD rate ("1" for a USD
+ * stablecoin). Exact integer arithmetic. Buyers pay this net plus the platform fee on top. Before 19 September 2026 the price
+ * was a whole number of base units, so six-decimal USDG could not go below one dollar per million tokens. */
+export function houseUnitPrice(usdPerMillion: string, marginBps: number = HOUSE_MARGIN_BPS.default, decimals = 6, usdPerToken = "1"): string {
   const { numerator, scale } = decimal(usdPerMillion), rate = decimal(usdPerToken);
   if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 36) throw new RangeError("Invalid asset decimals");
   if (rate.numerator <= 0n) throw new RangeError("Invalid USD rate");
+  // In millionths of a base unit: the per-million USD price is exactly the per-token price in micro-units per USD base unit.
   const top = numerator * BigInt(10000 + OPENROUTER_CREDIT_FEE_BPS) * BigInt(10000 + validMarginBps(marginBps)) * 10n ** BigInt(decimals) * rate.scale;
-  const bottom = scale * 100_000_000n * 1_000_000n * rate.numerator;
-  const units = (top + bottom - 1n) / bottom;
-  return units < 1n ? 1n : units;
+  const bottom = scale * 100_000_000n * 10n ** BigInt(6 - PRICE_DECIMALS) * rate.numerator;
+  const micros = (top + bottom - 1n) / bottom;
+  return formatPrice(micros < 1n ? 1n : micros);
 }
-export interface HousePrices { inputNetUnits: bigint; outputNetUnits: bigint }
+/** Net prices per prompt and output token, as unit prices (base units, up to six fractional digits). */
+export interface HousePrices { inputNetUnits: string; outputNetUnits: string }
 export const housePrices = (entry: HostedModelEntry, marginBps: number = HOUSE_MARGIN_BPS.default, decimals = 6, usdPerToken = "1"): HousePrices => ({
   inputNetUnits: houseUnitPrice(entry.providerPricing.promptUsdPerM, marginBps, decimals, usdPerToken),
   outputNetUnits: houseUnitPrice(entry.providerPricing.completionUsdPerM, marginBps, decimals, usdPerToken),

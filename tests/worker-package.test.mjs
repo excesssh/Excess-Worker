@@ -90,8 +90,12 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const priced=await runAsync("offer","TEST","3");
   assert.equal(priced.status,0,priced.stderr);
   assert.deepEqual(JSON.parse(priced.stdout).offer,{assetId,netUnits:"3"},"3 TEST per million tokens is 3 base units per token at 6 decimals");
+  // Below one base unit per token (migration 0042): 2.5 TEST per million tokens is 2.5 base units per token.
   const fractional=await runAsync("offer","TEST","2.5");
-  assert.notEqual(fractional.status,0);assert.match(fractional.stderr,/multiple of 1 TEST/);
+  assert.equal(fractional.status,0,fractional.stderr);
+  assert.deepEqual(JSON.parse(fractional.stdout).offer,{assetId,netUnits:"2.5"});
+  const tooFine=await runAsync("offer","TEST","0.0000001");
+  assert.notEqual(tooFine.status,0);assert.match(tooFine.stderr,/more decimal places than the asset supports/);
   guide=JSON.parse(run("guide").stdout);
   assert.deepEqual([guide.next,guide.steps.map(s=>s.done)],["install-model",[true,true,false,true,false]]);
 });

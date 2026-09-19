@@ -18,6 +18,35 @@ export const promptTokenBound = (prompt: string): number => Buffer.byteLength(pr
 export const MAX_WORKER_MESSAGE_BYTES = 524288;
 export const MAX_BASE_UNITS = (1n << 256n) - 1n;
 export const baseUnitsSchema = z.string().regex(/^(0|[1-9][0-9]{0,77})$/).refine(value => BigInt(value) <= MAX_BASE_UNITS);
+
+/** Unit prices (19 September 2026): net base units per metering unit with up to PRICE_DECIMALS fractional digits, so an asset
+ * with few decimals, such as six-decimal USDG, can price a token below one base unit. A price is a canonical decimal string:
+ * no sign, no leading zeros, no trailing fractional zeros and no point for a whole number, so equal prices are equal strings.
+ * A charge is exact and rounded up to a whole base unit once per job: ceil(unitPrice x units + inputPrice x inputUnits). */
+export const PRICE_DECIMALS = 6;
+const PRICE_SCALE = 10n ** BigInt(PRICE_DECIMALS);
+export const PRICE_PATTERN = /^(0|[1-9][0-9]{0,77})(\.[0-9]{0,5}[1-9])?$/;
+/** A price in millionths of a base unit, exactly. */
+export function priceMicros(price: string): bigint {
+  if (typeof price !== "string" || !PRICE_PATTERN.test(price)) throw new RangeError("Invalid price");
+  const [whole, fraction = ""] = price.split(".");
+  return BigInt(whole!) * PRICE_SCALE + BigInt(fraction.padEnd(PRICE_DECIMALS, "0"));
+}
+/** The canonical price string for an exact number of millionths of a base unit. */
+export function formatPrice(micros: bigint): string {
+  if (micros < 0n) throw new RangeError("Invalid price");
+  const fraction = (micros % PRICE_SCALE).toString().padStart(PRICE_DECIMALS, "0").replace(/0+$/, "");
+  return (micros / PRICE_SCALE).toString() + (fraction ? "." + fraction : "");
+}
+export const priceSchema = z.string().regex(PRICE_PATTERN).refine(value => priceMicros(value) <= MAX_BASE_UNITS * PRICE_SCALE);
+export const positivePriceSchema = priceSchema.refine(value => priceMicros(value) > 0n);
+/** The whole base units a job owes: ceil(unitPrice x units + inputPrice x inputUnits). */
+export function priceCharge(unitPrice: string, units: bigint | number | string, inputPrice = "0", inputUnits: bigint | number | string = 0): bigint {
+  const count = BigInt(units), inputCount = BigInt(inputUnits);
+  if (count < 0n || inputCount < 0n) throw new RangeError("Invalid unit count");
+  return (priceMicros(unitPrice) * count + priceMicros(inputPrice) * inputCount + PRICE_SCALE - 1n) / PRICE_SCALE;
+}
+export const comparePrices = (a: string, b: string): number => { const x = priceMicros(a), y = priceMicros(b); return x < y ? -1 : x > y ? 1 : 0; };
 export const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/)
   .refine(value => value.toLowerCase() !== "0x0000000000000000000000000000000000000000")
   .transform(value => value.toLowerCase());
@@ -174,9 +203,10 @@ export const workerMessageSchema = z.discriminatedUnion("type", [
     ...envelope, type: z.literal("worker.offer"),
     data: z.strictObject({
       deviceId: z.uuid(), capabilityDigest: digestSchema, assetId: z.uuid(),
-      netUnits: baseUnitsSchema.refine(value => BigInt(value) > 0n),
+      // Net base units per metering unit, a price with up to PRICE_DECIMALS fractional digits.
+      netUnits: positivePriceSchema,
       // Optional net units per prompt token (ADR 0008); absent means zero, the output-only offer.
-      inputNetUnits: baseUnitsSchema.optional(),
+      inputNetUnits: priceSchema.optional(),
       slots: z.number().int().min(1).max(32), probedAt: z.iso.datetime(),
     }),
   }),

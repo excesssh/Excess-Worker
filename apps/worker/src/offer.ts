@@ -1,17 +1,18 @@
 import { mkdir, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { DEFAULT_MODEL_ID, MEDIA_CATALOG, MODEL_CATALOG } from "@excess/adapters";
+import { PRICE_DECIMALS, PRICE_PATTERN, formatPrice, priceMicros } from "@excess/protocol";
 import { atomicPrivateJson, readPrivateText } from "./control.js";
 
 /** The supplier's public ask for one catalog model: net base units per metering unit (output token, input token,
- * audio second or image) in one asset. */
+ * audio second or image) in one asset, a price with up to six fractional digits (below one base unit is allowed). */
 export type WorkerOffer = { assetId: string; netUnits: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function parseWorkerOffer(input: unknown): WorkerOffer {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw Error("Invalid worker offer");
   const value = input as Record<string, unknown>;
   if (Object.keys(value).length !== 2 || typeof value.assetId !== "string" || typeof value.netUnits !== "string" ||
-      !uuid.test(value.assetId) || !/^[1-9][0-9]{0,30}$/.test(value.netUnits)) throw Error("Invalid worker offer");
+      !uuid.test(value.assetId) || value.netUnits.length > 40 || !PRICE_PATTERN.test(value.netUnits) || priceMicros(value.netUnits) === 0n) throw Error("Invalid worker offer");
   return { assetId: value.assetId, netUnits: value.netUnits };
 }
 /** At most this many assets priced for one model. */
@@ -51,8 +52,8 @@ export async function assetFromSymbol(origin: string, symbol: string): Promise<{
   return matches[0]!;
 }
 /** Converts a human price per `unit.perUnits` metering units (a million tokens, an audio hour of 3,600 seconds, one image)
- * in an asset listed on the coordinator's public market into the offer's exact net base units per metering unit.
- * Fractional base units are refused. */
+ * in an asset listed on the coordinator's public market into the offer's exact net price per metering unit, which may be
+ * below one base unit but has at most six fractional digits; a price that would need more is refused with its step. */
 export async function offerFromSymbol(origin: string, symbol: string, price: string, unit: { perUnits: bigint; label: string } = { perUnits: 1_000_000n, label: "million tokens" }): Promise<WorkerOffer> {
   const asset = await assetFromSymbol(origin, symbol), { id, decimals } = asset;
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw Error("Unsupported asset decimals");
@@ -60,13 +61,14 @@ export async function offerFromSymbol(origin: string, symbol: string, price: str
   if (typeof unit.perUnits !== "bigint" || unit.perUnits < 1n) throw Error("Invalid price unit");
   const [whole, fraction = ""] = price.split(".");
   if (fraction.length > decimals) throw Error("Price has more decimal places than the asset supports");
-  const perPrice = BigInt(whole! + fraction.padEnd(decimals, "0"));
-  if (perPrice === 0n || perPrice % unit.perUnits !== 0n) {
-    const step = unit.perUnits, scale = 10n ** BigInt(decimals);
+  const perPrice = BigInt(whole! + fraction.padEnd(decimals, "0")), micros = perPrice * 10n ** BigInt(PRICE_DECIMALS);
+  if (perPrice === 0n || micros % unit.perUnits !== 0n) {
+    const gcd = (a: bigint, b: bigint): bigint => b === 0n ? a : gcd(b, a % b);
+    const step = unit.perUnits / gcd(unit.perUnits, 10n ** BigInt(PRICE_DECIMALS)), scale = 10n ** BigInt(decimals);
     const human = decimals === 0 ? String(step) : (step / scale).toString() + (step % scale ? "." + (step % scale).toString().padStart(decimals, "0").replace(/0+$/, "") : "");
     throw Error(`Price per ${unit.label} must be a positive multiple of ${human} ${asset.symbol}`);
   }
-  return parseWorkerOffer({ assetId: id, netUnits: String(perPrice / unit.perUnits) });
+  return parseWorkerOffer({ assetId: id, netUnits: formatPrice(micros / unit.perUnits) });
 }
 /** Sets the model's price in the offer's asset, replacing any earlier price in that asset and keeping the others.
  * Returns every price now set for the model. */
