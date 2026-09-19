@@ -2,7 +2,7 @@ import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { acquireRuntimeLock, setWorkerControl, readWorkerControl, readWorkerStatus } from "../apps/worker/dist/control.js";
 import { runWorker } from "../apps/worker/dist/runtime.js";
@@ -59,6 +59,23 @@ test("a dead owner cannot clear a flagged lock; ordinary legacy dead-owner recov
     if (flagged) { await assert.rejects(acquireRuntimeLock(dir), /shutdown unverified/); assert.deepEqual(await readLock(dir), owner); }
     else { const recovered = await acquireRuntimeLock(dir); await recovered(); const next = await acquireRuntimeLock(dir); await next(); }
   }
+});
+
+test("a zombie owner (killed, not yet reaped by its parent) does not hold the lock on Linux", { skip: process.platform !== "linux" }, async () => {
+  const dir = await directory();
+  // The shell starts a short child, then replaces itself with a sleep that never reaps it: the child stays a zombie.
+  const parent = spawn("sh", ["-c", "sleep 0 & echo $!; exec sleep 5"], { stdio: ["ignore", "pipe", "ignore"] });
+  const zombie = Number(await new Promise(resolve => parent.stdout.once("data", value => resolve(String(value).trim()))));
+  try {
+    await waitFor(async () => { try { return (await readFile(`/proc/${zombie}/stat`, "utf8")).split(") ")[1].startsWith("Z"); } catch { return false; } });
+    await writeFile(join(dir, "runtime.lock"), JSON.stringify({ pid: zombie, nonce: randomUUID() }), { mode: 0o600 });
+    const lock = await acquireRuntimeLock(dir);
+    assert.equal((await readLock(dir)).pid, process.pid);
+    await lock();
+    // A live owner still holds it.
+    await writeFile(join(dir, "runtime.lock"), JSON.stringify({ pid: parent.pid, nonce: randomUUID() }), { mode: 0o600 });
+    await assert.rejects(acquireRuntimeLock(dir), /already running/);
+  } finally { parent.kill(); }
 });
 
 for (const failStop of [true, false]) test(`synthetic worker ${failStop ? "rejects failed shutdown and retains" : "completes verified shutdown and releases"} its foreground lock`, async () => {

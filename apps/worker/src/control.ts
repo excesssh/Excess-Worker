@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -94,8 +95,15 @@ export async function readWorkerStatus(stateDir: string): Promise<WorkerStatus> 
 }
 function processAlive(pid: unknown): boolean {
   if (!Number.isSafeInteger(pid) || Number(pid) < 1) throw Error("Worker lock requires inspection");
-  try { process.kill(Number(pid), 0); return true; }
+  try { process.kill(Number(pid), 0); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; return true; }
+  // On Linux a killed worker whose parent has not reaped it yet stays a zombie that still answers signal 0. It holds
+  // nothing, so it must not keep the lock (found in the failover rehearsal, where the parent was itself stopped).
+  if (process.platform === "linux") {
+    try { const stat = readFileSync(`/proc/${Number(pid)}/stat`, "utf8"); return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z"; }
+    catch { return true; }
+  }
+  return true;
 }
 async function withRuntimeGuard<T>(stateDir: string, action: () => Promise<T>, retainOnFailure = false): Promise<T> {
   const path = join(resolve(stateDir), "runtime.guard");
