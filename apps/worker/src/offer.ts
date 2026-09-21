@@ -1,19 +1,23 @@
 import { mkdir, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { DEFAULT_MODEL_ID, MEDIA_CATALOG, MODEL_CATALOG } from "@excess/adapters";
-import { PRICE_DECIMALS, PRICE_PATTERN, formatPrice, priceMicros } from "@excess/protocol";
+import { PRICE_DECIMALS, positivePriceSchema, formatPrice, priceMicros } from "@excess/protocol";
 import { atomicPrivateJson, readPrivateText } from "./control.js";
 
 /** The supplier's public ask for one catalog model: net base units per metering unit (output token, input token,
  * audio second or image) in one asset, a price with up to six fractional digits (below one base unit is allowed). */
-export type WorkerOffer = { assetId: string; netUnits: string };
+export type WorkerOffer = { assetId: string; netUnits: string; minNetUnits?: string; maxNetUnits?: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const validPrice = (value: unknown): value is string => typeof value === "string" && value.length <= 40 && positivePriceSchema.safeParse(value).success;
 export function parseWorkerOffer(input: unknown): WorkerOffer {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw Error("Invalid worker offer");
   const value = input as Record<string, unknown>;
-  if (Object.keys(value).length !== 2 || typeof value.assetId !== "string" || typeof value.netUnits !== "string" ||
-      !uuid.test(value.assetId) || value.netUnits.length > 40 || !PRICE_PATTERN.test(value.netUnits) || priceMicros(value.netUnits) === 0n) throw Error("Invalid worker offer");
-  return { assetId: value.assetId, netUnits: value.netUnits };
+  const banded=value.minNetUnits!==undefined||value.maxNetUnits!==undefined;
+  if (Object.keys(value).length !== (banded?4:2) || typeof value.assetId !== "string" || !uuid.test(value.assetId) ||
+      !validPrice(value.netUnits) || (banded && (!validPrice(value.minNetUnits)||!validPrice(value.maxNetUnits)))) throw Error("Invalid worker offer");
+  if(banded&&(priceMicros(value.minNetUnits as string)>priceMicros(value.netUnits)||
+      priceMicros(value.netUnits)>priceMicros(value.maxNetUnits as string))) throw Error("Invalid worker offer: price is outside its bounds");
+  return { assetId: value.assetId, netUnits: value.netUnits, ...(banded?{minNetUnits:value.minNetUnits as string,maxNetUnits:value.maxNetUnits as string}:{}) };
 }
 /** At most this many assets priced for one model. */
 export const MAX_WORKER_OFFERS = 8;
@@ -74,10 +78,30 @@ export async function offerFromSymbol(origin: string, symbol: string, price: str
  * Returns every price now set for the model. */
 export async function writeWorkerOffer(stateDir: string, input: unknown, modelId: string = DEFAULT_MODEL_ID): Promise<WorkerOffer[]> {
   const offer = parseWorkerOffer(input), path = offerPath(stateDir, modelId);
-  const offers = [...(await readWorkerOffers(stateDir, modelId)).filter(item => item.assetId !== offer.assetId), offer];
+  const existing=await readWorkerOffers(stateDir,modelId),previous=existing.find(item=>item.assetId===offer.assetId);
+  const updated=parseWorkerOffer({...offer,...(previous?.minNetUnits!==undefined&&offer.minNetUnits===undefined?
+    {minNetUnits:previous.minNetUnits,maxNetUnits:previous.maxNetUnits}:{})});
+  const offers = [...existing.filter(item => item.assetId !== offer.assetId), updated];
   if (offers.length > MAX_WORKER_OFFERS) throw Error(`A model can be priced in at most ${MAX_WORKER_OFFERS} assets`);
   await mkdir(join(resolve(stateDir), "offers"), { recursive: true });
   await atomicPrivateJson(path, { offers });
+  return offers;
+}
+/** A supplier's local guardrail: later CLI price edits must stay in this exact unit-price interval. */
+export async function setWorkerPriceBand(stateDir:string,assetId:string,minNetUnits:string,maxNetUnits:string,modelId:string=DEFAULT_MODEL_ID):Promise<WorkerOffer[]> {
+  if(!uuid.test(assetId)) throw Error("Invalid asset");
+  const path=offerPath(stateDir,modelId),existing=await readWorkerOffers(stateDir,modelId);
+  if(!existing.some(item=>item.assetId===assetId)) throw Error("Set an offer price before its bounds");
+  const offers=existing.map(item=>item.assetId===assetId?parseWorkerOffer({...item,minNetUnits,maxNetUnits}):item);
+  await atomicPrivateJson(path,{offers});
+  return offers;
+}
+export async function clearWorkerPriceBand(stateDir:string,assetId:string,modelId:string=DEFAULT_MODEL_ID):Promise<WorkerOffer[]> {
+  if(!uuid.test(assetId)) throw Error("Invalid asset");
+  const path=offerPath(stateDir,modelId),existing=await readWorkerOffers(stateDir,modelId);
+  if(!existing.some(item=>item.assetId===assetId)) throw Error("Offer price is not set");
+  const offers=existing.map(item=>item.assetId===assetId?{assetId:item.assetId,netUnits:item.netUnits}:item);
+  await atomicPrivateJson(path,{offers});
   return offers;
 }
 /** Withdraws the model's price in one asset; the worker stops renewing that offer and it lapses. Returns the prices left. */

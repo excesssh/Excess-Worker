@@ -11,7 +11,7 @@ import { readWorkerStatus, setWorkerControl } from "./control.js";
 import { describeSchedule, parseScheduleSpec, readWorkerPolicy, writeWorkerPolicy, THERMAL_STOP_MARGIN_C } from "./policy.js";
 import { observeLocalResources, observeTemperatures } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
-import { readWorkerOffers, writeWorkerOffer, removeWorkerOffer, offerFromSymbol, assetFromSymbol } from "./offer.js";
+import { readWorkerOffers, writeWorkerOffer, removeWorkerOffer, setWorkerPriceBand, clearWorkerPriceBand, offerFromSymbol, assetFromSymbol } from "./offer.js";
 import { workerGuide } from "./guide.js";
 import { detectHardware, modelsByFit } from "./hardware.js";
 import { workerService } from "./service.js";
@@ -142,6 +142,16 @@ try {
     const origin = async () => (JSON.parse(await readFile(path, "utf8")) as { origin: string }).origin;
     const isAssetId = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
     if (positional.length === 0) print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offers: await readWorkerOffers(stateDir, policy.model) });
+    else if (positional.length === 3 && positional[1] === "band" && positional[2] === "off") {
+      const target=positional[0]!,assetId=isAssetId(target)?target:(await assetFromSymbol(await origin(),target)).id;
+      print({product:"EXCESS",model:policy.model,pricedPer:unit.label,offers:await clearWorkerPriceBand(stateDir,assetId,policy.model)});
+    } else if(positional.length===4&&positional[1]==="band") {
+      const target=positional[0]!,assetId=isAssetId(target)?target:(await assetFromSymbol(await origin(),target)).id;
+      const unitPrice=async(value:string)=>isAssetId(target)?value:(await offerFromSymbol(await origin(),target,value,unit)).netUnits;
+      const offers=await setWorkerPriceBand(stateDir,assetId,await unitPrice(positional[2]!),await unitPrice(positional[3]!),policy.model);
+      print({product:"EXCESS",model:policy.model,pricedPer:unit.label,offer:offers.find(item=>item.assetId===assetId),offers,
+        next:"Later offer price changes outside this interval are refused locally. Use offer <ASSET> band off to clear it."});
+    }
     else if (positional.length === 2 && positional[1] === "off") {
       // Withdraws the price in one asset; prices in other assets stay.
       const target = positional[0]!, assetId = isAssetId(target) ? target : (await assetFromSymbol(await origin(), target)).id;
@@ -155,7 +165,7 @@ try {
       const offers = await writeWorkerOffer(stateDir, input, policy.model);
       print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offer: offers.find(item => item.assetId === input.assetId), offers,
         next: `While running, the worker publishes these net prices per ${unit.unit} for the selected model, one offer per asset, after its local probe passes. A running worker picks up a change within 30 seconds.` });
-    } else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens|pricePerAudioHour|pricePerImage | assetId netUnitsPerMeteringUnit | SYMBOL|assetId off]");
+    } else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens|pricePerAudioHour|pricePerImage | assetId netUnitsPerMeteringUnit | SYMBOL|assetId off | SYMBOL|assetId band floor ceiling | SYMBOL|assetId band off]");
   } else if (command === "status") print({ product: "EXCESS", ...await readWorkerStatus(stateDir) });
   else if (command === "drain" || command === "stop-now") {
     await setWorkerControl(stateDir, command === "drain" ? "drain" : "stop");
@@ -218,7 +228,7 @@ try {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
     print(await runLocalProbe({ stateDir, installDir, signal: controller.signal }));
-  } else throw Error("Usage: worker guide | doctor | service install|remove|status | update [--check|--force|--auto on|off] | schedule [off | \"[days] HH:MM-HH:MM\" ...] | thermal [cpu <C|off>] [gpu <C|off>] | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | unpair | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit | SYMBOL off] | status | run | drain | stop-now | resume | probe");
+  } else throw Error("Usage: worker guide | doctor | service install|remove|status | update [--check|--force|--auto on|off] | schedule [off | \"[days] HH:MM-HH:MM\" ...] | thermal [cpu <C|off>] [gpu <C|off>] | models | use <model id> [--gpu] | pair [origin] [label] | complete-pairing | unpair | heartbeat | model-plan [model id] [--gpu] | install-model [model id] [--gpu] --accept-download --accept-licenses | import <model id> <file.gguf ...> --accept-licenses | policy [file] | offer [SYMBOL price | assetId netUnitsPerMeteringUnit | SYMBOL off | SYMBOL|assetId band floor ceiling | SYMBOL|assetId band off] | status | run | drain | stop-now | resume | probe");
 } catch (error) {
   const safe = error instanceof Error && !/private|secret|password/i.test(error.message) ? error.message : "Worker identity operation failed";
   // Only a system error code (such as EPERM or ENOSPC) is added; paths and messages stay out of the output.
