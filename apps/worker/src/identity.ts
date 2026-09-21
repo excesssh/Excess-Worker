@@ -131,6 +131,7 @@ export async function sendHeartbeat(path: string, capacity: HeartbeatCapacity = 
 }
 export interface WorkerConnection {
   deviceId: string;
+  origin?: string;
   heartbeat(capacity: HeartbeatCapacity, signal?: AbortSignal): Promise<unknown>;
   command(type: string, data: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   offer?(data: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
@@ -151,6 +152,7 @@ export async function createWorkerConnection(path: string): Promise<WorkerConnec
   };
   return {
     deviceId: identity.deviceId!,
+    origin: identity.origin,
     heartbeat: (capacity, signal) => withIdentity(path, async (current, save) => {
       if (current.deviceId !== identity.deviceId || current.publicKey !== identity.publicKey || current.origin !== identity.origin || current.chainId !== identity.chainId || current.sequence >= Number.MAX_SAFE_INTEGER) throw Error("Device identity changed or exhausted");
       current.sequence++; await save();

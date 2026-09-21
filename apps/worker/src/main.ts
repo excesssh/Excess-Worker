@@ -11,7 +11,7 @@ import { readWorkerStatus, setWorkerControl } from "./control.js";
 import { describeSchedule, parseScheduleSpec, readWorkerPolicy, writeWorkerPolicy, THERMAL_STOP_MARGIN_C } from "./policy.js";
 import { observeLocalResources, observeTemperatures } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
-import { readWorkerOffers, writeWorkerOffer, removeWorkerOffer, setWorkerPriceBand, clearWorkerPriceBand, offerFromSymbol, assetFromSymbol } from "./offer.js";
+import { readWorkerOffers, writeWorkerOffer, removeWorkerOffer, setWorkerPriceBand, clearWorkerPriceBand, setWorkerAutoPrice, offerFromSymbol, assetFromSymbol } from "./offer.js";
 import { workerGuide } from "./guide.js";
 import { detectHardware, modelsByFit } from "./hardware.js";
 import { workerService } from "./service.js";
@@ -151,6 +151,11 @@ try {
       const offers=await setWorkerPriceBand(stateDir,assetId,await unitPrice(positional[2]!),await unitPrice(positional[3]!),policy.model);
       print({product:"EXCESS",model:policy.model,pricedPer:unit.label,offer:offers.find(item=>item.assetId===assetId),offers,
         next:"Later offer price changes outside this interval are refused locally. Use offer <ASSET> band off to clear it."});
+    } else if(positional.length===3&&positional[1]==="auto"&&["on","off"].includes(positional[2]!)) {
+      const target=positional[0]!,assetId=isAssetId(target)?target:(await assetFromSymbol(await origin(),target)).id;
+      const offers=await setWorkerAutoPrice(stateDir,assetId,positional[2]==="on",policy.model);
+      print({product:"EXCESS",model:policy.model,pricedPer:unit.label,offer:offers.find(item=>item.assetId===assetId),offers,
+        next:"The running worker reads the public market before renewal. It can lower this ask only inside your saved price band."});
     }
     else if (positional.length === 2 && positional[1] === "off") {
       // Withdraws the price in one asset; prices in other assets stay.
@@ -165,7 +170,7 @@ try {
       const offers = await writeWorkerOffer(stateDir, input, policy.model);
       print({ product: "EXCESS", model: policy.model, pricedPer: unit.label, offer: offers.find(item => item.assetId === input.assetId), offers,
         next: `While running, the worker publishes these net prices per ${unit.unit} for the selected model, one offer per asset, after its local probe passes. A running worker picks up a change within 30 seconds.` });
-    } else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens|pricePerAudioHour|pricePerImage | assetId netUnitsPerMeteringUnit | SYMBOL|assetId off | SYMBOL|assetId band floor ceiling | SYMBOL|assetId band off]");
+    } else throw Error("Usage: worker offer [SYMBOL pricePerMillionTokens|pricePerAudioHour|pricePerImage | assetId netUnitsPerMeteringUnit | SYMBOL|assetId off | SYMBOL|assetId band floor ceiling | SYMBOL|assetId band off | SYMBOL|assetId auto on|off]");
   } else if (command === "status") print({ product: "EXCESS", ...await readWorkerStatus(stateDir) });
   else if (command === "drain" || command === "stop-now") {
     await setWorkerControl(stateDir, command === "drain" ? "drain" : "stop");

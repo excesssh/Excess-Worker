@@ -8,7 +8,7 @@ import { createServedAdapter, isMediaAdapter, servedModel, type ServedAdapter } 
 import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
-import { readWorkerOffers, type WorkerOffer } from "./offer.js";
+import { readWorkerOffers, readWorkerAutoPrices, saveWorkerAutoPrices, automaticWorkerPrices, type WorkerOffer } from "./offer.js";
 import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, WorkerShutdownError, type WorkerMode, type WorkerProbe } from "./control.js";
 import { checkForUpdate, runInstaller, type UpdateCheck } from "./update.js";
 
@@ -273,15 +273,28 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     })());
     tasks.push((async () => {
       let published = false;
+      let pricingReady=true,lastPublished:Map<string,string>;
+      try {lastPublished=await readWorkerAutoPrices(dir,policy.model);}catch{pricingReady=false;lastPublished=new Map();}
       while (!closing && !lifetime.signal.aborted) {
         // A malformed or unreadable offers file keeps the last good prices rather than stopping supply.
         if (!fixedOffers) offers = await readWorkerOffers(dir, policy.model).catch(() => offers);
+        for(const assetId of lastPublished.keys())if(!offers.some(item=>item.assetId===assetId&&item.auto))lastPublished.delete(assetId);
+        const publication=connection!.origin&&pricingReady?await automaticWorkerPrices(connection!.origin,policy.model,offers,lastPublished,lifetime.signal):offers;
         // One offer per priced asset, each at its own price; they share the device's single slot.
-        published = offers.length > 0;
-        for (const offer of offers) {
+        published = publication.length > 0;
+        for (const offer of publication) {
           try {
             if (!(connection!.offer && mode === "run" && probed && connected && lastProbe)) { published = false; break; }
-            record(await connection!.offer({ capabilityDigest, assetId: offer.assetId, netUnits: offer.netUnits, slots: 1, probedAt: lastProbe.probedAt }, lifetime.signal));
+            // Persist before publication: if the process crashes immediately after the exchange accepts the new ask,
+            // the next worker run still recognises that ask as its own.
+            if(offer.auto&&pricingReady){
+              lastPublished.set(offer.assetId,offer.netUnits);
+              try {await saveWorkerAutoPrices(dir,policy.model,lastPublished);}catch{pricingReady=false;}
+            }
+            const saved=offers.find(item=>item.assetId===offer.assetId)!;
+            const netUnits=pricingReady?offer.netUnits:saved.netUnits;
+            record(await connection!.offer({ capabilityDigest, assetId: offer.assetId, netUnits, slots: 1, probedAt: lastProbe.probedAt }, lifetime.signal));
+            if(!offer.auto)lastPublished.delete(offer.assetId);
           } catch (error) {
             // A refused offer (such as a probe the coordinator considers stale, or an asset closed to new jobs) retries soon
             // without holding back the other assets; lost transport is a disconnect.
