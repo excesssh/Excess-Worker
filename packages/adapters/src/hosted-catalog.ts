@@ -161,6 +161,11 @@ export const HOSTED_CATALOG: readonly HostedModelEntry[] = Object.freeze([
     quantizations: FP8_OR_BETTER, reasoning: "none",
     info: { publisher: "Alibaba", family: "Qwen3 Coder", parametersB: 30, activeParametersB: 3, maxContextTokens: 262144, licence: "Apache-2.0", sourceUrl: HF("Qwen/Qwen3-Coder-30B-A3B-Instruct"),
       summary: "Qwen3 Coder tuned for programming, with a long context for whole files and repositories.", released: "2025-07" } }),
+  // Launch audit, 27 September 2026: of the supplier models with no house variant, only Phi-4 14B has an exact OpenRouter
+  // listing (microsoft/phi-4), and its one endpoint (DeepInfra, bf16) accepts 16,384 tokens, below the 19,456 every house text
+  // model must take (a 17,408-token prompt plus 2,048 output tokens), so long prompts would fail at the provider. It is left
+  // out until house models carry their own prompt cap. Qwen3 4B, Phi-4 mini, Qwen3 Embedding 0.6B, SD-Turbo and FLUX.1
+  // schnell have no OpenRouter listing at all; no other model is substituted for any of them.
   // Added 19 September 2026 so the supplier catalog's Qwen3 30B-A3B Instruct 2507 has house supply. Endpoints read that day:
   // streamlake (0.04815/0.19305, unknown precision), dekallm and siliconflow (0.09/0.3), nebius (0.1/0.3), alibaba (0.13/0.52).
   hosted({ id: "house-qwen3-30b-a3b-instruct-2507", market: "qwen3-30b-a3b-instruct-2507", displayName: "Qwen3 30B-A3B Instruct 2507",
