@@ -10,6 +10,8 @@ npm run privacy
 npm run setup:project
 ```
 
+The source verification workflow builds and tests this standalone workspace on Ubuntu 24.04 and Windows Server 2022 with read-only repository access and pinned actions. It checks every reachable commit for privacy and project identity. It does not establish model execution or release readiness.
+
 Use npm.cmd in Windows PowerShell. Project setup installs branded commit identity and privacy hooks only when no other hook path is configured; existing identity hooks are preserved.
 
 Linux x64 packages require GCC and the native helper:

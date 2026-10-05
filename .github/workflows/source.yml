@@ -1,0 +1,52 @@
+name: Source verification
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  standalone:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            npm: npm
+          - os: windows-2022
+            npm: npm.cmd
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.11.1
+          package-manager-cache: false
+      - name: Select pinned npm
+        run: ${{ matrix.npm }} install --global npm@11.7.0 --ignore-scripts
+      - name: Check pinned toolchain
+        run: |
+          node -e "if (process.version !== 'v24.11.1') process.exit(1)"
+          test "$(${{ matrix.npm }} --version)" = "11.7.0"
+      - name: Check history privacy and contributor identity
+        run: node scripts/public-worker/privacy.mjs --history
+      - name: Install pinned dependencies
+        run: ${{ matrix.npm }} ci --ignore-scripts
+      - name: Build and test standalone worker
+        run: ${{ matrix.npm }} test
+      - name: Inspect source bytes after build
+        run: node scripts/public-worker/privacy.mjs
