@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join,resolve } from "node:path";
 import { AdapterError,RUNTIME_REDIST,SD_RUNTIME_REDIST,currentPlatform,mediaCatalogEntry,runtimeArtifacts,sdRuntimeArtifacts,sdServerExecutable,serverExecutable,
   type Backend,type MediaModelEntry,type MediaRuntime,type Platform } from "./manifest.js";
-import { backendOf,copyRedist,hashFile,inside,installComponent,installDiskCheck,limitsFor,modelDirectory,noLinks,platformOf,runtimeDirectory,verifyRuntimeAt,type DiskCheck,type InstallProgress,type RuntimeSpec } from "./install.js";
+import { backendOf,copyRedist,hashFile,inside,installComponent,installDiskCheck,limitsFor,modelDirectory,noLinks,platformOf,runtimeDirectory,verifyRuntimeAt,verifyRuntimeFilesAt,type DiskCheck,type InstallProgress,type RuntimeSpec,type VerifiedRuntimeInputs } from "./install.js";
 import { DEFAULT_ZIP_LIMITS,type ZipLimits } from "./zip.js";
 import type { MediaKind } from "@excess/protocol";
 
@@ -13,7 +13,7 @@ const SD_ARCHIVE_LIMITS:Readonly<Record<Platform,Partial<Record<Backend,ZipLimit
   "win32-x64":{cpu:DEFAULT_ZIP_LIMITS,cuda:{maxInputBytes:768*MiB,maxTotalBytes:4*GiB,maxEntryBytes:2*GiB}},
   "linux-x64":{cpu:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB},vulkan:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB}},
 };
-export interface MediaInstallation {directory:string;serverPath:string;files:Readonly<Record<string,string>>;capabilityDigest:string;modelId:string;kind:MediaKind;runtime:MediaRuntime;backend:Backend}
+export interface MediaInstallation extends VerifiedRuntimeInputs {directory:string;serverPath:string;files:Readonly<Record<string,string>>;capabilityDigest:string;modelId:string;kind:MediaKind;runtime:MediaRuntime;backend:Backend}
 export const sdRuntimeDirectory=(root:string,backend:Backend)=>join(resolve(root),"sd-runtimes",backend);
 
 function selected(modelId:string,backend:unknown):{entry:MediaModelEntry;backend:Backend} {
@@ -64,8 +64,10 @@ async function verifyMediaModel(root:string,entry:MediaModelEntry):Promise<Recor
 export async function verifyMediaInstallation(directory:string,modelId:string,backend:Backend="cpu"):Promise<MediaInstallation> {
   const root=resolve(directory),{entry,backend:chosen}=selected(modelId,backend);await noLinks(root);
   try {
-    const serverPath=await verifyRuntimeAt(mediaRuntimeSpec(root,entry,chosen,platformOf())),files=await verifyMediaModel(root,entry);
-    return {directory:root,serverPath,files,capabilityDigest:entry.capabilityDigest,modelId:entry.id,kind:entry.kind,runtime:entry.runtime,backend:chosen};
+    const runtime=await verifyRuntimeFilesAt(mediaRuntimeSpec(root,entry,chosen,platformOf())),files=await verifyMediaModel(root,entry);
+    const modelFiles=Object.freeze(entry.artifacts.filter(artifact=>!artifact.name.startsWith("licences/"))
+      .map(artifact=>Object.freeze({path:files[artifact.name]!,sha256:artifact.sha256})));
+    return {directory:root,...runtime,files,modelFiles,capabilityDigest:entry.capabilityDigest,modelId:entry.id,kind:entry.kind,runtime:entry.runtime,backend:chosen};
   } catch(error) {if(error instanceof AdapterError)throw error;throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");}
 }
 /** Disk preflight for installing a media model and its runtime on this platform. */

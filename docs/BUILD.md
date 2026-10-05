@@ -20,14 +20,14 @@ Linux x64 packages require GCC and the native helper:
 node scripts/public-worker/build-linux-sandbox.mjs
 ```
 
-The helper is compiled with path-prefix mapping, no debug information, hardening flags and a checked binary hash. Its system compiler and C library are presently observed local dependencies, not a hermetic pinned build environment. Linux execution requires a non-root process and Landlock ABI 6 or newer; unsupported profiles refuse execution. The Windows C# helper is a separate unintegrated prototype, built with the installed .NET Framework compiler and not included as an operational Windows execution boundary.
+The helper is compiled with path-prefix mapping, no debug information, hardening flags and a checked binary hash. Its system compiler and C library are presently observed local dependencies, not a hermetic pinned build environment. Linux execution requires a non-root process and Landlock ABI 6 or newer; unsupported profiles refuse execution. Windows x64 uses a C# AppContainer helper with a pinned deterministic build. Prepare Microsoft compiler and reference assemblies with `python scripts/public-worker/prepare-windows-toolchain.py`, then run `node scripts/public-worker/build-windows-sandbox.mjs`. See [native build inputs](NATIVE-BUILD.md) for exact pins and external dependencies.
 
 ```sh
-node scripts/package-worker.mjs --platform win32-x64 --out <neutral-build-output>
-node scripts/package-worker.mjs --platform linux-x64 --out <neutral-build-output>
+node scripts/package-worker.mjs --platform win32-x64 --require-native --out <neutral-build-output>
+node scripts/package-worker.mjs --platform linux-x64 --require-native --out <neutral-build-output>
 ```
 
-Windows packaging requires a Windows x64 builder. Both packages use pinned official Node 24.11.1 archive hashes, preserve Node and zod licence notices, and inspect selected bytes before persistence. The upstream Linux Node binary contains its public iojs build-service path; this is upstream provenance, not a local builder identity. Absolute Windows home paths and the project's blocked owner identifier remain forbidden.
+Windows packaging requires a Windows x64 builder. `--native-dir` selects a separately built helper directory. Each package includes only its platform helper and matching hash pin, and records that hash in its manifest. `--require-native` refuses a missing helper; Linux always requires it. A source-only Windows diagnostics package may omit the helper and records its profile as unavailable. Local signed candidates require both verified native boundaries. Both packages use pinned official Node 24.11.1 archive hashes, preserve Node and zod licence notices, and inspect selected bytes before persistence. The upstream Linux Node binary contains its public iojs build-service path; this is upstream provenance, not a local builder identity. Absolute Windows home paths and the project's blocked owner identifier remain forbidden.
 
 Archive ordering, timestamps, modes and ownership are deterministic. SOURCE_DATE_EPOCH defaults to the source commit time; EXCESS_RELEASE_SEQUENCE selects the positive release sequence. Packages always carry publicDistributionReady=false while the isolated model and bootstrap gates are incomplete.
 

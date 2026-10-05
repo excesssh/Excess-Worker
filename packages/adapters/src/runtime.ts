@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { TEXT_LIMITS } from "@excess/protocol";
 import { AdapterError,DEFAULT_MODEL_ID,catalogEntry,currentPlatform,parseTextRequest,parseTextResult,textProbeTokens,type Backend,type TextRequest,type TextResult } from "./manifest.js";
-import { verifyInstallation } from "./install.js";
+import { verifyInstallation,type VerifiedRuntimeInputs } from "./install.js";
 import { startSupervisedProcess,type ManagedProcess } from "./process.js";
 import { AnswerGate,readLlamaStream,unansweredReasoning,type ChunkCallback } from "./stream.js";
 import { PROMPT_FORMATS } from "./prompt-format.js";
@@ -20,7 +20,7 @@ export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<A
   residentMb?():number}
 /** Internal seam: where the verified server and model are. Tests substitute a fixture server; the package entry point exposes
  * only createTextAdapter, which always re-verifies the pinned installation. */
-export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
+export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
 // Sampling as pinned in the capability; version 3 entries predate minP and repeatPenalty and used llama-server's neutral values.
@@ -60,7 +60,7 @@ export async function boundedJson(response:Response,maxBytes=65536):Promise<unkn
 export function createTextAdapter(installDir:string,inputOptions:AdapterOptions):TextAdapter {
   return createTextAdapterWith(inputOptions,{isolate:true,resolve:async()=>{
     const installed=await verifyInstallation(installDir,inputOptions?.modelId??DEFAULT_MODEL_ID,inputOptions?.backend??"cpu");
-    return {serverPath:installed.serverPath,modelPath:installed.modelPath};
+    return installed;
   }});
 }
 export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLaunch):TextAdapter {
@@ -74,7 +74,8 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
   const processes=new AdapterProcessState();
   let origin="",secret="",busy=false,stopping=new AbortController(),marker:number[]=[],isolation:RuntimeIsolation|undefined;
   async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;}
-  const post=(path:string,body:unknown,signal:AbortSignal)=>fetch(origin+path,{method:"POST",redirect:"error",signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+secret},body:JSON.stringify(body)});
+  const runtimeFetch=(path:string,init:RequestInit)=>processes.process?.request?.(path,init)??fetch(origin+path,init);
+  const post=(path:string,body:unknown,signal:AbortSignal)=>runtimeFetch(path,{method:"POST",redirect:"error",signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+secret},body:JSON.stringify(body)});
   const tokenList=(limit:number)=>z.object({tokens:z.array(z.number().int().nonnegative()).max(limit)});
   async function ensure(signal:AbortSignal) {
     if(processes.process?.alive())return;
@@ -101,13 +102,19 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       // GPU builds (CUDA, Vulkan) offload every layer; the CPU build keeps them all on the processor. Prompts are rendered by the
       // pinned format, so the GGUF's own chat template is never used.
       "--parallel","1","--n-gpu-layers",backend==="cpu"?"0":"999","--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"];
-    if(launch.isolate)isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[dirname(installed.serverPath),dirname(installed.modelPath)],
-      maxMemoryBytes:options.maxMemoryMb*1048576,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+    if(launch.isolate){
+      isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
+        modelPaths:installed.modelFiles?.map(file=>file.path)??[installed.modelPath],
+        ...(installed.runtimeRoot?{runtimeRoot:installed.runtimeRoot}:{}),...(installed.runtimeFiles?{runtimeFiles:installed.runtimeFiles}:{}),
+        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*1048576,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+      env.TEMP=isolation.scratch;env.TMP=isolation.scratch;
+      if(platform==="linux-x64"){env.HOME=isolation.scratch;env.TMPDIR=isolation.scratch;}
+    }
     processes.attach(startSupervisedProcess(isolation?.executable??launch.executable??installed.serverPath,isolation?.args??runtimeArgs,
-      {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576}));
+      {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576,supervision:isolation?.supervision}));
     for(;;) {
       signal.throwIfAborted();if(!processes.process?.alive())throw processes.process?.error()??new AdapterError("RUNTIME_EXITED");
-      try {const response=await fetch(origin+"/health",{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error"});if(response.ok){await boundedJson(response,4096);break;}await response.body?.cancel();}
+      try {const response=await runtimeFetch("/health",{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error"});if(response.ok){await boundedJson(response,4096);break;}await response.body?.cancel();}
       catch(error){if(signal.aborted)throw error;}
       await delay(200,undefined,{signal});
     }

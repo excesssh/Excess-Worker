@@ -4,9 +4,9 @@ The source contains CPU and GPU backend selection and packaging paths for Window
 
 | Area | Current evidence | Status |
 | --- | --- | --- |
-| Linux ext4 | The isolated fixture passed. | Limited fixture evidence only. |
-| CPU end-to-end | The standalone reconstruction has not been revalidated with a real end-to-end CPU job. | Unverified for release claims. |
-| Linux DrvFS | Model file permissions prevented inference. | Blocked in the tested configuration. |
+| Linux ext4 | Kernel denials and selected model descriptors pass. | Fixture evidence; packaged clean-host verification pending. |
+| Linux CPU | Actual Qwen3-4B inference and a local coordinator job returned useful output through the isolated adapter. Pairing, accepted receipt, drain and revocation passed. | Development evidence with synthetic local funding; packaged clean-host verification pending. |
+| Linux DrvFS | Exact read-only model descriptors resolve the prior permission failure; the selected file is readable and an unselected sibling is denied. | Verified in the development environment; no model copy required. |
 | Windows AppContainer | Outside loopback is denied; same-container authenticated HTTP/SSE pulls, selected-file denial and timeout/stop cleanup pass native fixtures. | Actual worker/model execution remains unverified. |
 | GPU | No GPU execution was verified. | Unverified; no GPU support claim. |
 | Production isolation | Required gate is incomplete. | Not ready for production or multi-tenant untrusted work. |

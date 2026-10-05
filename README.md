@@ -4,7 +4,7 @@
 
 Run selected models on your computer and supply inference capacity through [Excess](https://excess.sh). The worker pairs with a separately operated coordinator, applies your local policy, and signs device results. Wallet approvals stay in the website.
 
-**Source preview.** No new release has been published. Source builds and CLI diagnostics work; useful CPU/GPU model execution inside the new isolation boundaries has not passed the release gates. Windows production launches and unverified GPU launches fail closed. See [platform status](docs/PLATFORMS.md).
+**Source preview.** No new release has been published. Source builds and CLI diagnostics work. Actual Linux CPU inference and a local coordinator journey have passed in the development environment; packaged execution, controller confinement and GPU gates remain incomplete. Missing native helpers and unverified GPU profiles fail closed. See [platform status](docs/PLATFORMS.md).
 
 [Installation](docs/INSTALLATION.md) | [Release verification](docs/VERIFICATION.md) | [Releases](https://github.com/excesssh/Excess-Worker/releases) | [MIT licence](LICENSE)
 
@@ -26,7 +26,7 @@ Diagnostics report local inventory; they do not execute a model. A coordinator i
 
 Pairing creates a scoped, revocable machine key. It cannot authorize wallet spending or withdrawals. Linux protects the key with file permissions; Windows uses current-user DPAPI. Local policy controls schedules, idle use, thermal limits, concurrency and resources. The model runtime receives its own API token and selected files, rather than the machine credential.
 
-The Linux CPU boundary uses Landlock, seccomp and kernel resource limits. The Windows AppContainer prototype uses a bounded authenticated pipe relay between processes inside the same container. Worker integration and actual model execution remain under verification. Current execution restrictions and their limits are described in [platforms](docs/PLATFORMS.md) and [security](SECURITY.md).
+The Linux CPU boundary uses Landlock, seccomp and kernel resource limits. The Windows AppContainer boundary uses a bounded authenticated pipe relay between processes inside the same container. Its worker integration and actual model execution remain under verification. Native helpers must be built and hash-verified separately. Current execution restrictions and their limits are described in [platforms](docs/PLATFORMS.md) and [security](SECURITY.md).
 
 ## Develop
 

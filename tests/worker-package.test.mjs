@@ -13,12 +13,28 @@ async function files(dir){const result=[];for(const entry of await readdir(dir,{
 test("the packaged Windows worker runs from its own folder with the bundled runtime and guides onboarding",{skip:process.platform!=="win32"},async t=>{
   await mkdir(".cache",{recursive:true});
   const out=await mkdtemp(resolve(".cache/package-test-")),home=await mkdtemp(resolve(".cache/package-home-"));
-  const built=spawnSync(process.execPath,["scripts/package-worker.mjs","--out",out,"--no-zip"],{encoding:"utf8"});
+  // Inert native bytes check delivery and integrity only; this is no execution proof.
+  const native=join(out,"native-fixture"),helper=Buffer.from("INERT NATIVE PACKAGING FIXTURE");await mkdir(native);
+  const nativeHash=createHash("sha256").update(helper).digest("hex");
+  await writeFile(join(native,"ExcessSandbox.exe"),helper);
+  await writeFile(join(native,"integrity-win32.json"),JSON.stringify({profile:"windows-appcontainer-v1",sha256:nativeHash}));
+  await writeFile(join(native,"unrelated-fixture.txt"),"must not ship");
+  const buildArgs=["scripts/package-worker.mjs","--out",out,"--no-zip","--native-dir",native,"--require-native"];
+  await writeFile(join(native,"ExcessSandbox.exe"),"ALTERED NATIVE PACKAGING FIXTURE");
+  const altered=spawnSync(process.execPath,buildArgs,{encoding:"utf8"});
+  assert.notEqual(altered.status,0);assert.match(altered.stderr,/RUNTIME_SANDBOX_INTEGRITY_INVALID/);
+  const missing=spawnSync(process.execPath,[...buildArgs.slice(0,-3),"--native-dir",join(out,"missing-native"),"--require-native"],{encoding:"utf8"});
+  assert.notEqual(missing.status,0);assert.match(missing.stderr,/RUNTIME_SANDBOX_BUILD_REQUIRED/);
+  await writeFile(join(native,"ExcessSandbox.exe"),helper);
+  const built=spawnSync(process.execPath,buildArgs,{encoding:"utf8"});
   assert.equal(built.status,0,built.stderr);
   const summary=JSON.parse(built.stdout.trim().split("\n").at(-1)),dir=summary.directory;
   assert.equal(summary.licensesIncluded,true,"the pinned Node runtime ships with its own licence text");
   assert.equal(summary.publicDistributionReady,false,"unverified isolated execution blocks release publication");
   const manifest=JSON.parse(await readFile(join(dir,"manifest.json"),"utf8"));
+  assert.deepEqual(manifest.native,{profile:"windows-appcontainer-v1",file:"app/node_modules/@excess/adapters/native/ExcessSandbox.exe",sha256:nativeHash});
+  assert.deepEqual(manifest.execution,{profile:"windows-appcontainer-v1",cpuVerified:false,gpuVerified:false});
+  assert.deepEqual(await readdir(join(dir,"app/node_modules/@excess/adapters/native")),["ExcessSandbox.exe","integrity-win32.json"],"only the selected verified platform helper and pin ship");
   assert.deepEqual([manifest.platform,manifest.node,manifest.codeSigned],["win32-x64","v24.11.1",false],
     "the package pins its Node runtime rather than copying whichever node.exe built it");
   assert.ok((await readFile(join(dir,"licenses","node-LICENSE.txt"),"utf8")).includes("Node.js is licensed for use as follows"),

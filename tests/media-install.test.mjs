@@ -6,7 +6,7 @@ import { resolve, join, dirname, basename } from "node:path";
 import { MEDIA_LIMITS } from "../packages/protocol/dist/index.js";
 import { MEDIA_CATALOG, SD_RUNTIME_REDIST, RUNTIME_REDIST, currentPlatform, mediaInstallationPlan, installMediaModel, verifyMediaInstallation, installedComponents,
   sdRuntimeArtifacts, parseWav, toneWav, parsePng } from "../packages/adapters/dist/index.js";
-import { installComponent, verifyRuntimeAt } from "../packages/adapters/dist/install.js";
+import { installComponent, verifyRuntimeAt, verifyRuntimeFilesAt } from "../packages/adapters/dist/install.js";
 import { readSafeZip, scanSafeZip } from "../packages/adapters/dist/zip.js";
 
 // Tiny ZIP, WAV and PNG fixtures, not runtime evidence.
@@ -85,6 +85,13 @@ test("a fixture runtime installs through the offline cache and verification refu
   const spec = { directory: join(dir, "sd-runtimes", "cpu"), artifacts, server, limits: { maxInputBytes: 1 << 20, maxTotalBytes: 1 << 20, maxEntryBytes: 1 << 20 }, redist: SD_RUNTIME_REDIST, platform };
   await installComponent(dir, spec.directory, artifacts, spec.limits, () => verifyRuntimeAt(spec), { backend: "cpu", platform }, AbortSignal.timeout(30000));
   assert.equal(await verifyRuntimeAt(spec), join(spec.directory, "runtime", server));
+  const verified=await verifyRuntimeFilesAt(spec);
+  assert.equal(verified.runtimeRoot,join(spec.directory,"runtime"));
+  assert.equal(verified.serverPath,join(verified.runtimeRoot,server));
+  assert.deepEqual(verified.runtimeFiles.map(file=>basename(file.path)).sort(),
+    [server,platform==="win32-x64"?"stable-diffusion.dll":"libstable-diffusion.so"].sort());
+  for(const file of verified.runtimeFiles)assert.equal(file.sha256,sha(await readFile(file.path)));
+  assert.ok(Object.isFrozen(verified.runtimeFiles)&&verified.runtimeFiles.every(Object.isFrozen));
   assert.deepEqual((await readdir(join(spec.directory, "runtime"))).sort(), [server, platform === "win32-x64" ? "stable-diffusion.dll" : "libstable-diffusion.so"].sort());
   await writeFile(join(spec.directory, "runtime", "unexpected.dll"), "FAKE");
   await assert.rejects(verifyRuntimeAt(spec), /UNEXPECTED_RUNTIME_FILE/);

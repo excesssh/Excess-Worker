@@ -1,4 +1,4 @@
-import {cp,mkdir,rm,readdir,readFile,writeFile,copyFile,stat,mkdtemp} from "node:fs/promises";
+import {cp,mkdir,rm,readdir,readFile,writeFile,copyFile,stat,lstat} from "node:fs/promises";
 import {createHash} from "node:crypto";
 import {join,resolve,relative,sep} from "node:path";
 import {execFileSync} from "node:child_process";
@@ -19,6 +19,7 @@ const out=resolve(option("--out")??join(root,".cache","package")),zip=!args.incl
 if(!linux&&(process.platform!=="win32"||process.arch!=="x64"))throw new Error("PACKAGE_REQUIRES_WINDOWS_X64");
 if(process.version!=="v24.11.1")throw new Error("PACKAGE_REQUIRES_PINNED_NODE_24_11_1");
 const version=JSON.parse(await readFile(join(root,"apps/worker/package.json"),"utf8")).version;
+if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))throw Error("PACKAGE_VERSION_INVALID");
 const releaseSequence=Number(process.env.EXCESS_RELEASE_SEQUENCE??1);
 if(!Number.isSafeInteger(releaseSequence)||releaseSequence<1)throw Error("RELEASE_SEQUENCE_INVALID");
 let sourceEpoch;
@@ -39,6 +40,31 @@ for(const required of ["apps/worker/dist/main.js","packages/adapters/dist/index.
   await stat(join(root,required)).catch(()=>{throw new Error("PACKAGE_INPUT_MISSING "+required+" (run npm.cmd run build)");});
 const sha256=bytes=>createHash("sha256").update(bytes).digest("hex");
 
+async function noLinks(path){
+  const absolute=resolve(path),parts=absolute.split(sep);let current=parts.shift()+sep;
+  for(const part of parts){if(!part)continue;current=join(current,part);
+    const info=await lstat(current).catch(error=>{if(error.code==="ENOENT")return null;throw error;});
+    if(info?.isSymbolicLink())throw Error("PACKAGE_LINK_DENIED");
+  }
+}
+const nativeRoot=resolve(option("--native-dir")??join(root,"packages","adapters","native"));
+const helperFile=linux?"excess-sandbox":"ExcessSandbox.exe",pinFile=linux?"integrity.json":"integrity-win32.json";
+const expectedProfile=linux?"linux-landlock-v1":"windows-appcontainer-v1";
+let native;
+await noLinks(nativeRoot);
+const helperInfo=await lstat(join(nativeRoot,helperFile)).catch(error=>{if(error.code==="ENOENT")return null;throw error;});
+if(helperInfo){
+  await noLinks(join(nativeRoot,helperFile));await noLinks(join(nativeRoot,pinFile));
+  if(!helperInfo.isFile())throw Error("RUNTIME_SANDBOX_INPUT_INVALID");
+  const helper=await readFile(join(nativeRoot,helperFile)),pinBytes=await readFile(join(nativeRoot,pinFile));
+  assertPublicBytes(helper);assertPublicBytes(pinBytes);
+  const pin=JSON.parse(pinBytes.toString("utf8")),hash=sha256(helper);
+  if(pin.profile!==expectedProfile||pin.sha256!==hash)throw Error("RUNTIME_SANDBOX_INTEGRITY_INVALID");
+  native={helper,pinBytes,profile:expectedProfile,sha256:hash};
+}else if(linux||args.includes("--require-native"))throw Error("RUNTIME_SANDBOX_BUILD_REQUIRED");
+
+if(resolve(stage)===out||relative(out,stage)!==name)throw Error("PACKAGE_OUTPUT_BOUNDARY_INVALID");
+await noLinks(stage);
 await rm(stage,{recursive:true,force:true});
 await mkdir(join(stage,"licenses"),{recursive:true});
 const pinnedNode=await nodeRuntime(root,platform);
@@ -56,10 +82,10 @@ for(const pkg of ["adapters","protocol"]){
   await mkdir(target,{recursive:true});
   await safeCopy(join(root,"packages",pkg,"package.json"),join(target,"package.json"));
   await copyTree(join(root,"packages",pkg,"dist"),join(target,"dist"));
-  if(pkg==="adapters"&&linux){
-    const native=join(root,"packages","adapters","native");
-    await stat(join(native,"excess-sandbox")).catch(()=>{throw Error("RUNTIME_SANDBOX_BUILD_REQUIRED");});
-    await copyTree(native,join(target,"native"));
+  if(pkg==="adapters"&&native){
+    await mkdir(join(target,"native"),{recursive:true});
+    await writeFile(join(target,"native",helperFile),native.helper);
+    await writeFile(join(target,"native",pinFile),native.pinBytes);
   }
 }
 await copyTree(join(root,"node_modules","zod"),join(stage,"app","node_modules","zod"));
@@ -117,7 +143,9 @@ let commit="unknown";
 try{commit=execFileSync("git",["-c","safe.directory="+root.replaceAll("\\","/").replace(/\/$/,""),"rev-parse","HEAD"],{cwd:root,encoding:"utf8",stdio:["ignore","pipe","ignore"]}).trim();}catch{}
 await writeFile(join(stage,"manifest.json"),JSON.stringify({product:"EXCESS",package:"worker",version,platform,node:nodeVersion,sourceCommit:commit,
   releaseSequence,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:false,releaseGate:"isolated-hardware-execution-pending",codeSigned:false,
-  execution:{profile:linux?"linux-landlock-v1":"unavailable",cpuVerified:false,gpuVerified:false},builtAt:new Date(epoch*1000).toISOString()},null,2)+"\n");
+  execution:{profile:native?.profile??"unavailable",cpuVerified:false,gpuVerified:false},
+  ...(native?{native:{profile:native.profile,file:"app/node_modules/@excess/adapters/native/"+helperFile,sha256:native.sha256}}:{}),
+  builtAt:new Date(epoch*1000).toISOString()},null,2)+"\n");
 
 async function files(dir){const result=[];for(const entry of await readdir(dir,{withFileTypes:true})){const path=join(dir,entry.name);
   if(entry.isDirectory())result.push(...await files(path));else result.push(path);}return result;}

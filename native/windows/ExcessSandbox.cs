@@ -871,7 +871,7 @@ internal static class ExcessSandbox
         SecurityIdentifier user = WindowsIdentity.GetCurrent().User;
         if (owner == null || user == null || !owner.Equals(user)) throw new ArgumentException("unowned-pinned-directory");
         // Only the app-owned directory containing selected files (or the exact private scratch root) is changed.
-        // No ancestor, home or system ACL grants are needed; AppContainer's traverse privilege covers the path walk.
+        // No ancestor-wide ACL grants are needed; traversal uses the operating system's path-walk privileges.
         lease.GrantDirectory(sid, full, FileSystemRights.Traverse, false);
     }
 

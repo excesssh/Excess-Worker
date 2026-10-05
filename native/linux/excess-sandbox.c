@@ -5,6 +5,7 @@
 #include <linux/filter.h>
 #include <linux/landlock.h>
 #include <linux/seccomp.h>
+#include <limits.h>
 #include <sched.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -39,6 +40,7 @@ static void path_rule(int rules, const char *path, uint64_t rights) {
     if (syscall(SYS_landlock_add_rule, rules, LANDLOCK_RULE_PATH_BENEATH, &rule, 0)) fail(); close(fd);
 }
 #define DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, (n), 0, 1), BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM)
+#define MAX_MODELS 32
 static void syscalls(void) {
     /* Deny process inspection, kernel control, child processes, UDP and Unix sockets.
        Threads remain available. clone3 gets ENOSYS so libc uses the checked clone path. */
@@ -79,14 +81,40 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--check")) {
         if (abi < 6) fail(); puts("linux-landlock-v1"); return 0;
     }
-    /* helper <memory bytes> <seconds> <TCP bind port> <scratch> <read count> <read paths...> -- <executable> <args...> */
+    /* helper <memory> <seconds> <port> <scratch> <read-count> <read-paths...> <model-count> <model-paths...> -- <command> <args...> */
+    phase=1;
     if (argc < 9 || abi < 6 || getuid() == 0 || geteuid() == 0) fail();
     uint64_t memory = number(argv[1]), seconds = number(argv[2]), port = number(argv[3]), count = number(argv[5]);
     if (memory < 64*1024*1024 || seconds < 1 || seconds > 3600 || port < 1024 || port > 65535 || count > 64 || (uint64_t)argc < 8+count) fail();
-    int command = 7 + count; if (strcmp(argv[command-1], "--")) fail();
+    phase=2;
+    uint64_t model_count_at = 6 + count;
+    if (model_count_at >= (uint64_t)argc) fail();
+    uint64_t model_count = number(argv[model_count_at]);
+    if (model_count > MAX_MODELS || (uint64_t)argc < 9 + count + model_count) fail();
+    uint64_t model_paths_at = model_count_at + 1;
+    int command = 8 + count + model_count;
+    phase=3;
+    if (strcmp(argv[command-1], "--")) fail();
+    phase=4;
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_DUMPABLE, 0)) fail();
     struct rlimit mem = { memory, memory }, cpu = { seconds, seconds }, files = { 256, 256 }, core = { 0, 0 };
     if (setrlimit(RLIMIT_AS, &mem) || setrlimit(RLIMIT_CPU, &cpu) || setrlimit(RLIMIT_NOFILE, &files) || setrlimit(RLIMIT_CORE, &core)) fail();
+    int model_fds[MAX_MODELS]; char model_proc[MAX_MODELS][64], model_alias[MAX_MODELS][PATH_MAX];
+    uint64_t model_total = 0; int scratch_fd = open(argv[4], O_RDONLY | O_DIRECTORY | O_CLOEXEC); if (scratch_fd < 0) fail();
+    for (uint64_t n = 0; n < model_count; n++) {
+        const char *path = argv[model_paths_at+n], *base = strrchr(path, '/'); base = base ? base+1 : path;
+        if (!*base || !strcmp(base, ".") || !strcmp(base, "..") || strlen(base) >= sizeof(model_alias[n])) fail();
+        for (const char *c = base; *c; c++) if (!( (*c>='a'&&*c<='z') || (*c>='A'&&*c<='Z') || (*c>='0'&&*c<='9') || *c=='.' || *c=='_' || *c=='-' )) fail();
+        for (uint64_t j = 0; j < n; j++) if (!strcmp(base, strrchr(argv[model_paths_at+j], '/') ? strrchr(argv[model_paths_at+j], '/')+1 : argv[model_paths_at+j])) fail();
+        model_fds[n] = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW); if (model_fds[n] < 0) fail();
+        if (fcntl(model_fds[n], F_SETFD, 0)) fail();
+        struct stat st; if (fstat(model_fds[n], &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || (uint64_t)st.st_size > memory-model_total) fail();
+        model_total += (uint64_t)st.st_size;
+        if (snprintf(model_proc[n], sizeof(model_proc[n]), "/proc/self/fd/%d", model_fds[n]) >= (int)sizeof(model_proc[n]) ||
+            snprintf(model_alias[n], sizeof(model_alias[n]), "%s/%s", argv[4], base) >= (int)sizeof(model_alias[n])) fail();
+        if (symlinkat(model_proc[n], scratch_fd, base)) fail();
+    }
+    close(scratch_fd);
     uint64_t read = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR;
     uint64_t write = LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
         LANDLOCK_ACCESS_FS_MAKE_DIR | LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_REFER | LANDLOCK_ACCESS_FS_TRUNCATE;
@@ -100,13 +128,22 @@ int main(int argc, char **argv) {
     path_rule(rules, "/dev/null", LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_WRITE_FILE);
     path_rule(rules, "/dev/urandom", LANDLOCK_ACCESS_FS_READ_FILE);
     for (uint64_t n = 0; n < count; n++) path_rule(rules, argv[6+n], read);
+    for (uint64_t n = 0; n < model_count; n++) path_rule(rules, model_proc[n], LANDLOCK_ACCESS_FS_READ_FILE);
     path_rule(rules, argv[command], LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_EXECUTE);
     path_rule(rules, argv[4], read | write);
     struct landlock_net_port_attr network = { .allowed_access = LANDLOCK_ACCESS_NET_BIND_TCP, .port = port };
     if (syscall(SYS_landlock_add_rule, rules, LANDLOCK_RULE_NET_PORT, &network, 0) || syscall(SYS_landlock_restrict_self, rules, 0)) fail(); close(rules);
     phase=30; if (chdir(argv[4])) fail();
     if (setenv("HOME", argv[4], 1) || setenv("TMPDIR", argv[4], 1)) fail();
-    /* No inherited host file handles beyond stdio. */
-    syscall(SYS_close_range, 3, ~0U, 0);
+    /* Retain only the exact selected, read-only model handles across exec. */
+    unsigned int first = 3;
+    for (uint64_t n = 0; n < model_count; n++) {
+        unsigned int fd = (unsigned int)model_fds[n];
+        if (fd > first && syscall(SYS_close_range, first, fd-1, 0)) fail();
+        first = fd + 1;
+    }
+    if (syscall(SYS_close_range, first, ~0U, 0)) fail();
+    for (int at = command + 1; at < argc; at++) for (uint64_t n = 0; n < model_count; n++)
+        if (!strcmp(argv[at], argv[model_paths_at+n])) argv[at] = model_alias[n];
     syscalls(); phase=31; execv(argv[command], &argv[command]); fail();
 }

@@ -7,6 +7,7 @@ import { MEDIA_LIMITS,TEXT_LIMITS,embeddingRequestSchema,embeddingResultSchema,i
   type ArtifactRef,type MediaKind,type MediaRequest,type MediaResult } from "@excess/protocol";
 import { AdapterError,currentPlatform,mediaCatalogEntry,type Backend } from "./manifest.js";
 import { verifyMediaInstallation } from "./media-install.js";
+import type { VerifiedRuntimeInputs } from "./install.js";
 import { AdapterProcessState,boundedJson,port } from "./runtime.js";
 import { startSupervisedProcess } from "./process.js";
 import { artifactRef,parsePng,parseWav,sha256,strictBase64,toneWav } from "./media-format.js";
@@ -30,7 +31,7 @@ export interface MediaAdapter {
 }
 /** Internal seam: where the verified server and model files are. Tests substitute a fixture server; the package entry point
  * exposes only createMediaAdapter, which always re-verifies the pinned installation. */
-export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonly<Record<string,string>>}>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
+export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonly<Record<string,string>>}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
 
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   modelId:z.string().min(1).max(64),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
@@ -53,7 +54,7 @@ export function cleanTranscript(content:string):string {
 }
 export function createMediaAdapter(installDir:string,options:MediaAdapterOptions):MediaAdapter {
   if(mediaCatalogEntry(options.modelId).runtime!=="llama.cpp")throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
-  return createMediaAdapterWith(options,{isolate:true,resolve:async()=>{const installed=await verifyMediaInstallation(installDir,options?.modelId,options?.backend??"cpu");return {serverPath:installed.serverPath,files:installed.files};}});
+  return createMediaAdapterWith(options,{isolate:true,resolve:()=>verifyMediaInstallation(installDir,options?.modelId,options?.backend??"cpu")});
 }
 export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:MediaLaunch):MediaAdapter {
   const parsed=optionsSchema.safeParse(inputOptions);
@@ -66,6 +67,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
   let origin="",secret="",busy=false,stopping=new AbortController(),isolation:RuntimeIsolation|undefined;
   async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;}
   const headers=(json:boolean)=>({...(json?{"Content-Type":"application/json"}:{}),...(secret?{Authorization:"Bearer "+secret}:{})});
+  const runtimeFetch=(path:string,init:RequestInit)=>processes.process?.request?.(path,init)??fetch(origin+path,init);
   function serverArgs(files:Readonly<Record<string,string>>,selectedPort:number):string[] {
     const file=(name:string)=>{const path=files[name];if(!path)throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");return path;};
     const threads=String(options.threads),gpuLayers=backend==="cpu"?"0":"999";
@@ -100,20 +102,26 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
     }
     if(secret)env.LLAMA_API_KEY=secret;
     const runtimeArgs=[...(launch.prefixArgs??[]),...serverArgs(installed.files,selectedPort)];
-    if(launch.isolate)isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[dirname(installed.serverPath),...Object.values(installed.files).map(file=>dirname(file))],
-      maxMemoryBytes:options.maxMemoryMb*MiB,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+    if(launch.isolate){
+      isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
+        modelPaths:installed.modelFiles?.map(file=>file.path)??Object.entries(installed.files).filter(([name])=>!name.startsWith("licences/")).map(([,path])=>path),
+        ...(installed.runtimeRoot?{runtimeRoot:installed.runtimeRoot}:{}),...(installed.runtimeFiles?{runtimeFiles:installed.runtimeFiles}:{}),
+        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*MiB,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+      env.TEMP=isolation.scratch;env.TMP=isolation.scratch;
+      if(platform==="linux-x64"){env.HOME=isolation.scratch;env.TMPDIR=isolation.scratch;}
+    }
     processes.attach(startSupervisedProcess(isolation?.executable??launch.executable??installed.serverPath,isolation?.args??runtimeArgs,
-      {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*MiB}));
+      {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*MiB,supervision:isolation?.supervision}));
     // sd-server only listens once its model is loaded; llama-server reports readiness on /health.
     const readiness=llama?"/health":"/v1/models";
     for(;;) {
       signal.throwIfAborted();if(!processes.process?.alive())throw processes.process?.error()??new AdapterError("RUNTIME_EXITED");
-      try {const response=await fetch(origin+readiness,{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error",headers:headers(false)});if(response.ok){await boundedJson(response,4096);return;}await response.body?.cancel();}
+      try {const response=await runtimeFetch(readiness,{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error",headers:headers(false)});if(response.ok){await boundedJson(response,4096);return;}await response.body?.cancel();}
       catch(error){if(signal.aborted)throw error;}
       await delay(200,undefined,{signal});
     }
   }
-  const post=(path:string,body:unknown,signal:AbortSignal)=>fetch(origin+path,{method:"POST",redirect:"error",signal,headers:headers(true),body:JSON.stringify(body)});
+  const post=(path:string,body:unknown,signal:AbortSignal)=>runtimeFetch(path,{method:"POST",redirect:"error",signal,headers:headers(true),body:JSON.stringify(body)});
   const invalid=():never=>{throw new AdapterError("INVALID_RUNTIME_RESULT");};
 
   async function embed(request:z.infer<typeof embeddingRequestSchema>,signal:AbortSignal):Promise<MediaOutput> {

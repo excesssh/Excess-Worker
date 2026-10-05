@@ -18,4 +18,4 @@ The package script writes SHA-256 checksums. Checksums detect accidental changes
 
 ## Known isolation limits
 
-The production isolation gate is incomplete. Current evidence includes a passing Linux ext4 fixture, a DrvFS model-permission failure, Windows AppContainer file/loopback restrictions with a passing contained HTTP/SSE relay fixture, and no verified GPU execution. See [platform status](docs/PLATFORMS.md). Do not use those environments for untrusted multi-tenant inference until the blockers have been retested and closed.
+The production isolation gate is incomplete. Current evidence includes Linux kernel denials, selected model descriptors on ext4 and DrvFS, actual Linux CPU inference with a local coordinator journey, and Windows AppContainer file/loopback restrictions with a passing contained HTTP/SSE relay fixture. No GPU execution is verified for these profiles. The controller still runs without OS-enforced outbound confinement, and final packaged installation and execution gates remain open. See [platform status](docs/PLATFORMS.md). Do not use those environments for untrusted multi-tenant inference until the blockers have been retested and closed.

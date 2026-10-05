@@ -14,7 +14,9 @@ const ARCHIVE_LIMITS:Readonly<Record<Platform,Partial<Record<Backend,ZipLimits>>
   "linux-x64":{cpu:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB},vulkan:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:256*MiB}},
 };
 export interface InstallProgress { artifact:string; receivedBytes:number; totalBytes:number }
-export interface Installation {directory:string;serverPath:string;modelPath:string;capabilityDigest:string;modelId:string;backend:Backend}
+export interface VerifiedRuntimeFile {path:string;sha256:string}
+export interface VerifiedRuntimeInputs {runtimeRoot:string;runtimeFiles:readonly VerifiedRuntimeFile[];modelFiles:readonly VerifiedRuntimeFile[]}
+export interface Installation extends VerifiedRuntimeInputs {directory:string;serverPath:string;modelPath:string;capabilityDigest:string;modelId:string;backend:Backend}
 
 export function backendOf(value:unknown):Backend {
   if(!BACKENDS.includes(value as Backend))throw new AdapterError("INVALID_BACKEND");
@@ -82,7 +84,7 @@ export async function hashFile(path:string,expectedBytes:number):Promise<string>
 /** One pinned runtime folder: its archives and licence, the one server executable they must contain, the archive bounds
  * and the only redistributable files allowed beside a Windows server. */
 export interface RuntimeSpec {directory:string;artifacts:readonly Artifact[];server:string;limits:ZipLimits;redist:readonly RedistFile[];platform:Platform}
-export async function verifyRuntimeAt(spec:RuntimeSpec):Promise<string> {
+export async function verifyRuntimeFilesAt(spec:RuntimeSpec):Promise<{serverPath:string;runtimeRoot:string;runtimeFiles:readonly VerifiedRuntimeFile[]}> {
   const {directory,platform,limits}=spec,server=fileKey(platform,spec.server);
   await noLinks(directory);
   const expected=new Map<string,{bytes:number;sha256:string}>();let servers=0;
@@ -100,7 +102,7 @@ export async function verifyRuntimeAt(spec:RuntimeSpec):Promise<string> {
   if(servers!==1||serverEntries.length!==1)throw new AdapterError("RUNTIME_SERVER_MISSING");
   const directories=new Set<string>();
   for(const name of expected.keys()){const parts=name.split("/");for(let n=1;n<parts.length;n++)directories.add(parts.slice(0,n).join("/"));}
-  const seen=new Set<string>();
+  const seen=new Set<string>(),verified:VerifiedRuntimeFile[]=[];
   async function inspect(relativeDirectory="") {
     for(const entry of await readdir(join(directory,"runtime",relativeDirectory),{withFileTypes:true})) {
       const name=(relativeDirectory?relativeDirectory+"/":"")+entry.name,key=fileKey(platform,name);
@@ -112,16 +114,21 @@ export async function verifyRuntimeAt(spec:RuntimeSpec):Promise<string> {
         const redist=relativeDirectory||platform!=="win32-x64"?undefined:spec.redist.find(item=>item.name===key);
         if(!redist)throw new AdapterError("UNEXPECTED_RUNTIME_FILE");
         if(await hashFile(inside(join(directory,"runtime"),name),redist.bytes)!==redist.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
+        verified.push({path:inside(join(directory,"runtime"),name),sha256:redist.sha256});
         continue;
       }
       if(await hashFile(inside(join(directory,"runtime"),name),file.bytes)!==file.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
+      verified.push({path:inside(join(directory,"runtime"),name),sha256:file.sha256});
       seen.add(key);
     }
   }
   await inspect();
   if(seen.size!==expected.size)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
-  return inside(join(directory,"runtime"),serverEntries[0]!);
+  return {serverPath:inside(join(directory,"runtime"),serverEntries[0]!),runtimeRoot:join(directory,"runtime"),
+    runtimeFiles:Object.freeze(verified.map(file=>Object.freeze(file)))};
 }
+/** Compatibility wrapper for installation callers that need only the verified executable. */
+export async function verifyRuntimeAt(spec:RuntimeSpec):Promise<string> {return (await verifyRuntimeFilesAt(spec)).serverPath;}
 function textRuntimeSpec(root:string,backend:Backend):RuntimeSpec {
   const platform=platformOf();
   return {directory:runtimeDirectory(root,backend),artifacts:runtimeArtifacts(backend,platform),server:serverExecutable(platform),limits:limitsFor(platform,backend),redist:RUNTIME_REDIST,platform};
@@ -136,8 +143,10 @@ export async function verifyModelFiles(root:string,modelId:string,artifacts:read
 export async function verifyInstallation(directory:string,modelId:string=DEFAULT_MODEL_ID,backend:Backend="cpu"):Promise<Installation> {
   const root=resolve(directory),entry=catalogEntry(modelId),selected=backendOf(backend);await noLinks(root);
   try {
-    const serverPath=await verifyRuntimeAt(textRuntimeSpec(root,selected)),modelPath=await verifyModelFiles(root,entry.id,entry.artifacts);
-    return {directory:root,serverPath,modelPath,capabilityDigest:entry.capabilityDigest,modelId:entry.id,backend:selected};
+    const runtime=await verifyRuntimeFilesAt(textRuntimeSpec(root,selected)),modelPath=await verifyModelFiles(root,entry.id,entry.artifacts);
+    const modelFiles=Object.freeze(entry.artifacts.filter(artifact=>!artifact.name.startsWith("licences/"))
+      .map(artifact=>Object.freeze({path:inside(modelDirectory(root,entry.id),artifact.name),sha256:artifact.sha256})));
+    return {directory:root,...runtime,modelPath,modelFiles,capabilityDigest:entry.capabilityDigest,modelId:entry.id,backend:selected};
   } catch(error) {if(error instanceof AdapterError)throw error;throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");}
 }
 /** Lists which catalog models (text and media) and runtimes are present on disk, without re-hashing large files.

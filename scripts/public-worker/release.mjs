@@ -9,13 +9,14 @@ import { assertPublicBytes, scanHistory } from './privacy.mjs';
 const [firstArg, secondArg, outArg] = process.argv.slice(2);
 if (!firstArg || !secondArg || !outArg) throw Error('Usage: release.mjs <build-a/packages> <build-b/packages> <candidate-out>');
 const first = resolve(firstArg), second = resolve(secondArg), out = resolve(outArg);
+for(const directory of [first,second,out])assertPublicBytes(Buffer.from(directory));
 const key = process.env.EXCESS_WORKER_MINISIGN_KEY;
 if (!key) throw Error('EXCESS_WORKER_MINISIGN_KEY must be injected from secure project credential storage');
 const tool = process.env.EXCESS_MINISIGN ?? 'minisign';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 scanHistory();
 const sourceCommit = execFileSync('git', ['-c','safe.directory='+process.cwd().replaceAll('\\','/'),'rev-parse','HEAD'], {encoding:'utf8'}).trim();
-const files = [], comparisons = []; let version, sequence, releasedAt;
+const files = [], comparisons = [], isolation = {}; let version, sequence, releasedAt;
 await mkdir(out,{recursive:true});
 for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linux-x64','linux-x64','.tar.gz']]) {
   const workerVersion = JSON.parse(await readFile('apps/worker/package.json','utf8')).version;
@@ -24,7 +25,17 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
   assertPublicBytes(left); assertPublicBytes(right);
   if(!left.equals(right))throw Error('ARTIFACT_NOT_REPRODUCIBLE '+platform);
   const manifest = JSON.parse(await readFile(join(first,folder,'manifest.json'),'utf8'));
+  const otherManifest = JSON.parse(await readFile(join(second,folder,'manifest.json'),'utf8'));
   if(manifest.sourceCommit!==sourceCommit||!manifest.licensesIncluded||manifest.publicDistributionReady!==false)throw Error('CANDIDATE_IDENTITY_INVALID');
+  const expectedProfile=platform==='win32-x64'?'windows-appcontainer-v1':'linux-landlock-v1';
+  const helperFile=platform==='win32-x64'?'ExcessSandbox.exe':'excess-sandbox';
+  const expectedFile='app/node_modules/@excess/adapters/native/'+helperFile;
+  if(manifest.native?.profile!==expectedProfile||manifest.native.file!==expectedFile||manifest.execution?.profile!==expectedProfile||
+    manifest.execution.cpuVerified!==false||manifest.execution.gpuVerified!==false||JSON.stringify(manifest)!==JSON.stringify(otherManifest))throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
+  const [helperA,helperB]=await Promise.all([readFile(join(first,folder,expectedFile)),readFile(join(second,folder,expectedFile))]);
+  assertPublicBytes(helperA);assertPublicBytes(helperB);
+  if(!helperA.equals(helperB)||manifest.native.sha256!==hash(helperA))throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
+  isolation[platform]=expectedProfile+': local candidate; packaged execution gates incomplete';
   if(version&&(manifest.version!==version||manifest.releaseSequence!==sequence||manifest.builtAt!==releasedAt))throw Error('CANDIDATE_METADATA_MISMATCH');
   version=manifest.version;sequence=manifest.releaseSequence;releasedAt=manifest.builtAt;
   const file='excess-worker-'+version+'-'+sourceCommit.slice(0,12)+'-'+suffix+extension;
@@ -33,9 +44,9 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
   comparisons.push({platform,sha256:hash(left),bytes:left.length,result:'byte-identical clean-directory builds'});
 }
 const manifest = {format:1,product:'Excess Worker',version,sequence,sourceCommit,repository:'https://github.com/excesssh/Excess-Worker',releasedAt,files,
-  isolation:{'win32-x64':'unavailable: AppContainer loopback integration pending','linux-x64':'linux-landlock-v1: kernel fixture verified; real hardware execution pending'},
-  permissions:{filesystem:'Runtime and selected model directories read-only; private scratch writable. Unsupported isolation profiles refuse execution.',
-    network:'Worker contacts the paired HTTPS coordinator. Linux model runtime binds one local TCP port and cannot open outbound TCP, UDP or Unix sockets.',
+  isolation,
+  permissions:{filesystem:'Verified runtime files and selected model files are read-only; private scratch is writable. Unsupported profiles refuse execution.',
+    network:'Controller outbound networking is not OS-confined. Linux model runtime binds one local TCP port and cannot open outbound TCP, UDP or Unix sockets. Windows runtime and relay communicate only inside their unique AppContainer.',
     credentials:'Revocable device Ed25519 machine key stays outside the model runtime and cannot authorize wallet spending or withdrawals.'}};
 const bytes=Buffer.from(JSON.stringify(manifest,null,2)+'\n');parseReleaseManifest(bytes);assertPublicBytes(bytes);
 const target=join(out,'release.json');await writeFile(target,bytes);

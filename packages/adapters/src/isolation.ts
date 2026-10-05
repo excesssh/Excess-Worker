@@ -4,14 +4,23 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { AdapterError } from "./manifest.js";
+import { isolateWindowsRuntime } from "./windows-isolation.js";
+import type { RuntimeSupervision } from "./native-process.js";
 
 export interface RuntimeIsolation {
-  executable: string; args: string[]; scratch: string; profile: string; cleanup(): Promise<void>;
+  executable: string; args: string[]; scratch: string; profile: string; supervision?:RuntimeSupervision; cleanup(): Promise<void>;
 }
+export interface RuntimeFilePin { path: string; sha256: string }
 /** Only verified native launches use this boundary. Injected test servers are fixtures. */
 export async function isolateRuntime(executable: string, args: readonly string[], options: {
-  readPaths: readonly string[]; maxMemoryBytes: number; timeoutMs: number; port: number; backend: string;
+  readPaths: readonly string[]; modelPaths?: readonly string[]; runtimeRoot?: string; runtimeFiles?: readonly RuntimeFilePin[]; modelFiles?: readonly RuntimeFilePin[];
+  maxMemoryBytes: number; timeoutMs: number; port: number; backend: string;
 }): Promise<RuntimeIsolation> {
+  if(process.platform==="win32"){
+    if(!options.runtimeRoot||!options.runtimeFiles?.length||!options.modelFiles?.length)throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
+    return isolateWindowsRuntime(executable,args,{runtimeRoot:options.runtimeRoot,runtimeFiles:options.runtimeFiles,modelFiles:options.modelFiles,
+      maxMemoryBytes:options.maxMemoryBytes,timeoutMs:options.timeoutMs,backend:options.backend,port:options.port});
+  }
   if (process.platform !== "linux" || process.arch !== "x64") throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
   // This profile cannot safely account for GPU virtual-address reservations or grant driver access.
   if (options.backend !== "cpu") throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
@@ -31,7 +40,9 @@ export async function isolateRuntime(executable: string, args: readonly string[]
   };
   try {
     const reads = [...new Set(await Promise.all(options.readPaths.map(path => realpath(path))))];
+    const models = [...new Set(await Promise.all((options.modelPaths ?? []).map(path => realpath(path))))];
+    if (models.length > 32) throw Error();
     return { executable: helper, args: [String(options.maxMemoryBytes), String(Math.ceil(options.timeoutMs / 1000) + 5), String(options.port), scratch,
-      String(reads.length), ...reads, "--", await realpath(executable), ...args], scratch, profile: "linux-landlock-v1", cleanup };
+      String(reads.length), ...reads, String(models.length), ...models, "--", await realpath(executable), ...args], scratch, profile: "linux-landlock-v1", cleanup };
   } catch { await cleanup(); throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE"); }
 }
