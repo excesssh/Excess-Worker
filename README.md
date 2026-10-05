@@ -6,7 +6,7 @@ Run selected models on your computer and supply inference capacity through [Exce
 
 **Source preview.** No new release has been published. Source builds and CLI diagnostics work; useful CPU/GPU model execution inside the new isolation boundaries has not passed the release gates. Windows production launches and unverified GPU launches fail closed. See [platform status](docs/PLATFORMS.md).
 
-[Installation](docs/INSTALLATION.md) ? [Release verification](docs/VERIFICATION.md) ? [Releases](https://github.com/excesssh/Excess-Worker/releases) ? [MIT licence](LICENSE)
+[Installation](docs/INSTALLATION.md) | [Release verification](docs/VERIFICATION.md) | [Releases](https://github.com/excesssh/Excess-Worker/releases) | [MIT licence](LICENSE)
 
 ## Quick start
 
@@ -32,4 +32,4 @@ The Linux CPU boundary uses Landlock, seccomp and kernel resource limits. The Wi
 
 The standalone npm workspace contains `apps/worker`, `packages/adapters` and `packages/protocol`, with their tests and build tooling. Coordinator services, custody and settlement signing are maintained separately.
 
-[Build and packaging](docs/BUILD.md) ? [Architecture](docs/ARCHITECTURE.md) ? [Contributing](CONTRIBUTING.md) ? [Source history](docs/HISTORY.md)
+[Build and packaging](docs/BUILD.md) | [Architecture](docs/ARCHITECTURE.md) | [Contributing](CONTRIBUTING.md) | [Source history](docs/HISTORY.md)
