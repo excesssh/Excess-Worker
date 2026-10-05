@@ -7,10 +7,12 @@ The source contains CPU and GPU backend selection and packaging paths for Window
 | Linux ext4 | Kernel denials and selected model descriptors pass. | Fixture evidence; packaged clean-host verification pending. |
 | Linux CPU | Actual Qwen3-4B inference and a local coordinator job returned useful output through the isolated adapter. Pairing, accepted receipt, drain and revocation passed. | Development evidence with synthetic local funding; packaged clean-host verification pending. |
 | Linux DrvFS | Exact read-only model descriptors resolve the prior permission failure; the selected file is readable and an unselected sibling is denied. | Verified in the development environment; no model copy required. |
-| Windows AppContainer | Outside loopback is denied; same-container authenticated HTTP/SSE pulls, selected-file denial and timeout/stop cleanup pass native fixtures. | Actual worker/model execution remains unverified. |
+| Windows AppContainer | Outside loopback is denied; same-container authenticated HTTP/SSE pulls, selected-file denial and timeout/stop cleanup pass native fixtures. | Actual Qwen3-4B CPU adapter probe and streaming inference pass; complete controller and packaged journey remain unverified. |
 | GPU | No GPU execution was verified. | Unverified; no GPU support claim. |
 | Production isolation | Required gate is incomplete. | Not ready for production or multi-tenant untrusted work. |
 
 The current code selects CUDA for --gpu on Windows and Vulkan for --gpu on Linux. These are implementation choices, not test evidence. A hardware inventory, successful driver discovery, model-fit estimate, or health probe is not proof that a real GPU executed inference.
 
 The source doctor quick start works as a local inventory command; it is not a model execution test. Before claiming platform support, test the exact packaged build on a clean host, record filesystem and isolation settings, run a real model through the worker, and verify results and shutdown behavior. Repeat for every claimed backend. Keep fixture, CPU, GPU, and production evidence separate.
+
+Windows CPU evidence for the pinned helper is recorded in [the execution report](verification/windows-cpu.json). A separate rebuild reproduced the helper bytes. Native fixtures also verify setup cancellation, bounded control-queue saturation, live memory sampling, stop/timeout reaping and restored ACLs. No home or application-data ancestor grants are used. These results do not certify the worker controller or a downloadable release.

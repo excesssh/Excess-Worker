@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-05",
+  "scope": "Maintainer Windows CPU adapter execution; no packaged coordinator journey, controller confinement, GPU or release certification",
+  "model": {
+    "id": "qwen3-4b",
+    "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "sizeBytes": 2497280256,
+    "copied": false
+  },
+  "nativeBuild": {
+    "sourceSha256": "07d0624f5a204a5f415d04a009611f652b1bffdcbb1f397eb23135d76f8a9e0b",
+    "helperSha256": "e26f573eb97c7f32c80316318c28ff3590533bd3ea49c9a4e08068d87e1cb2e3",
+    "toolchainInventorySha256": "051d04fab3d3756d47d766b01e009fab3000445134d4db909bc0a034e71ac3bd",
+    "deterministic": true,
+    "debugSymbols": false,
+    "privacyScan": "passed"
+  },
+  "aclPolicy": {
+    "runtimeDirectory": "read and execute on the exact user-owned runtime directory; non-inheriting",
+    "runtimeFiles": "exact SHA-256-pinned files; read and execute",
+    "modelFiles": "exact SHA-256-pinned files; read only",
+    "scratch": "modify on the unique empty session directory only",
+    "ancestorGrants": false,
+    "restore": "all temporary ACEs restored before cleanup acknowledgement"
+  },
+  "productionAdapterRun": {
+    "actualRuntimePidObserved": true,
+    "authenticatedProbeCompleted": true,
+    "streamingInferenceCompleted": true,
+    "streamChunks": 1,
+    "streamTokenIds": 2,
+    "streamBytes": 2,
+    "generatedTokens": 2,
+    "finishReason": "stop",
+    "reportedResidentMbAfterStreaming": 3601,
+    "gracefulStop": true,
+    "runtimeReapedByGuardian": true,
+    "cleanupAcknowledged": true,
+    "scratchEntriesRestored": true,
+    "runBoundToCurrentNativeBuild": true
+  },
+  "focusedKernelFixture": {
+    "result": "passed",
+    "durationMs": 10413,
+    "containedClientToOutsideTcp": "denied; bounded connect status 42",
+    "outsideClientToContainedListener": "denied; contained bind status 10060; parent observed ECONNREFUSED",
+    "sameContainerLoopback": "allowed with two suspended-then-job-assigned processes; process limit 2",
+    "stdioPullRelay": "passed; response and SSE data arrived only after next-frame requests",
+    "liveWorkingSetTelemetry": "reported for actual runtime PID",
+    "timeoutCleanup": "passed",
+    "gracefulStopCleanup": "passed",
+    "setupStopBeforeLaunch": "passed and reported clean completion",
+    "controlQueueSaturation": "bounded fail-closed stop; no child launched",
+    "aclRestoration": "pre-run and post-run target ACL snapshots matched"
+  },
+  "limitations": [
+    "The production adapter completed a short CPU generation and validated its token and SSE framing; this is not a throughput or long-duration reliability result.",
+    "CUDA and Vulkan isolation remain unverified and fail closed.",
+    "Loopback tests demonstrate the measured Windows AppContainer policy for these probes; they are not a complete network-driver audit."
+  ]
+}

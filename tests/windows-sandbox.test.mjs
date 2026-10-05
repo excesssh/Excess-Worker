@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, rmdirSync, openSync, ftruncateSync, closeSync } from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
@@ -21,6 +21,7 @@ if (process.platform === 'win32') assert.ok(modelParent, 'a per-user local appli
 const modelRoot = path.join(modelParent, `excess-sandbox-probe-${runId}`);
 const selectedModel = path.join(modelRoot, 'selected.bin');
 const unselectedModel = path.join(modelRoot, 'unselected.bin');
+const setupModel = path.join(modelRoot, 'setup-cancel.bin');
 const profileRoot = path.dirname(modelParent);
 
 function ancestors(target) {
@@ -71,7 +72,7 @@ function protectScratchRoot(directory) {
   assert.equal(result.status, 0, 'private scratch fixture ACL should be set');
 }
 
-function launchSandbox(config) {
+function launchSandbox(config, diagnostics = false) {
   const child = spawn(helper, [], {
     cwd: root,
     windowsHide: true,
@@ -81,6 +82,7 @@ function launchSandbox(config) {
       EXCESS_SANDBOX_SENTINEL: 'private-probe-value',
       LLAMA_API_KEY: 'probe-runtime-key-123456',
       OMP_NUM_THREADS: '4',
+      EXCESS_SANDBOX_DIAGNOSTIC: diagnostics ? '1' : undefined,
     },
   });
   let stdout = '';
@@ -352,13 +354,23 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     assert.equal(Buffer.from(data.data, 'base64').toString('utf8'), 'data: {"ok":true}\n\n');
     relay.send({ type: 'next', id: 31 });
     await waitForRpcEvent(relay, 'end', 31);
+    const relayStarted = parseEvents(relay.output()).find((event) => event.type === 'started');
+    assert.ok(Number.isInteger(relayStarted?.pid) && relayStarted.pid > 0, 'relay run should expose the runtime PID');
+    await relay.waitFor((output) => {
+      try { return parseEvents(output).some((event) => event.type === 'status' && event.termination === undefined &&
+        event.pid === relayStarted.pid && Number.isSafeInteger(event.peakWorkingSetBytes) && event.peakWorkingSetBytes > 0); }
+      catch { return false; }
+    }, 5000);
     relay.stop();
     const relayResult = await relay.done;
     assert.equal(relayResult.error, undefined, 'relay stop should finish normally');
     const relayEvents = parseEvents(relayResult.stdout);
-    assert.equal(relayEvents.find((event) => event.type === 'status')?.termination, 'stop');
+    assert.equal(relayEvents.find((event) => event.type === 'status' && event.termination === 'stop')?.termination, 'stop');
     assert.ok(relayEvents.some((event) => event.type === 'cleanup' && event.ok === true));
+    assert.ok(relayEvents.some((event) => event.type === 'status' && event.termination === undefined &&
+      event.pid === relayStarted.pid && Number.isSafeInteger(event.peakWorkingSetBytes) && event.peakWorkingSetBytes > 0));
     console.log('windows-contained-http-pull-relay=passed; auth=allowlisted; process-limit=2');
+    console.log('windows-live-working-set=reported; runtime-pid-matched=true');
     assert.deepEqual(readdirSync(scratch).sort(), scratchEntriesBefore, 'relay scratch should be removed');
 
     const boundedConfig = {
@@ -388,6 +400,57 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     assert.equal(stopStatus?.exitCode, 125);
     assert.ok(stopEvents.some((event) => event.type === 'cleanup' && event.ok === true));
     console.log('windows-stop-command-cleanup=ok');
+
+    const setupFd = openSync(setupModel, 'w');
+    const setupBytes = 512 * 1024 * 1024;
+    ftruncateSync(setupFd, setupBytes);
+    closeSync(setupFd);
+    const zeroBlock = Buffer.alloc(1024 * 1024);
+    const setupHash = createHash('sha256');
+    for (let offset = 0; offset < setupBytes; offset += zeroBlock.length) setupHash.update(zeroBlock);
+    const setupConfig = { ...config, arguments: ['--probe-idle'], modelFiles: [{ path: setupModel, sha256: setupHash.digest('hex') }] };
+    const setupRun = launchSandbox(setupConfig, true);
+    await setupRun.waitFor((output) => output.includes('"phase":"model-hash-start"'));
+    setupRun.stop();
+    const setupResult = await setupRun.done;
+    assert.equal(setupResult.error, undefined, 'setup cancellation should exit without killing the helper');
+    const setupEvents = parseEvents(setupResult.stdout);
+    assert.ok(setupEvents.some((event) => event.type === 'error' && event.code === 'setup-cancelled'),
+      `setup cancellation returned safe codes ${setupEvents.filter((event) => event.type === 'error').map((event) => event.code).join(',')}`);
+    assert.ok(setupEvents.some((event) => event.type === 'cleanup' && event.ok === true),
+      'setup cancellation before profile creation should report clean no-resource completion');
+    assert.equal(setupEvents.some((event) => event.type === 'started'), false,
+      'stop received during setup must prevent runtime launch');
+    assert.deepEqual(readdirSync(scratch).sort(), scratchEntriesBefore,
+      'setup cancellation must leave scratch unchanged');
+    console.log('windows-setup-stop-cleanup=ok; child-launch=false');
+
+    const queuePortReservation = net.createServer();
+    await new Promise((resolve, reject) => {
+      queuePortReservation.once('error', reject);
+      queuePortReservation.listen(0, '127.0.0.1', resolve);
+    });
+    const queuePort = queuePortReservation.address().port;
+    await new Promise((resolve) => queuePortReservation.close(resolve));
+    const queueConfig = {
+      ...setupConfig,
+      relayFile: { path: helper, sha256: config.runtimeFiles[0].sha256 },
+      runtimePort: queuePort,
+      processLimit: 2,
+      timeoutMilliseconds: 10000,
+    };
+    const queueRun = launchSandbox(queueConfig, true);
+    await queueRun.waitFor((output) => output.includes('"phase":"model-hash-start"'));
+    for (let index = 0; index < 20; index++) queueRun.send({ type: 'next', id: 1 });
+    await queueRun.waitFor((output) => output.includes('"type":"cleanup"'));
+    const queueResult = await queueRun.done;
+    assert.equal(queueResult.error, undefined, 'control queue saturation should stop without killing the helper');
+    const queueEvents = parseEvents(queueResult.stdout);
+    assert.ok(queueEvents.some((event) => event.type === 'cleanup' && event.ok === true));
+    assert.equal(queueEvents.some((event) => event.type === 'started'), false,
+      'saturated control queue during setup must prevent child launch');
+    console.log('windows-control-queue-saturation=bounded; child-launch=false');
+
     const aclAfter = getAclSnapshot(aclTargets);
     assert.equal(aclAfter.every((value, index) => value === aclBefore[index]), true,
       'all temporary ACL grants should be restored');
@@ -398,6 +461,7 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     await unlinkFixture(unselectedFile);
     await unlinkFixture(selectedModel);
     await unlinkFixture(unselectedModel);
+    await unlinkFixture(setupModel);
     await rmdirFixture(modelRoot);
     await unlinkFixture(helper);
     await unlinkFixture(sourceCopy);

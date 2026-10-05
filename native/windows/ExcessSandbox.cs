@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -20,6 +21,19 @@ internal static class ExcessSandbox
     private static string currentStage = "config";
     private static string stopReasonCode = "none";
     private static readonly ManualResetEvent stopEvent = new ManualResetEvent(false);
+    private static readonly BlockingCollection<string> controlLines = new BlockingCollection<string>(new ConcurrentQueue<string>(), 2);
+    private static readonly ManualResetEvent configReady = new ManualResetEvent(false);
+    private static readonly ManualResetEvent configModeReady = new ManualResetEvent(false);
+    private static BlockingCollection<string> statusOutput;
+    private static readonly ManualResetEvent statusOutputDone = new ManualResetEvent(false);
+    private static volatile bool statusOutputFailed;
+    private static volatile bool cleanupUnsafe;
+    private static Stopwatch setupClock;
+    private static bool relayControlMode;
+    private static string configLine;
+    private static bool configReadFailed;
+    private const int MaximumSetupMilliseconds = 180000;
+    private const uint ReapTimeoutMilliseconds = 5000;
     private const uint CreateSuspended = 0x00000004;
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const uint CreateUnicodeEnvironment = 0x00000400;
@@ -60,17 +74,36 @@ internal static class ExcessSandbox
         if (args.Length > 0 && args[0] == "--relay")
             return RunRelay(args);
 
+        StartStatusOutput();
+        int result;
+        try { result = RunSandbox(args); }
+        finally { CompleteStatusOutput(); }
+        return result;
+    }
+
+    private static int RunSandbox(string[] args)
+    {
         var pinnedFiles = new List<FileStream>();
+        Mutex aclTransaction = null;
+        bool aclTransactionHeld = false;
         try
         {
-            string input;
-            if (!ReadBoundedLine(Console.In, 65536, out input))
+            StartControlInput();
+            WriteDiagnosticPhase("config-read-start");
+            if (!configReady.WaitOne(30000) || configReadFailed || configLine == null)
                 return Fail("invalid-config", 2);
 
             var serializer = new JavaScriptSerializer { MaxJsonLength = 65536 };
-            var config = serializer.Deserialize<Dictionary<string, object>>(input);
+            var config = serializer.Deserialize<Dictionary<string, object>>(configLine);
             if (config == null)
+            {
+                configModeReady.Set();
                 return Fail("invalid-config", 2);
+            }
+            setupClock = Stopwatch.StartNew();
+            relayControlMode = config.ContainsKey("relayFile");
+            configModeReady.Set();
+            WriteDiagnosticPhase("config-read-done");
 
             currentStage = "config-executable";
             string executable = RequiredString(config, "executable");
@@ -117,8 +150,10 @@ internal static class ExcessSandbox
             RejectReparsePath(executable);
 
             bool executablePinned = false;
+            WriteDiagnosticPhase("runtime-hash-start");
             foreach (RuntimeFile runtimeFile in runtimeFiles)
             {
+                CheckSetup();
                 runtimeFile.Path = Path.GetFullPath(runtimeFile.Path);
                 if (!File.Exists(runtimeFile.Path) || !IsWithin(runtimeRoot, runtimeFile.Path))
                     return Fail("invalid-runtime-file", 2);
@@ -131,10 +166,12 @@ internal static class ExcessSandbox
                 if (String.Equals(runtimeFile.Path, executable, StringComparison.OrdinalIgnoreCase)) executablePinned = true;
             }
             if (!executablePinned) return Fail("executable-not-pinned", 2);
+            WriteDiagnosticPhase("runtime-hash-done");
 
             bool relayPinned = false;
             if (relayFile != null)
             {
+                CheckSetup();
                 relayFile.Path = Path.GetFullPath(relayFile.Path);
                 if (!File.Exists(relayFile.Path)) return Fail("relay-file-missing", 2);
                 RejectPinnedFilePath(relayFile.Path);
@@ -149,8 +186,10 @@ internal static class ExcessSandbox
                 relayPinned = true;
             }
 
+            WriteDiagnosticPhase("model-hash-start");
             foreach (RuntimeFile model in modelFiles)
             {
+                CheckSetup();
                 model.Path = Path.GetFullPath(model.Path);
                 if (!File.Exists(model.Path))
                     return Fail("model-file-missing", 2);
@@ -160,16 +199,34 @@ internal static class ExcessSandbox
                 pinnedFiles.Add(pinnedModel);
                 if (!HashMatches(pinnedModel, model.Sha256)) return Fail("model-hash-mismatch", 2);
             }
+            WriteDiagnosticPhase("model-hash-done");
             RejectPinnedDirectoryPath(runtimeRoot);
             ValidatePrivateScratchRoot(scratchRoot);
+            CheckSetup();
+
+            currentStage = "acl-transaction-lock";
+            aclTransaction = new Mutex(false, "Local\\Excess.Worker.Runtime.AclLease.v1");
+            var lockWait = Stopwatch.StartNew();
+            while (!aclTransactionHeld && lockWait.ElapsedMilliseconds < 30000)
+            {
+                CheckSetup();
+                try { aclTransactionHeld = aclTransaction.WaitOne(250); }
+                catch (AbandonedMutexException) { aclTransactionHeld = true; }
+            }
+            if (!aclTransactionHeld) return Fail("acl-transaction-busy", 1);
+            CheckSetup();
+            WriteDiagnosticPhase("acl-transaction-acquired");
 
             currentStage = "profile";
+            WriteDiagnosticPhase("profile-create-start");
             string appContainerName = "Excess.Worker.Runtime." + Guid.NewGuid().ToString("N");
             IntPtr appContainerSid = CreateAppContainer(appContainerName);
+            WriteDiagnosticPhase("profile-create-done");
             string scratch = Path.Combine(scratchRoot, "session-" + Guid.NewGuid().ToString("N"));
             SecurityIdentifier packageSid = null;
             AclLease aclLease = null;
             int childResult = 1;
+            string setupFailure = null;
             bool aclRestored = false;
             bool profileDeleted = false;
             bool scratchDeleted = false;
@@ -177,31 +234,41 @@ internal static class ExcessSandbox
             {
                 packageSid = new SecurityIdentifier(appContainerSid);
                 aclLease = new AclLease(packageSid);
+                CheckSetup();
                 Directory.CreateDirectory(scratch);
                 RejectReparsePath(scratch);
                 currentStage = "runtime-acl";
-                GrantPinnedTraversal(aclLease, packageSid, runtimeRoot);
+                CheckSetup();
+                RequireCurrentUserOwnedDirectory(runtimeRoot);
+                aclLease.GrantDirectory(packageSid, runtimeRoot, FileSystemRights.ReadAndExecute, false);
                 foreach (RuntimeFile runtimeFile in runtimeFiles)
                 {
+                    CheckSetup();
                     aclLease.GrantFile(packageSid, runtimeFile.Path, FileSystemRights.ReadAndExecute);
                 }
+                WriteDiagnosticPhase("runtime-acl-done");
                 currentStage = "model-acl";
                 foreach (RuntimeFile model in modelFiles)
                 {
+                    CheckSetup();
                     aclLease.GrantFile(packageSid, model.Path, FileSystemRights.Read);
-                    GrantPinnedTraversal(aclLease, packageSid, Path.GetDirectoryName(model.Path));
                 }
+                WriteDiagnosticPhase("model-acl-done");
                 if (relayPinned)
                 {
                     currentStage = "relay-acl";
-                    GrantPinnedTraversal(aclLease, packageSid, Path.GetDirectoryName(relayFile.Path));
+                    CheckSetup();
                     aclLease.GrantFile(packageSid, relayFile.Path, FileSystemRights.ReadAndExecute);
                 }
+                WriteDiagnosticPhase("relay-acl-done");
                 currentStage = "scratch-acl";
-                GrantPinnedTraversal(aclLease, packageSid, Path.GetDirectoryName(scratch));
+                CheckSetup();
                 aclLease.GrantDirectory(packageSid, scratch, FileSystemRights.Modify, true);
+                WriteDiagnosticPhase("scratch-acl-done");
 
                 currentStage = "launch";
+                CheckSetup();
+                WriteDiagnosticPhase("child-launch-start");
                 if (relayPinned)
                 {
                     if (processLimit != 2) return Fail("invalid-relay-process-limit", 2);
@@ -210,29 +277,59 @@ internal static class ExcessSandbox
                 }
                 else
                 {
-                    StartControlReader();
                     childResult = RunInContainer(packageSid, appContainerSid, executable, runtimeRoot, scratch,
                         childArguments, memoryLimitBytes, processLimit, timeoutMilliseconds, stopEvent);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                setupFailure = "setup-cancelled";
+                stopReasonCode = "setup-cancelled";
+            }
+            catch (TimeoutException)
+            {
+                setupFailure = "setup-timeout";
+                stopReasonCode = "setup-timeout";
             }
             finally
             {
                 currentStage = "cleanup";
                 ReleasePinnedFiles(pinnedFiles);
-                aclRestored = aclLease == null || aclLease.Restore();
-                scratchDeleted = DeletePrivateScratch(scratchRoot, scratch);
-                profileDeleted = DeleteAppContainerProfile(appContainerName);
+                if (cleanupUnsafe)
+                {
+                    aclRestored = false;
+                    scratchDeleted = false;
+                    profileDeleted = false;
+                }
+                else
+                {
+                    aclRestored = aclLease == null || aclLease.Restore();
+                    scratchDeleted = DeletePrivateScratch(scratchRoot, scratch);
+                    profileDeleted = DeleteAppContainerProfile(appContainerName);
+                }
                 FreeSid(appContainerSid);
             }
             if (!aclRestored) { WriteCleanup(false, "acl-cleanup-failed"); return Fail("acl-cleanup-failed", 1); }
             if (!scratchDeleted) { WriteCleanup(false, "scratch-cleanup-failed"); return Fail("scratch-cleanup-failed", 1); }
             if (!profileDeleted) { WriteCleanup(false, "profile-cleanup-failed"); return Fail("profile-cleanup-failed", 1); }
             WriteCleanup(true, null);
+            if (setupFailure != null) return Fail(setupFailure, 1);
             return childResult;
         }
         catch (Win32Exception ex)
         {
             return Fail("win32-" + currentStage, ex.NativeErrorCode);
+        }
+        catch (OperationCanceledException)
+        {
+            WriteCleanup(true, null);
+            return Fail(stopEvent.WaitOne(0) ? "setup-cancelled" : "setup-timeout", 1);
+        }
+        catch (TimeoutException)
+        {
+            stopReasonCode = "setup-timeout";
+            WriteCleanup(true, null);
+            return Fail("setup-timeout", 1);
         }
         catch (Exception ex)
         {
@@ -241,6 +338,8 @@ internal static class ExcessSandbox
         }
         finally
         {
+            if (aclTransactionHeld) { try { aclTransaction.ReleaseMutex(); } catch { } }
+            if (aclTransaction != null) aclTransaction.Dispose();
             ReleasePinnedFiles(pinnedFiles);
         }
     }
@@ -262,7 +361,8 @@ internal static class ExcessSandbox
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
         if (job == IntPtr.Zero) throw LastError();
         IntPtr runtimeProcess = IntPtr.Zero, runtimeThread = IntPtr.Zero, relayProcess = IntPtr.Zero, relayThread = IntPtr.Zero;
-        IntPtr runtimeIn = IntPtr.Zero, runtimeOut = IntPtr.Zero, relayIn = IntPtr.Zero, parentRelayIn = IntPtr.Zero;
+        IntPtr runtimeIn = IntPtr.Zero, runtimeOut = IntPtr.Zero, runtimeErrRead = IntPtr.Zero, runtimeErrWrite = IntPtr.Zero;
+        IntPtr relayIn = IntPtr.Zero, parentRelayIn = IntPtr.Zero;
         IntPtr parentRelayOut = IntPtr.Zero, relayOut = IntPtr.Zero, relayErr = IntPtr.Zero;
         bool runtimeAssigned = false, relayAssigned = false;
         try
@@ -286,15 +386,17 @@ internal static class ExcessSandbox
             runtimeOut = CreateFile("NUL", GenericWrite, FileShareRead | FileShareWrite, ref security, OpenExisting, FileAttributeNormal, IntPtr.Zero);
             relayErr = CreateFile("NUL", GenericWrite, FileShareRead | FileShareWrite, ref security, OpenExisting, FileAttributeNormal, IntPtr.Zero);
             if (IsInvalidHandle(runtimeIn) || IsInvalidHandle(runtimeOut) || IsInvalidHandle(relayErr)) throw LastError();
+            if (!CreatePipe(out runtimeErrRead, out runtimeErrWrite, ref security, 0) ||
+                !SetHandleInformation(runtimeErrRead, 1, 0)) throw LastError();
             if (!CreatePipe(out relayIn, out parentRelayIn, ref security, 0) ||
                 !CreatePipe(out parentRelayOut, out relayOut, ref security, 0)) throw LastError();
             if (!SetHandleInformation(parentRelayIn, 1, 0) || !SetHandleInformation(parentRelayOut, 1, 0)) throw LastError();
 
             string environment = BuildChildEnvironment(runtimeRoot, scratch, true);
             currentStage = "runtime-create-suspended";
-            var runtimeHandles = new[] { runtimeIn, runtimeOut };
+            var runtimeHandles = new[] { runtimeIn, runtimeOut, runtimeErrWrite };
             ProcessInformation runtimeInfo = CreateAppContainerChild(executable, arguments, packageSidPtr, environment,
-                scratch, runtimeHandles, runtimeIn, runtimeOut, runtimeOut);
+                scratch, runtimeHandles, runtimeIn, runtimeOut, runtimeErrWrite);
             runtimeProcess = runtimeInfo.hProcess; runtimeThread = runtimeInfo.hThread;
 
             currentStage = "relay-create-suspended";
@@ -315,6 +417,7 @@ internal static class ExcessSandbox
             CloseHandle(relayOut); relayOut = IntPtr.Zero;
             CloseHandle(runtimeIn); runtimeIn = IntPtr.Zero;
             CloseHandle(runtimeOut); runtimeOut = IntPtr.Zero;
+            CloseHandle(runtimeErrWrite); runtimeErrWrite = IntPtr.Zero;
             CloseHandle(relayErr); relayErr = IntPtr.Zero;
 
             currentStage = "runtime-resume";
@@ -323,9 +426,11 @@ internal static class ExcessSandbox
             if (ResumeThread(relayThread) == 0xffffffff) throw LastError();
 
             WriteStarted(runtimeInfo.dwProcessId);
+            var runtimeDiagnostics = new DiagnosticCapture(65536);
+            var runtimeErrorReader = new Thread(() => DrainBoundedDiagnostic(runtimeErrRead, runtimeDiagnostics));
+            runtimeErrorReader.IsBackground = true; runtimeErrorReader.Name = "sandbox-runtime-diagnostic"; runtimeErrorReader.Start();
             var relayWriter = new StreamWriter(new FileStream(new SafeFileHandle(parentRelayIn, false), FileAccess.Write, 4096), new UTF8Encoding(false));
             var relayReader = new StreamReader(new FileStream(new SafeFileHandle(parentRelayOut, false), FileAccess.Read, 4096), new UTF8Encoding(false));
-            var outputLock = new object();
             int activeRequestId = 0;
             var protocolLock = new object();
             var outputThread = new Thread(() =>
@@ -344,7 +449,7 @@ internal static class ExcessSandbox
                             if (activeRequestId == 0 || activeRequestId != frameId) { stopReasonCode = "invalid-relay-id"; WriteBridgeError(activeRequestId, "INVALID_RELAY_ID"); requestedStop.Set(); break; }
                             if (frameType == "end" || frameType == "error") activeRequestId = 0;
                         }
-                        lock (outputLock) Console.WriteLine(frame);
+                        if (!TryEmitOutput(frame)) break;
                     }
                 }
                 catch { stopReasonCode = "relay-output-failed"; WriteBridgeError(activeRequestId, "RELAY_OUTPUT_FAILED"); requestedStop.Set(); }
@@ -356,14 +461,19 @@ internal static class ExcessSandbox
                 try
                 {
                     string frame;
-                    while (ReadBoundedLine(Console.In, 32 * 1024 * 1024, out frame))
+                    while (!requestedStop.WaitOne(0))
                     {
+                        if (!TryReadControlLine(out frame, 250))
+                        {
+                            if (controlLines.IsCompleted || stopEvent.WaitOne(0)) break;
+                            continue;
+                        }
                         if (frame == "{\"type\":\"stop\"}")
                         {
                             stopReasonCode = "explicit-stop";
-                            relayWriter.WriteLine(frame); relayWriter.Flush(); requestedStop.Set(); return;
+                            requestedStop.Set(); return;
                         }
-                        if (!ValidateParentFrame(frame)) { stopReasonCode = "invalid-parent-frame"; WriteBridgeError(1, "INVALID_REQUEST"); relayWriter.WriteLine("{\"type\":\"stop\"}"); relayWriter.Flush(); requestedStop.Set(); return; }
+                        if (!ValidateParentFrame(frame)) { stopReasonCode = "invalid-parent-frame"; requestedStop.Set(); WriteBridgeError(1, "INVALID_REQUEST"); return; }
                         var parsed = new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024 }.Deserialize<Dictionary<string, object>>(frame);
                         string frameType = parsed["type"] as string;
                         int frameId = Convert.ToInt32(parsed["id"], CultureInfo.InvariantCulture);
@@ -371,23 +481,33 @@ internal static class ExcessSandbox
                         {
                             if (frameType == "request")
                             {
-                                if (activeRequestId != 0) { stopReasonCode = "request-busy"; WriteBridgeError(frameId, "REQUEST_BUSY"); relayWriter.WriteLine("{\"type\":\"stop\"}"); relayWriter.Flush(); requestedStop.Set(); return; }
+                                if (activeRequestId != 0) { stopReasonCode = "request-busy"; requestedStop.Set(); WriteBridgeError(frameId, "REQUEST_BUSY"); return; }
                                 activeRequestId = frameId;
                             }
                             else if (activeRequestId != frameId)
-                            { stopReasonCode = "invalid-control"; WriteBridgeError(frameId, "INVALID_CONTROL"); relayWriter.WriteLine("{\"type\":\"stop\"}"); relayWriter.Flush(); requestedStop.Set(); return; }
+                            { stopReasonCode = "invalid-control"; requestedStop.Set(); WriteBridgeError(frameId, "INVALID_CONTROL"); return; }
                         }
                         relayWriter.WriteLine(frame); relayWriter.Flush();
                     }
                 }
                 catch { stopReasonCode = "input-error"; WriteBridgeError(Math.Max(1, activeRequestId), "CONTROL_FAILED"); }
-                stopReasonCode = "input-eof";
-                try { relayWriter.WriteLine("{\"type\":\"stop\"}"); relayWriter.Flush(); } catch { }
+                if (stopReasonCode == "none") stopReasonCode = "input-eof";
                 requestedStop.Set();
             });
             inputThread.IsBackground = true; inputThread.Name = "sandbox-relay-input"; inputThread.Start();
 
-            uint wait = WaitForMultipleObjects(3, new[] { runtimeProcess, relayProcess, requestedStop.SafeWaitHandle.DangerousGetHandle() }, false, timeoutMilliseconds);
+            var supervisionClock = Stopwatch.StartNew();
+            uint wait;
+            while (true)
+            {
+                long elapsedMilliseconds = supervisionClock.ElapsedMilliseconds;
+                if (elapsedMilliseconds >= timeoutMilliseconds) { wait = WaitTimeout; break; }
+                uint waitSlice = (uint)Math.Min(1000L, (long)timeoutMilliseconds - elapsedMilliseconds);
+                wait = WaitForMultipleObjects(3, new[] { runtimeProcess, relayProcess, requestedStop.SafeWaitHandle.DangerousGetHandle() }, false, waitSlice);
+                if (wait != WaitTimeout) break;
+                if (supervisionClock.ElapsedMilliseconds >= timeoutMilliseconds) { wait = WaitTimeout; break; }
+                WriteWorkingSetStatus(runtimeInfo.dwProcessId, QueryPeakWorkingSet(runtimeProcess));
+            }
             string termination = "exit";
             uint exitCode = 0;
             if (wait == WaitTimeout) { termination = "timeout"; exitCode = 124; }
@@ -398,26 +518,29 @@ internal static class ExcessSandbox
             }
             else if (wait == WaitObject0 + 1) { termination = "relay-exit"; exitCode = 126; }
             else throw LastError();
-            if (WaitForSingleObject(job, 0) != WaitObject0)
-            {
-                if (!TerminateJobObject(job, exitCode)) throw LastError();
-                if (WaitForSingleObject(job, Infinite) != WaitObject0) throw LastError();
-            }
+            if (!TerminateJobAndWait(job, exitCode)) return Fail("job-reap-timeout", 1);
             outputThread.Join(2000);
+            runtimeErrorReader.Join(2000);
             ulong peakWorkingSet = QueryPeakWorkingSet(runtimeProcess);
             ulong peakJobCommit = QueryPeakJobCommit(job);
             if (termination == "timeout") exitCode = 124;
             if (termination == "stop") exitCode = 125;
-            WriteRunStatus(runtimeInfo.dwProcessId, exitCode, termination, peakWorkingSet, peakJobCommit);
+            WriteRunStatus(runtimeInfo.dwProcessId, exitCode, termination, peakWorkingSet, peakJobCommit,
+                ClassifyRuntimeDiagnostic(runtimeDiagnostics.ToString(), exitCode));
             return exitCode > 255 ? 1 : (int)exitCode;
         }
         finally
         {
-            if (runtimeProcess != IntPtr.Zero && !runtimeAssigned) { TerminateProcess(runtimeProcess, 126); WaitForSingleObject(runtimeProcess, Infinite); }
-            if (relayProcess != IntPtr.Zero && !relayAssigned) { TerminateProcess(relayProcess, 126); WaitForSingleObject(relayProcess, Infinite); }
-            if (job != IntPtr.Zero) CloseHandle(job);
+            if (runtimeProcess != IntPtr.Zero && !runtimeAssigned) TerminateAndWaitProcess(runtimeProcess, 126);
+            if (relayProcess != IntPtr.Zero && !relayAssigned) TerminateAndWaitProcess(relayProcess, 126);
+            if (job != IntPtr.Zero)
+            {
+                if (!TerminateJobAndWait(job, 126)) cleanupUnsafe = true;
+                CloseHandle(job);
+            }
             CloseIfValid(runtimeProcess); CloseIfValid(runtimeThread); CloseIfValid(relayProcess); CloseIfValid(relayThread);
-            CloseIfValid(runtimeIn); CloseIfValid(runtimeOut); CloseIfValid(relayIn); CloseIfValid(parentRelayIn);
+            CloseIfValid(runtimeIn); CloseIfValid(runtimeOut); CloseIfValid(runtimeErrRead); CloseIfValid(runtimeErrWrite);
+            CloseIfValid(relayIn); CloseIfValid(parentRelayIn);
             CloseIfValid(parentRelayOut); CloseIfValid(relayOut); CloseIfValid(relayErr);
         }
     }
@@ -641,7 +764,7 @@ internal static class ExcessSandbox
     private static void WriteBridgeError(int id, string code)
     {
         var frame = new Dictionary<string, object>(); frame["type"] = "error"; frame["id"] = Math.Max(1, id); frame["error"] = SafeCode(code).ToUpperInvariant();
-        Console.WriteLine(new JavaScriptSerializer().Serialize(frame)); Console.Out.Flush();
+        TryEmitOutput(new JavaScriptSerializer().Serialize(frame));
     }
 
     private static int RunInContainer(SecurityIdentifier packageSid, IntPtr packageSidPtr,
@@ -778,24 +901,18 @@ internal static class ExcessSandbox
             string termination = "exit";
             if (wait == WaitTimeout)
             {
-                if (!TerminateJobObject(job, 124)) throw LastError();
-                if (WaitForSingleObject(job, Infinite) != WaitObject0) throw LastError();
+                if (!TerminateJobAndWait(job, 124)) return Fail("job-reap-timeout", 1);
                 termination = "timeout";
             }
             else if (wait == WaitObject0 + 1)
             {
-                if (!TerminateJobObject(job, 125)) throw LastError();
-                if (WaitForSingleObject(job, Infinite) != WaitObject0) throw LastError();
+                if (!TerminateJobAndWait(job, 125)) return Fail("job-reap-timeout", 1);
                 termination = "stop";
             }
             else if (wait != WaitObject0) throw LastError();
             uint exitCode = 0;
             if (!GetExitCodeProcess(process, out exitCode)) throw LastError();
-            if (WaitForSingleObject(job, 0) != WaitObject0)
-            {
-                if (!TerminateJobObject(job, exitCode)) throw LastError();
-                if (WaitForSingleObject(job, Infinite) != WaitObject0) throw LastError();
-            }
+            if (!TerminateJobAndWait(job, exitCode)) return Fail("job-reap-timeout", 1);
             ulong peakWorkingSetBytes = QueryPeakWorkingSet(process);
             ulong peakJobCommitBytes = QueryPeakJobCommit(job);
             if (termination == "timeout") exitCode = 124;
@@ -805,12 +922,12 @@ internal static class ExcessSandbox
         }
         finally
         {
-            if (process != IntPtr.Zero && !processAssigned)
+            if (process != IntPtr.Zero && !processAssigned) TerminateAndWaitProcess(process, 126);
+            if (job != IntPtr.Zero)
             {
-                TerminateProcess(process, 126);
-                WaitForSingleObject(process, Infinite);
+                if (!TerminateJobAndWait(job, 126)) cleanupUnsafe = true;
+                CloseHandle(job); // KILL_ON_JOB_CLOSE is the final containment fallback.
             }
-            if (job != IntPtr.Zero) CloseHandle(job); // KILL_ON_JOB_CLOSE owns child cleanup.
             if (process != IntPtr.Zero) CloseHandle(process);
             if (thread != IntPtr.Zero) CloseHandle(thread);
             if (nullIn != IntPtr.Zero && nullIn != new IntPtr(-1)) CloseHandle(nullIn);
@@ -851,30 +968,6 @@ internal static class ExcessSandbox
         catch { return false; }
     }
 
-    private static void GrantTraversal(AclLease lease, SecurityIdentifier sid, string directory)
-    {
-        DirectoryInfo current = new DirectoryInfo(Path.GetFullPath(directory));
-        while (current != null && current.Parent != null)
-        {
-            RejectProtectedPath(current.FullName);
-            lease.GrantDirectory(sid, current.FullName, FileSystemRights.Traverse, false);
-            current = current.Parent;
-        }
-    }
-
-    private static void GrantPinnedTraversal(AclLease lease, SecurityIdentifier sid, string directory)
-    {
-        string full = Path.GetFullPath(directory);
-        RejectPinnedDirectoryPath(full);
-        DirectoryInfo target = new DirectoryInfo(full);
-        SecurityIdentifier owner = (SecurityIdentifier)target.GetAccessControl(AccessControlSections.Owner).GetOwner(typeof(SecurityIdentifier));
-        SecurityIdentifier user = WindowsIdentity.GetCurrent().User;
-        if (owner == null || user == null || !owner.Equals(user)) throw new ArgumentException("unowned-pinned-directory");
-        // Only the app-owned directory containing selected files (or the exact private scratch root) is changed.
-        // No ancestor-wide ACL grants are needed; traversal uses the operating system's path-walk privileges.
-        lease.GrantDirectory(sid, full, FileSystemRights.Traverse, false);
-    }
-
     private static FileStream OpenPinnedFile(string path)
     {
         return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -885,7 +978,15 @@ internal static class ExcessSandbox
         stream.Position = 0;
         using (var sha = SHA256.Create())
         {
-            byte[] hash = sha.ComputeHash(stream);
+            byte[] buffer = new byte[1024 * 1024];
+            int count;
+            while ((count = stream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                CheckSetup();
+                sha.TransformBlock(buffer, 0, count, buffer, 0);
+            }
+            sha.TransformFinalBlock(new byte[0], 0, 0);
+            byte[] hash = sha.Hash;
             var actual = new StringBuilder(hash.Length * 2);
             foreach (byte value in hash) actual.Append(value.ToString("x2"));
             stream.Position = 0;
@@ -917,9 +1018,8 @@ internal static class ExcessSandbox
         try { File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "probe.tmp"), "ok"); }
         catch { return 46; }
         if (args.Length != 8) return 40;
-        try { Directory.GetFiles(args[3]); return 47; }
-        catch (UnauthorizedAccessException) { }
-        catch { return 49; }
+        try { Directory.GetFiles(args[3]); }
+        catch { return 47; }
         try { File.ReadAllText(args[4]); return 48; }
         catch (UnauthorizedAccessException) { }
         catch { return 50; }
@@ -1366,6 +1466,16 @@ internal static class ExcessSandbox
         }
     }
 
+    private static void RequireCurrentUserOwnedDirectory(string path)
+    {
+        var directory = new DirectoryInfo(path);
+        if (!directory.Exists) throw new ArgumentException("pinned-directory-missing");
+        var owner = directory.GetAccessControl(AccessControlSections.Owner).GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+        var current = WindowsIdentity.GetCurrent().User;
+        if (owner == null || current == null || !owner.Equals(current))
+            throw new ArgumentException("pinned-directory-owner-mismatch");
+    }
+
     private static bool RegexMatch(string value, string pattern)
     {
         return System.Text.RegularExpressions.Regex.IsMatch(value ?? String.Empty, pattern, System.Text.RegularExpressions.RegexOptions.CultureInvariant);
@@ -1387,10 +1497,56 @@ internal static class ExcessSandbox
         return result.ToString();
     }
 
+    private static void StartStatusOutput()
+    {
+        statusOutput = new BlockingCollection<string>(new ConcurrentQueue<string>(), 4);
+        var writer = new Thread(() =>
+        {
+            try
+            {
+                foreach (string line in statusOutput.GetConsumingEnumerable())
+                {
+                    try { Console.Out.WriteLine(line); Console.Out.Flush(); }
+                    catch { statusOutputFailed = true; stopReasonCode = "parent-output-unavailable"; stopEvent.Set(); break; }
+                }
+            }
+            finally { statusOutputDone.Set(); }
+        });
+        writer.IsBackground = true;
+        writer.Name = "sandbox-status-output";
+        writer.Start();
+    }
+
+    private static bool TryEmitOutput(string line)
+    {
+        if (statusOutput == null || statusOutputFailed) return false;
+        try
+        {
+            if (statusOutput.TryAdd(line, 0)) return true;
+        }
+        catch (InvalidOperationException) { }
+        statusOutputFailed = true;
+        stopReasonCode = "parent-output-unavailable";
+        stopEvent.Set();
+        return false;
+    }
+
+    private static void CompleteStatusOutput()
+    {
+        try { if (statusOutput != null) statusOutput.CompleteAdding(); } catch { }
+        statusOutputDone.WaitOne(300);
+    }
+
     private static int Fail(string status, int code)
     {
-        Console.WriteLine("{\"type\":\"error\",\"code\":\"" + SafeCode(status) + "\",\"win32\":" + code.ToString(CultureInfo.InvariantCulture) + "}");
+        TryEmitOutput("{\"type\":\"error\",\"code\":\"" + SafeCode(status) + "\",\"win32\":" + code.ToString(CultureInfo.InvariantCulture) + "}");
         return 1;
+    }
+
+    private static void WriteDiagnosticPhase(string phase)
+    {
+        if (Environment.GetEnvironmentVariable("EXCESS_SANDBOX_DIAGNOSTIC") != "1") return;
+        TryEmitOutput("{\"type\":\"diagnosticPhase\",\"phase\":\"" + SafeCode(phase) + "\"}");
     }
 
     private static string SafeCode(string value)
@@ -1417,7 +1573,7 @@ internal static class ExcessSandbox
             any = true;
             if (next == '\n') break;
             if (value.Length < maximum) value.Append((char)next);
-            else overflow = true;
+            else { overflow = true; break; }
         }
         if (overflow) { line = null; return false; }
         if (value.Length > 0 && value[value.Length - 1] == '\r') value.Length--;
@@ -1425,40 +1581,170 @@ internal static class ExcessSandbox
         return line.Length > 0;
     }
 
-    private static void StartControlReader()
+    private static void StartControlInput()
     {
         var reader = new Thread(() =>
         {
+            IntPtr input = GetStdHandle(-10);
+            if (input == IntPtr.Zero || input == new IntPtr(-1))
+            {
+                configReadFailed = true;
+                configReady.Set();
+                stopReasonCode = "input-invalid";
+                stopEvent.Set();
+                return;
+            }
+            var line = new MemoryStream();
+            byte[] buffer = new byte[4096];
+            bool readingConfig = true;
             try
             {
-                string command;
-                while (ReadBoundedLine(Console.In, 1024, out command))
+                while (true)
                 {
-                    if (command == "{\"type\":\"stop\"}")
+                    uint available;
+                    if (!PeekNamedPipe(input, IntPtr.Zero, 0, IntPtr.Zero, out available, IntPtr.Zero))
                     {
+                        int error = Marshal.GetLastWin32Error();
+                        if (error == 109 || error == 232) break;
+                        configReadFailed = readingConfig;
+                        stopReasonCode = "input-error";
                         stopEvent.Set();
                         return;
                     }
-                    stopEvent.Set(); // Any unrecognized command fails closed as a stop request.
-                    return;
+                    if (available == 0) { Thread.Sleep(20); continue; }
+                    uint requested = available < (uint)buffer.Length ? available : (uint)buffer.Length;
+                    uint read;
+                    if (!ReadFile(input, buffer, requested, out read, IntPtr.Zero))
+                    {
+                        configReadFailed = readingConfig;
+                        stopReasonCode = "input-error";
+                        stopEvent.Set();
+                        return;
+                    }
+                    if (read == 0) break;
+                    for (int i = 0; i < read; i++)
+                    {
+                        byte value = buffer[i];
+                        if (value != (byte)'\n')
+                        {
+                            int maximum = readingConfig ? 65536 : 32 * 1024 * 1024;
+                            if (line.Length >= maximum)
+                            {
+                                configReadFailed = readingConfig;
+                                stopReasonCode = "input-too-large";
+                                stopEvent.Set();
+                                configReady.Set();
+                                controlLines.CompleteAdding();
+                                return;
+                            }
+                            line.WriteByte(value);
+                            continue;
+                        }
+
+                        byte[] bytes = line.ToArray();
+                        line.SetLength(0);
+                        int length = bytes.Length;
+                        if (length > 0 && bytes[length - 1] == (byte)'\r') length--;
+                        string command;
+                        try { command = new UTF8Encoding(false, true).GetString(bytes, 0, length); }
+                        catch
+                        {
+                            configReadFailed = readingConfig;
+                            stopReasonCode = "input-invalid-utf8";
+                            stopEvent.Set();
+                            configReady.Set();
+                            controlLines.CompleteAdding();
+                            return;
+                        }
+                        if (readingConfig)
+                        {
+                            if (command.Length == 0)
+                            {
+                                configReadFailed = true;
+                                configReady.Set();
+                                configModeReady.Set();
+                                controlLines.CompleteAdding();
+                                return;
+                            }
+                            configLine = command;
+                            readingConfig = false;
+                            configReady.Set();
+                            if (!configModeReady.WaitOne(5000))
+                            {
+                                stopReasonCode = "config-mode-timeout";
+                                stopEvent.Set();
+                                controlLines.CompleteAdding();
+                                return;
+                            }
+                            continue;
+                        }
+
+                        if (command == "{\"type\":\"stop\"}")
+                        {
+                            stopReasonCode = "explicit-stop";
+                            stopEvent.Set();
+                            controlLines.CompleteAdding();
+                            return;
+                        }
+                        if (!relayControlMode)
+                        {
+                            stopReasonCode = "invalid-control";
+                            stopEvent.Set();
+                            controlLines.CompleteAdding();
+                            return;
+                        }
+                        if (!controlLines.TryAdd(command, 0))
+                        {
+                            stopReasonCode = "control-queue-full";
+                            stopEvent.Set();
+                            controlLines.CompleteAdding();
+                            return;
+                        }
+                    }
                 }
             }
-            catch { }
-            stopEvent.Set(); // EOF or input error is a graceful stop request.
+            catch { stopReasonCode = "input-error"; }
+            if (readingConfig)
+            {
+                configReadFailed = true;
+                configReady.Set();
+            }
+            if (stopReasonCode == "none") stopReasonCode = "input-eof";
+            stopEvent.Set();
+            controlLines.CompleteAdding();
         });
         reader.IsBackground = true;
-        reader.Name = "sandbox-control";
+        reader.Name = "sandbox-control-input";
         reader.Start();
+    }
+
+    private static bool TryReadControlLine(out string line, int milliseconds)
+    {
+        try { return controlLines.TryTake(out line, milliseconds); }
+        catch (InvalidOperationException) { line = null; return false; }
+    }
+
+    private static void CheckSetup()
+    {
+        if (stopEvent.WaitOne(0)) throw new OperationCanceledException();
+        if (setupClock != null && setupClock.ElapsedMilliseconds > MaximumSetupMilliseconds)
+            throw new TimeoutException("setup-deadline");
     }
 
     private static void WriteStarted(uint pid)
     {
-        Console.WriteLine("{\"type\":\"started\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) + "}");
+        TryEmitOutput("{\"type\":\"started\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) + "}");
+    }
+
+    private static void WriteWorkingSetStatus(uint pid, ulong peakWorkingSetBytes)
+    {
+        TryEmitOutput("{\"type\":\"status\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) +
+            ",\"peakWorkingSetBytes\":" + peakWorkingSetBytes.ToString(CultureInfo.InvariantCulture) + "}");
     }
 
     private static void WriteRunStatus(uint pid, uint exitCode, string termination, ulong peakWorkingSetBytes, ulong peakJobCommitBytes)
     {
-        Console.WriteLine("{\"type\":\"status\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) +
+        TryEmitOutput("{\"type\":\"status\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) +
             ",\"exitCode\":" + exitCode.ToString(CultureInfo.InvariantCulture) +
             ",\"termination\":\"" + SafeCode(termination) +
             "\",\"stopReason\":\"" + SafeCode(stopReasonCode) +
@@ -1466,9 +1752,107 @@ internal static class ExcessSandbox
             ",\"peakJobCommitBytes\":" + peakJobCommitBytes.ToString(CultureInfo.InvariantCulture) + "}");
     }
 
+    private static void WriteRunStatus(uint pid, uint exitCode, string termination, ulong peakWorkingSetBytes,
+        ulong peakJobCommitBytes, string runtimeErrorCode)
+    {
+        string suffix = runtimeErrorCode == null ? String.Empty : ",\"runtimeErrorCode\":\"" + SafeCode(runtimeErrorCode) + "\"";
+        TryEmitOutput("{\"type\":\"status\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) +
+            ",\"exitCode\":" + exitCode.ToString(CultureInfo.InvariantCulture) +
+            ",\"termination\":\"" + SafeCode(termination) +
+            "\",\"stopReason\":\"" + SafeCode(stopReasonCode) +
+            "\",\"peakWorkingSetBytes\":" + peakWorkingSetBytes.ToString(CultureInfo.InvariantCulture) +
+            ",\"peakJobCommitBytes\":" + peakJobCommitBytes.ToString(CultureInfo.InvariantCulture) + suffix + "}");
+    }
+
+    private sealed class DiagnosticCapture
+    {
+        private readonly byte[] bytes;
+        private int start;
+        private int count;
+
+        public DiagnosticCapture(int capacity) { bytes = new byte[capacity]; }
+
+        public void Append(byte[] source, int offset, int length)
+        {
+            for (int i = 0; i < length; i++)
+            {
+                int index;
+                if (count < bytes.Length)
+                {
+                    index = (start + count) % bytes.Length;
+                    count++;
+                }
+                else
+                {
+                    index = start;
+                    start = (start + 1) % bytes.Length;
+                }
+                bytes[index] = source[offset + i];
+            }
+        }
+
+        public override string ToString()
+        {
+            var ordered = new byte[count];
+            int first = Math.Min(count, bytes.Length - start);
+            Buffer.BlockCopy(bytes, start, ordered, 0, first);
+            if (first < count) Buffer.BlockCopy(bytes, 0, ordered, first, count - first);
+            return Encoding.UTF8.GetString(ordered);
+        }
+    }
+
+    private static void DrainBoundedDiagnostic(IntPtr readHandle, DiagnosticCapture captured)
+    {
+        try
+        {
+            using (var input = new FileStream(new SafeFileHandle(readHandle, false), FileAccess.Read, 4096))
+            {
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    captured.Append(buffer, 0, count);
+                }
+            }
+        }
+        catch { }
+    }
+
+    private static string ClassifyRuntimeDiagnostic(string diagnostic, uint exitCode)
+    {
+        if (exitCode == 0 || exitCode == 124 || exitCode == 125) return null;
+        string value = (diagnostic ?? String.Empty).ToLowerInvariant();
+        if (value.Contains("0xc0000135") || value.Contains("specified module could not be found") || value.Contains("dll not found"))
+            return "runtime-dll-not-found";
+        if (value.Contains("0xc0000022") || value.Contains("access is denied") || value.Contains("permission denied") || value.Contains("access denied"))
+            return "runtime-access-denied";
+        if (value.Contains("unknown model architecture") || value.Contains("unsupported model architecture"))
+            return "model-architecture-unsupported";
+        if (value.Contains("invalid magic") || value.Contains("invalid model file") || value.Contains("not a gguf"))
+            return "model-file-invalid";
+        if (value.Contains("failed to mmap") || value.Contains("mmap failed") || value.Contains("error mmap") ||
+            value.Contains("failed to map") || value.Contains("mapping failed") || value.Contains("map view failed") ||
+            value.Contains("createfilemapping failed") || value.Contains("mapviewoffile failed"))
+            return "model-map-failed";
+        if (value.Contains("no such file") || value.Contains("file not found") || value.Contains("cannot open model") ||
+            value.Contains("failed to open") || value.Contains("unable to open") || value.Contains("error opening") ||
+            value.Contains("failed to load gguf"))
+            return "model-file-open-failed";
+        if (value.Contains("out of memory") || value.Contains("not enough memory") || value.Contains("allocation failed") ||
+            value.Contains("failed to allocate") || value.Contains("alloc failed"))
+            return "runtime-memory-exhausted";
+        if (value.Contains("backend") && (value.Contains("failed") || value.Contains("error") || value.Contains("not available")))
+            return "runtime-backend-init-failed";
+        if (value.Contains("failed to load model") || value.Contains("unable to load model") || value.Contains("model load failed"))
+            return "model-load-failed";
+        if (value.Contains("illegal instruction") || value.Contains("unsupported instruction"))
+            return "cpu-instruction-unsupported";
+        return "runtime-failure-unclassified";
+    }
+
     private static void WriteCleanup(bool ok, string code)
     {
-        Console.WriteLine(ok ? "{\"type\":\"cleanup\",\"ok\":true}" :
+        TryEmitOutput(ok ? "{\"type\":\"cleanup\",\"ok\":true}" :
             "{\"type\":\"cleanup\",\"ok\":false,\"code\":\"" + SafeCode(code ?? "cleanup-failed") + "\"}");
     }
 
@@ -1477,6 +1861,39 @@ internal static class ExcessSandbox
         var counters = new ProcessMemoryCounters { Size = (uint)Marshal.SizeOf(typeof(ProcessMemoryCounters)) };
         if (!GetProcessMemoryInfo(process, ref counters, counters.Size)) throw LastError();
         return counters.PeakWorkingSetSize.ToUInt64();
+    }
+
+    private static bool TerminateJobAndWait(IntPtr job, uint exitCode)
+    {
+        if (job == IntPtr.Zero) return true;
+        uint state = WaitForSingleObject(job, 0);
+        if (state == WaitObject0) return true;
+        if (!TerminateJobObject(job, exitCode))
+        {
+            if (WaitForSingleObject(job, 0) == WaitObject0) return true;
+            cleanupUnsafe = true;
+            return false;
+        }
+        state = WaitForSingleObject(job, ReapTimeoutMilliseconds);
+        if (state == WaitObject0) return true;
+        cleanupUnsafe = true;
+        return false;
+    }
+
+    private static bool TerminateAndWaitProcess(IntPtr process, uint exitCode)
+    {
+        if (process == IntPtr.Zero) return true;
+        uint state = WaitForSingleObject(process, 0);
+        if (state == WaitObject0) return true;
+        if (!TerminateProcess(process, exitCode) && WaitForSingleObject(process, 0) != WaitObject0)
+        {
+            cleanupUnsafe = true;
+            return false;
+        }
+        state = WaitForSingleObject(process, ReapTimeoutMilliseconds);
+        if (state == WaitObject0) return true;
+        cleanupUnsafe = true;
+        return false;
     }
 
     private static ulong QueryPeakJobCommit(IntPtr job)
@@ -1549,6 +1966,9 @@ internal static class ExcessSandbox
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForMultipleObjects(uint count, IntPtr[] handles, bool waitAll, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GetStdHandle(int standardHandle);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PeekNamedPipe(IntPtr handle, IntPtr buffer, uint bufferSize, IntPtr bytesRead, out uint totalBytesAvailable, IntPtr bytesLeftThisMessage);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ReadFile(IntPtr handle, byte[] buffer, uint bytesToRead, out uint bytesRead, IntPtr overlapped);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool QueryInformationJobObject(IntPtr job, uint infoClass, IntPtr info, uint length, IntPtr returnLength);
     [DllImport("psapi.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetProcessMemoryInfo(IntPtr process, ref ProcessMemoryCounters counters, uint size);
     [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseHandle(IntPtr handle);
