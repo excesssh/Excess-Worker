@@ -7,7 +7,7 @@ The source contains CPU and GPU backend selection and packaging paths for Window
 | Linux ext4 | The isolated fixture passed. | Limited fixture evidence only. |
 | CPU end-to-end | The standalone reconstruction has not been revalidated with a real end-to-end CPU job. | Unverified for release claims. |
 | Linux DrvFS | Model file permissions prevented inference. | Blocked in the tested configuration. |
-| Windows AppContainer | The loopback connection used by the local coordinator test was denied. | Blocked in the tested isolation profile. |
+| Windows AppContainer | Outside loopback is denied; same-container authenticated HTTP/SSE pulls, selected-file denial and timeout/stop cleanup pass native fixtures. | Actual worker/model execution remains unverified. |
 | GPU | No GPU execution was verified. | Unverified; no GPU support claim. |
 | Production isolation | Required gate is incomplete. | Not ready for production or multi-tenant untrusted work. |
 

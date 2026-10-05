@@ -18,4 +18,4 @@ The package script writes SHA-256 checksums. Checksums detect accidental changes
 
 ## Known isolation limits
 
-The production isolation gate is incomplete. Current evidence includes a passing Linux ext4 fixture, a DrvFS model-permission failure, a Windows AppContainer loopback denial, and no verified GPU execution. See [platform status](docs/PLATFORMS.md). Do not use those environments for untrusted multi-tenant inference until the blockers have been retested and closed.
+The production isolation gate is incomplete. Current evidence includes a passing Linux ext4 fixture, a DrvFS model-permission failure, Windows AppContainer file/loopback restrictions with a passing contained HTTP/SSE relay fixture, and no verified GPU execution. See [platform status](docs/PLATFORMS.md). Do not use those environments for untrusted multi-tenant inference until the blockers have been retested and closed.

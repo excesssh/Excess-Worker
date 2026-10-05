@@ -26,7 +26,7 @@ Diagnostics report local inventory; they do not execute a model. A coordinator i
 
 Pairing creates a scoped, revocable machine key. It cannot authorize wallet spending or withdrawals. Linux protects the key with file permissions; Windows uses current-user DPAPI. Local policy controls schedules, idle use, thermal limits, concurrency and resources. The model runtime receives its own API token and selected files, rather than the machine credential.
 
-The Linux CPU boundary uses Landlock, seccomp and kernel resource limits. The Windows AppContainer prototype is not integrated with the worker transport. Current execution restrictions and their limits are described in [platforms](docs/PLATFORMS.md) and [security](SECURITY.md).
+The Linux CPU boundary uses Landlock, seccomp and kernel resource limits. The Windows AppContainer prototype uses a bounded authenticated pipe relay between processes inside the same container. Worker integration and actual model execution remain under verification. Current execution restrictions and their limits are described in [platforms](docs/PLATFORMS.md) and [security](SECURITY.md).
 
 ## Develop
 

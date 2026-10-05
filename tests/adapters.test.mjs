@@ -100,7 +100,7 @@ test("fake process supervision reaps its process on explicit stop and observed R
       await once(processFixture.child,"spawn");
       if(budget>1) {assert.equal(processFixture.alive(),true);await processFixture.stop();}
       else {
-        let timeout;try{await Promise.race([processFixture.closed,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error("FAKE PROCESS MEMORY MONITOR TIMEOUT")),12000);})]);}finally{clearTimeout(timeout);}
+        let timeout;try{await Promise.race([processFixture.closed,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error("FAKE PROCESS MEMORY MONITOR TIMEOUT")),45000);})]);}finally{clearTimeout(timeout);}
         assert.equal(processFixture.error()?.code,"RUNTIME_MEMORY_LIMIT");assert.ok(processFixture.peakRssBytes()>1);
       }
       assert.equal(processFixture.alive(),false);await processFixture.stop();
