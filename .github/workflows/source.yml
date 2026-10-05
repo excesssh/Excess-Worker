@@ -46,6 +46,16 @@ jobs:
         run: node scripts/public-worker/privacy.mjs --history
       - name: Install pinned dependencies
         run: ${{ matrix.npm }} ci --ignore-scripts
+      - name: Configure disposable runner for namespace fixtures
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          # Ubuntu's AppArmor policy denies unprivileged user namespaces by
+          # default. Only this disposable CI VM is adjusted, then restored.
+          if test -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+            prior=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)
+            printf 'EXCESS_CI_USERNS_POLICY=%s\n' "$prior" >> "$GITHUB_ENV"
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: Probe rootless Linux namespace support
         if: matrix.os == 'ubuntu-24.04'
         run: unshare --user --map-root-user --mount --pid --net --fork true
@@ -72,3 +82,6 @@ jobs:
         run: ${{ matrix.npm }} test
       - name: Inspect source bytes after build
         run: node scripts/public-worker/privacy.mjs
+      - name: Restore disposable runner namespace policy
+        if: always() && matrix.os == 'ubuntu-24.04' && env.EXCESS_CI_USERNS_POLICY != ''
+        run: sudo sysctl -w "kernel.apparmor_restrict_unprivileged_userns=$EXCESS_CI_USERNS_POLICY"
