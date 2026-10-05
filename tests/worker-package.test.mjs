@@ -16,7 +16,8 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const built=spawnSync(process.execPath,["scripts/package-worker.mjs","--out",out,"--no-zip"],{encoding:"utf8"});
   assert.equal(built.status,0,built.stderr);
   const summary=JSON.parse(built.stdout.trim().split("\n").at(-1)),dir=summary.directory;
-  assert.equal(summary.publicDistributionReady,true,"the pinned Node runtime ships with its own licence text");
+  assert.equal(summary.licensesIncluded,true,"the pinned Node runtime ships with its own licence text");
+  assert.equal(summary.publicDistributionReady,false,"unverified isolated execution blocks release publication");
   const manifest=JSON.parse(await readFile(join(dir,"manifest.json"),"utf8"));
   assert.deepEqual([manifest.platform,manifest.node,manifest.codeSigned],["win32-x64","v24.11.1",false],
     "the package pins its Node runtime rather than copying whichever node.exe built it");

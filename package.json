@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24.11.1 <25",
-    "npm": ">=11 <12"
+    "node": "24.11.1",
+    "npm": "11.7.0"
   },
   "packageManager": "npm@11.7.0",
   "workspaces": [
@@ -15,8 +15,10 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "test": "npm run build && node --test --test-concurrency=4",
-    "package:worker": "npm run build && node scripts/package-worker.mjs"
+    "test": "npm run build && node --test --test-concurrency=4 tests/*.test.mjs",
+    "package:worker": "npm run build && node scripts/package-worker.mjs",
+    "privacy": "node scripts/public-worker/privacy.mjs --history",
+    "setup:project": "node scripts/public-worker/setup-project.mjs"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
