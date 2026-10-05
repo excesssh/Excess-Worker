@@ -1,14 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import {mkdtemp,mkdir,writeFile,rm} from "node:fs/promises";
 import {join,resolve} from "node:path";
 import {DEFAULT_WORKER_POLICY,describeSchedule,parseScheduleSpec,parseWorkerPolicy,policyDecision,withinSchedule} from "../apps/worker/dist/policy.js";
 import {linuxOnBattery} from "../apps/worker/dist/telemetry.js";
-import {checkForUpdate,currentRelease,parsePointer} from "../apps/worker/dist/update.js";
+import {__testCheckForUpdate,currentRelease} from "../apps/worker/dist/update.js";
 
 // 18 September 2026 was a Friday; months are zero-based.
 const at=(day,hour,minute=0)=>new Date(2026,8,day,hour,minute);
 const ready={freeMemoryMb:65536,idleSeconds:3600,onBattery:false};
+
+function signedFixture(manifest) {
+  const keyPair=generateKeyPairSync("ed25519"), keyId=Buffer.from("0123456789abcdef","hex"), publicRaw=keyPair.publicKey.export({format:"der",type:"spki"}).subarray(-32);
+  const publicKey=`untrusted comment: fixture key\n${Buffer.concat([Buffer.from("Ed"),keyId,publicRaw]).toString("base64")}\n`;
+  const bytes=Buffer.from(JSON.stringify(manifest)), signature=sign(null,createHash("blake2b512").update(bytes).digest(),keyPair.privateKey), trusted="fixture release sequence:"+manifest.sequence;
+  const signatureText=`untrusted comment: fixture signature\n${Buffer.concat([Buffer.from("ED"),keyId,signature]).toString("base64")}\ntrusted comment: ${trusted}\n${sign(null,Buffer.concat([signature,Buffer.from(trusted)]),keyPair.privateKey).toString("base64")}\n`;
+  return {bytes,signatureText,publicKey};
+}
 
 test("schedule specs parse to weekly windows, including ranges that wrap the week and windows past midnight",()=>{
   assert.deepEqual(parseScheduleSpec(["mon-fri 22:00-07:00"]),[{days:[1,2,3,4,5],from:"22:00",to:"07:00"}]);
@@ -66,29 +75,31 @@ test("Linux battery state: on battery only when a battery is present and no main
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
-test("update pointers are checked like the installers check them, and only a packaged worker reports an update",async()=>{
-  const line=`excess-worker-0.1.0-0123456789ab-linux-x64.tar.gz ${"c".repeat(64)} 43385019 0.1.0-0123456789ab excess-worker-0.1.0-linux-x64\n`;
-  assert.deepEqual(parsePointer(line,"linux-x64"),{archive:"excess-worker-0.1.0-0123456789ab-linux-x64.tar.gz",sha256:"c".repeat(64),bytes:43385019,version:"0.1.0-0123456789ab",folder:"excess-worker-0.1.0-linux-x64"});
-  for(const bad of [line.replace("linux-x64.tar.gz","linux-x64.zip"),line.replace("c".repeat(64),"xyz"),line.trim()+" extra","../../x "+"c".repeat(64)+" 1 v f"])
-    assert.throws(()=>parsePointer(bad,"linux-x64"),/not valid/);
-  assert.equal(parsePointer(line.replaceAll("linux-x64.tar.gz","win-x64.zip").replace("linux-x64\n","win-x64\n"),"win-x64").version,"0.1.0-0123456789ab");
-
-  const suffix=process.platform==="win32"?"win-x64":"linux-x64",ext=process.platform==="win32"?".zip":".tar.gz";
-  const pointer=`excess-worker-0.1.0-bbbbbbbbbbbb-${suffix}${ext} ${"d".repeat(64)} 100 0.1.0-bbbbbbbbbbbb excess-worker-0.1.0-${suffix}`;
-  const requested=[],fetcher=async url=>{requested.push(url);return new Response(pointer);};
-  assert.deepEqual((({checkedAt,...rest})=>rest)(await checkForUpdate("https://excess.example",`0.1.0-aaaaaaaaaaaa`,fetcher)),{current:"0.1.0-aaaaaaaaaaaa",latest:"0.1.0-bbbbbbbbbbbb",available:true});
-  assert.deepEqual(requested,[`https://excess.example/downloads/latest-${suffix}.txt`]);
-  assert.equal((await checkForUpdate("https://excess.example","0.1.0-bbbbbbbbbbbb",fetcher)).available,false);
-  assert.equal((await checkForUpdate("https://excess.example",null,fetcher)).available,false,"a repository build never updates itself");
-  await assert.rejects(checkForUpdate("http://excess.example","x",fetcher),/https exchange/);
-  await assert.rejects(checkForUpdate("https://excess.example","x",async()=>new Response("",{status:404})),/no published worker/);
+test("update checks verify signed release metadata and only packaged workers report an update",async()=>{
+  const platform=process.platform==="win32"?"win32-x64":"linux-x64", commit="b".repeat(40), suffix=platform==="win32-x64"?"win-x64.zip":"linux-x64.tar.gz";
+  const manifest={format:1,product:"Excess Worker",version:"0.1.1",sequence:2,sourceCommit:commit,repository:"https://github.com/excesssh/Excess-Worker",releasedAt:"2026-10-05T12:00:00Z",
+    files:[{platform,file:`excess-worker-0.1.1-${commit.slice(0,12)}-${suffix}`,bytes:100,sha256:"d".repeat(64),reproducible:true},
+      {platform:platform==="win32-x64"?"linux-x64":"win32-x64",file:`excess-worker-0.1.1-${commit.slice(0,12)}-${platform==="win32-x64"?"linux-x64.tar.gz":"win-x64.zip"}`,bytes:101,sha256:"e".repeat(64),reproducible:true}],
+    isolation:{"win32-x64":"fixture-profile-v1","linux-x64":"fixture-profile-v1"},permissions:{filesystem:"fixture filesystem",network:"fixture network",credentials:"fixture credential"}};
+  const fixture=signedFixture(manifest), requested=[], fetcher=async url=>{requested.push(url);return new Response(url.endsWith(".minisig")?fixture.signatureText:fixture.bytes);};
+  const stateDir=await mkdtemp(resolve(".cache/release-check-"));
+  try {
+    const options={origin:"https://excess.example",fetcher,publicKey:fixture.publicKey,platform,stateDir,current:{sequence:1,version:"0.1.0",sourceCommit:"a".repeat(40)}};
+    assert.deepEqual((({checkedAt,...rest})=>rest)(await __testCheckForUpdate(options)),{current:`0.1.0-${"a".repeat(12)}`,latest:`0.1.1-${commit.slice(0,12)}`,available:true});
+    assert.deepEqual(requested,["https://excess.example/downloads/release.json","https://excess.example/downloads/release.json.minisig"]);
+    await assert.rejects(__testCheckForUpdate({...options,origin:"http://excess.example"}),/HTTPS exchange/);
+    await assert.rejects(__testCheckForUpdate({...options,fetcher:async()=>new Response("",{status:404})}),/download failed/);
+    await assert.rejects(__testCheckForUpdate({...options,current:{sequence:2,version:"0.1.1",sourceCommit:"c".repeat(40)}}),/equivocation/);
+  } finally {await rm(stateDir,{recursive:true,force:true});}
 
   const pkg=await mkdtemp(resolve(".cache/worker-package-"));
   try{
     await mkdir(join(pkg,"app","worker","dist"),{recursive:true});
     const entry=join(pkg,"app","worker","dist","main.js");
     assert.equal(await currentRelease(entry),null,"no manifest");
-    await writeFile(join(pkg,"manifest.json"),JSON.stringify({version:"0.1.0",sourceCommit:"0123456789ab"+"0".repeat(28)}));
+    await writeFile(join(pkg,"manifest.json"),JSON.stringify({product:"EXCESS",package:"worker",publicDistributionReady:true,releaseSequence:1,version:"0.1.0",sourceCommit:"0123456789ab"+"0".repeat(28)}));
     assert.equal(await currentRelease(entry),"0.1.0-0123456789ab");
+    await writeFile(join(pkg,"manifest.json"),JSON.stringify({product:"EXCESS",package:"worker",publicDistributionReady:false,releaseSequence:1,version:"0.1.0",sourceCommit:"0123456789ab"+"0".repeat(28)}));
+    assert.equal(await currentRelease(entry),null,"unreleased candidates cannot self-update");
   }finally{await rm(pkg,{recursive:true,force:true});}
 });

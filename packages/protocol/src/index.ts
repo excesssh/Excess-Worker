@@ -336,3 +336,5 @@ export const jobEventSchema = z.strictObject({
   payload: z.record(z.string().max(128),z.json()),
 });
 export type JobEvent = z.infer<typeof jobEventSchema>;
+export { verifyMinisign, parseReleaseManifest, assertReleaseAdvance, RELEASE_MANIFEST_MAX_BYTES, RELEASE_REPOSITORY } from "./release.js";
+export type { ReleaseManifest, ReleaseState, ReleasePlatform } from "./release.js";

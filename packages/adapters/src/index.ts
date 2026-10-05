@@ -33,3 +33,5 @@ export { createOpenRouterMediaClient,eligibleMediaEndpoints,normalizedVectors,pr
 export type { HostedMediaClient,HostedEmbedding,HostedTranscript,HostedImage } from "./hosted-media-runtime.js";
 export { LISTINGS,listingById,listingByDigest,capabilityMarkets } from "./listings.js";
 export type { Listing,ListingVariant } from "./listings.js";
+export { scanSafeZip } from "./zip.js";
+export { scanSafeTarGz } from "./tar.js";
