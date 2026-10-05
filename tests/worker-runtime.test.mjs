@@ -1,7 +1,7 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile, access, unlink, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, access, unlink, readdir, chmod } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -12,6 +12,7 @@ import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { removeWorkerOffer, writeWorkerOffer } from "../apps/worker/dist/offer.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
+import { createControllerStateStore } from "../apps/worker/dist/controller-state.js";
 
 const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 };
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
@@ -204,6 +205,46 @@ test("fixture worker drain finishes one execution, receipts output and withdraws
   const status = await readWorkerStatus(f.dir);
   assert.equal(status.state, "stopped");
   assert.deepEqual(status.lastProbe, observation);
+});
+
+test("synthetic controller worker delegates durable state and preserves the outside host lock", async () => {
+  const f = await fixture();
+  await chmod(f.dir, 0o700);
+  const hostLock = await acquireRuntimeLock(f.dir);
+  const ownerBefore = await readFile(join(f.dir, "runtime.lock"), "utf8");
+  const store = await createControllerStateStore({ stateDir: f.dir, markShutdownUnverified: () => hostLock.markShutdownUnverified() });
+  const operations = [], cancel = new AbortController();
+  const stateWriter = {
+    async replace(name, bytes) { operations.push({ op: "replace", name }); await store.replace(name, bytes); },
+    async appendJournal(bytes) { operations.push({ op: "append" }); await store.appendJournal(bytes); },
+    async removeOutput(name) { operations.push({ op: "remove", name }); await store.removeOutput(name); },
+    async markShutdownUnverified() { operations.push({ op: "mark" }); await store.markShutdownUnverified(); },
+  };
+  let running;
+  try {
+    running = f.start({ stateWriter, signal: cancel.signal });
+    await waitFor(() => f.counts.executions === 1);
+    await setWorkerControl(f.dir, "drain"); // trusted host operation
+    f.complete(output);
+    assert.equal((await running).reason, "drained");
+    await store.drain();
+    assert.deepEqual((await f.journal()).map(entry => entry.state), ["seen", "running", "result_pending", "finished"]);
+    assert.ok(operations.some(op => op.op === "replace" && op.name === "status.json"));
+    assert.ok(operations.some(op => op.op === "replace" && op.name === "journal-owner.json"));
+    assert.ok(operations.some(op => op.op === "replace" && op.name === f.a.attemptId + ".result.json"));
+    assert.equal(operations.filter(op => op.op === "append").length, 4);
+    assert.ok(operations.some(op => op.op === "remove" && op.name === f.a.attemptId + ".result.json"));
+    assert.equal(operations.some(op => op.op === "mark"), false);
+    assert.equal(await readFile(join(f.dir, "runtime.lock"), "utf8"), ownerBefore, "controller exit cannot release or replace its host-owned lock");
+    await assert.rejects(acquireRuntimeLock(f.dir), /already running/);
+    assert.equal((await readWorkerStatus(f.dir)).state, "stopped");
+  } finally {
+    cancel.abort();
+    await running?.catch(() => undefined);
+    await store.close();
+    await hostLock();
+  }
+  await assert.rejects(access(join(f.dir, "runtime.lock")), { code: "ENOENT" });
 });
 
 test("fixture worker stop-now aborts and a repeated assignment cannot execute after restart", async () => {

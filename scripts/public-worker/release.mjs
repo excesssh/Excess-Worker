@@ -35,7 +35,19 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
   const [helperA,helperB]=await Promise.all([readFile(join(first,folder,expectedFile)),readFile(join(second,folder,expectedFile))]);
   assertPublicBytes(helperA);assertPublicBytes(helperB);
   if(!helperA.equals(helperB)||manifest.native.sha256!==hash(helperA))throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
-  isolation[platform]=expectedProfile+': local candidate; packaged execution gates incomplete';
+  if(platform==='linux-x64') {
+    const expected=[['excess-controller','integrity-controller.json','linux-controller-namespaces-v1'],['excess-egress-peer','integrity-egress-peer.json','linux-af-unix-peercred-v1']];
+    if(manifest.controller?.profile!=='linux-controller-namespaces-v1'||manifest.controller.verified!==false||manifest.controller.files?.length!==expected.length)throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
+    for(const [file,pin,profile] of expected) {
+      const path='app/node_modules/@excess/adapters/native/'+file;
+      const declared=manifest.controller.files.find(item=>item.file===path);
+      const [left,right,pinBytes]=await Promise.all([readFile(join(first,folder,path)),readFile(join(second,folder,path)),readFile(join(first,folder,'app/node_modules/@excess/adapters/native/'+pin))]);
+      assertPublicBytes(left);assertPublicBytes(right);assertPublicBytes(pinBytes);
+      const integrity=JSON.parse(pinBytes);
+      if(!declared||declared.profile!==profile||declared.sha256!==hash(left)||!left.equals(right)||Object.keys(integrity).sort().join(',')!=='profile,sha256'||integrity.profile!==profile||integrity.sha256!==hash(left))throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
+    }
+  }
+  isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and linux-landlock-v1':expectedProfile)+': local candidate; packaged execution gates incomplete';
   if(version&&(manifest.version!==version||manifest.releaseSequence!==sequence||manifest.builtAt!==releasedAt))throw Error('CANDIDATE_METADATA_MISMATCH');
   version=manifest.version;sequence=manifest.releaseSequence;releasedAt=manifest.builtAt;
   const file='excess-worker-'+version+'-'+sourceCommit.slice(0,12)+'-'+suffix+extension;
@@ -46,7 +58,7 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
 const manifest = {format:1,product:'Excess Worker',version,sequence,sourceCommit,repository:'https://github.com/excesssh/Excess-Worker',releasedAt,files,
   isolation,
   permissions:{filesystem:'Verified runtime files and selected model files are read-only; private scratch is writable. Unsupported profiles refuse execution.',
-    network:'Controller outbound networking is not OS-confined. Linux model runtime binds one local TCP port and cannot open outbound TCP, UDP or Unix sockets. Windows runtime and relay communicate only inside their unique AppContainer.',
+    network:'Linux controller has a private network namespace and fixed-origin, bounded HTTPS coordinator broker; the model runtime cannot open outbound TCP, UDP or Unix sockets. Windows controller outbound networking remains unconfined; its model runtime and relay communicate inside a unique AppContainer.',
     credentials:'Revocable device Ed25519 machine key stays outside the model runtime and cannot authorize wallet spending or withdrawals.'}};
 const bytes=Buffer.from(JSON.stringify(manifest,null,2)+'\n');parseReleaseManifest(bytes);assertPublicBytes(bytes);
 const target=join(out,'release.json');await writeFile(target,bytes);

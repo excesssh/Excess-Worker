@@ -4,7 +4,7 @@
 
 Run selected models on your computer and supply inference capacity through [Excess](https://excess.sh). The worker pairs with a separately operated coordinator, applies your local policy, and signs device results. Wallet approvals stay in the website.
 
-**Source preview.** No new release has been published. Source builds and CLI diagnostics work. Actual Linux CPU inference and a local coordinator journey, plus Windows CPU adapter inference, have passed in the development environment; packaged execution, controller confinement and GPU gates remain incomplete. Missing native helpers and unverified GPU profiles fail closed. See [platform status](docs/PLATFORMS.md).
+**Source preview.** No worker release has been published. The source build and CLI diagnostics work. A local Linux CPU job has passed through the read-only controller entry using a fixture coordinator, test-only PGlite database and synthetic ledger. That is local integration evidence; it does not verify real payments, a public coordinator, or a downloadable package. Linux controller kernel fixtures pass in Linux x64. Installation, automatic update, public release and GPU gates remain closed.
 
 [Installation](docs/INSTALLATION.md) | [Release verification](docs/VERIFICATION.md) | [Releases](https://github.com/excesssh/Excess-Worker/releases) | [MIT licence](LICENSE)
 
@@ -26,7 +26,9 @@ Diagnostics report local inventory; they do not execute a model. A coordinator i
 
 Pairing creates a scoped, revocable machine key. It cannot authorize wallet spending or withdrawals. Linux protects the key with file permissions; Windows uses current-user DPAPI. Local policy controls schedules, idle use, thermal limits, concurrency and resources. The model runtime receives its own API token and selected files, rather than the machine credential.
 
-The Linux CPU boundary uses Landlock, seccomp and kernel resource limits. The Windows AppContainer boundary uses a bounded authenticated pipe relay between processes inside the same container. Actual Windows CPU adapter execution has passed on the pinned helper; complete controller confinement and the final packaged journey remain under verification. Native helpers must be built and hash-verified separately. Current execution restrictions and their limits are described in [platforms](docs/PLATFORMS.md) and [security](SECURITY.md).
+On Linux, a pinned native controller creates private user, mount, PID, network, IPC and UTS namespaces. It exposes the installed app and selected model/runtime directories read-only, gives scratch data a size-limited temporary filesystem, and closes direct network access. A separately supervised host broker authenticates the controller's Unix socket peer and permits only bounded routes to the paired HTTPS origin. The controller reads state through a read-only mount. A state broker mediates writes; the controller has no direct writable host state directory. The run also requires a dedicated bounded cgroup v2 user service. Details and limits are in [platform status](docs/PLATFORMS.md) and [security](SECURITY.md).
+
+Linux boundary fixtures cover host-path and host-process isolation, direct-network denial, broker identity, cleanup and bounded resource configuration. Windows source supports the adapter's pinned AppContainer helper and CPU adapter path; it does not include a Node controller. Neither platform has a published installer or release. No GPU execution is verified.
 
 ## Develop
 

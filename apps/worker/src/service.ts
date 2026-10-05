@@ -15,13 +15,18 @@ export const SERVICE_NAME = "excess-worker.service";
 /** The unit file. `drain` and `stop-now` end `run` cleanly, and a clean exit is not restarted. */
 export function userUnit(launcher: string): string {
   if (!/^\/[^\n"\\$%`]+$/.test(launcher)) throw Error("The worker launcher path cannot be written into a unit file");
+  const memoryMb = Math.max(256, Math.min(12288, Math.floor(os.totalmem() * 0.75 / 1048576)));
   return ["[Unit]", "Description=EXCESS supplier worker", "Wants=network-online.target", "After=network-online.target", "",
-    "[Service]", `ExecStart="${launcher}" run`, "Restart=on-failure", "RestartSec=15", "", "[Install]", "WantedBy=default.target", ""].join("\n");
+    "[Service]", `ExecStart="${launcher}" run`, "Restart=on-failure", "RestartSec=15",
+    `MemoryMax=${memoryMb}M`, "MemorySwapMax=0", "TasksMax=128", "CPUQuota=200%",
+    "KillMode=control-group", "TimeoutStopSec=15", "OOMPolicy=stop", "", "[Install]", "WantedBy=default.target", ""].join("\n");
 }
 
 /** The installer's wrapper when present, so the service follows upgrades; otherwise this package's own launcher. */
 export async function launcherPath(entry: string = process.argv[1] ?? ""): Promise<string> {
-  const wrapper = join(os.homedir(), ".local", "bin", "excess-worker");
+  const data = process.env.XDG_DATA_HOME || join(os.homedir(), ".local", "share");
+  const root = resolve(process.env.EXCESS_INSTALL_ROOT ?? join(data, "excess"));
+  const wrapper = join(root, "bin", "excess-worker");
   try { await access(wrapper); return wrapper; } catch { /* a manual unpack has no wrapper */ }
   return resolve(dirname(entry), "..", "..", "..", "excess-worker");
 }

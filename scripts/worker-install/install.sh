@@ -213,7 +213,11 @@ try:
             if stream is None: stop('archive file could not be read')
             hasher = hashlib.sha256()
             hashes[rel] = write_stream(stream,target,member.size,hasher,total)
-            os.chmod(target, 0o755 if rel in ('excess-worker','node/bin/node') or rel.endswith('/excess-sandbox') else 0o600)
+            executables = ('excess-worker', 'node/bin/node',
+                'app/node_modules/@excess/adapters/native/excess-sandbox',
+                'app/node_modules/@excess/adapters/native/excess-controller',
+                'app/node_modules/@excess/adapters/native/excess-egress-peer')
+            os.chmod(target, 0o755 if rel in executables else 0o600)
     if not {'manifest.json','excess-worker','node/bin/node'}.issubset(seen): stop('archive is missing a required package file')
     sum_path = stage / 'SHA256SUMS.txt'
     if sum_path.exists():

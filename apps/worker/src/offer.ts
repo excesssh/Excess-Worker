@@ -2,7 +2,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { DEFAULT_MODEL_ID, MEDIA_CATALOG, MODEL_CATALOG } from "@excess/adapters";
 import { PRICE_DECIMALS, positivePriceSchema, formatPrice, priceMicros } from "@excess/protocol";
-import { atomicPrivateJson, readPrivateText } from "./control.js";
+import { atomicPrivateJson, readPrivateText, type StateWriteContext } from "./control.js";
 
 /** The supplier's public ask for one catalog model: net base units per metering unit (output token, input token,
  * audio second or image) in one asset, a price with up to six fractional digits (below one base unit is allowed). */
@@ -51,10 +51,10 @@ export async function readWorkerAutoPrices(stateDir:string,modelId:string):Promi
   if(entries.length>MAX_WORKER_OFFERS||entries.some(([asset,price])=>!uuid.test(asset)||!validPrice(price)))throw Error("Invalid automatic price state");
   return new Map(entries as [string,string][]);
 }
-export async function saveWorkerAutoPrices(stateDir:string,modelId:string,prices:ReadonlyMap<string,string>):Promise<void> {
+export async function saveWorkerAutoPrices(stateDir:string,modelId:string,prices:ReadonlyMap<string,string>,writes?:StateWriteContext):Promise<void> {
   const entries=[...prices];
   if(entries.length>MAX_WORKER_OFFERS||entries.some(([asset,price])=>!uuid.test(asset)||!validPrice(price)))throw Error("Invalid automatic price state");
-  await atomicPrivateJson(autoStatePath(stateDir,modelId),{prices:Object.fromEntries(entries)});
+  await atomicPrivateJson(autoStatePath(stateDir,modelId),{prices:Object.fromEntries(entries)},writes);
 }
 /** The model's prices, one per asset; empty when none is set. */
 export async function readWorkerOffers(stateDir: string, modelId: string = DEFAULT_MODEL_ID): Promise<WorkerOffer[]> {

@@ -52,7 +52,7 @@ export async function currentRelease(entry: string = process.argv[1] ?? ""): Pro
   return releaseId(await currentReleaseState(entry));
 }
 
-function stateDirectory(): string { return resolve(process.env.EXCESS_WORKER_HOME ?? ".local/worker"); }
+function stateDirectory(): string { return installDirectories(PLATFORM).stateDir; }
 function stateFile(directory: string): string { return join(resolve(directory), RELEASE_STATE_FILE); }
 
 async function readHighWater(directory: string): Promise<ReleaseState | null> {
@@ -256,8 +256,10 @@ async function extractRelease(archive: Buffer, manifest: ReleaseManifest, platfo
     if (platform === "linux-x64") {
       await chmod(inside(stage, "excess-worker"), 0o755);
       await chmod(inside(stage, "node/bin/node"), 0o755);
-      const helper = "app/node_modules/@excess/adapters/native/excess-sandbox";
-      if (files.has(helper)) await chmod(inside(stage, helper), 0o755);
+      for (const name of ["excess-sandbox", "excess-controller", "excess-egress-peer"]) {
+        const helper = "app/node_modules/@excess/adapters/native/" + name;
+        if (files.has(helper)) await chmod(inside(stage, helper), 0o755);
+      }
     }
     let existing: Awaited<ReturnType<typeof lstat>> | null = null;
     try { existing = await lstat(target); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
@@ -278,10 +280,9 @@ async function switchLauncher(platform: ReleasePlatform, appName: string, binDir
   try { const found = await lstat(target); if (found.isSymbolicLink() || !found.isFile()) throw Error("Worker launcher is not a regular file"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const temp = target + ".new-" + randomUUID();
-  const xdg = "$" + "{XDG_DATA_HOME:-$HOME/.local/share}";
   const contents = platform === "win32-x64"
-    ? "@echo off\r\nset \"EXCESS_ROOT=%LOCALAPPDATA%\\EXCESS\"\r\n\"%EXCESS_ROOT%\\app\\" + appName + "\\excess-worker.cmd\" %*\r\nexit /b %ERRORLEVEL%\r\n"
-    : "#!/bin/sh\nset -eu\nDATA=\"" + xdg + "/excess\"\nexec \"$DATA/app/" + appName + "/excess-worker\" \"$@\"\n";
+    ? "@echo off\r\nrem EXCESS WORKER MANAGED LAUNCHER\r\nsetlocal\r\nif not defined EXCESS_WORKER_INSTALL_ROOT set \"EXCESS_WORKER_INSTALL_ROOT=%LOCALAPPDATA%\\EXCESS\"\r\nif not defined EXCESS_WORKER_HOME set \"EXCESS_WORKER_HOME=%LOCALAPPDATA%\\EXCESS\\worker\"\r\nif not defined EXCESS_MODEL_DIR set \"EXCESS_MODEL_DIR=%LOCALAPPDATA%\\EXCESS\\ai\"\r\ncall \"%EXCESS_WORKER_INSTALL_ROOT%\\app\\" + appName + "\\excess-worker.cmd\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+    : "#!/bin/sh\n# EXCESS WORKER MANAGED LAUNCHER\nset -eu\nBIN_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nEXCESS_INSTALL_ROOT=${EXCESS_INSTALL_ROOT:-$(dirname -- \"$BIN_DIR\")}\nexport EXCESS_INSTALL_ROOT\nexec \"$EXCESS_INSTALL_ROOT/app/" + appName + "/excess-worker\" \"$@\"\n";
   await writeFile(temp, contents, { flag: "wx", mode: 0o700 });
   if (platform === "linux-x64") await chmod(temp, 0o755);
   try {
@@ -326,18 +327,22 @@ export async function __testInstallRelease(options: InstallTestOptions): Promise
 function installDirectories(platform: ReleasePlatform) {
   if (platform === "win32-x64") {
     const local = process.env.LOCALAPPDATA || join(os.homedir(), "AppData", "Local"), root = join(local, "EXCESS");
-    return { appsDir: join(root, "app"), binDir: join(root, "bin") };
+    const configured = resolve(process.env.EXCESS_WORKER_INSTALL_ROOT ?? root);
+    return { appsDir: join(configured, "app"), binDir: join(configured, "bin"), stateDir: join(configured, "state") };
   }
   const data = process.env.XDG_DATA_HOME || join(os.homedir(), ".local", "share");
-  return { appsDir: join(data, "excess", "app"), binDir: join(os.homedir(), ".local", "bin") };
+  const root = resolve(process.env.EXCESS_INSTALL_ROOT ?? join(data, "excess"));
+  // Installer high-water belongs outside the controller's writable worker
+  // state and uses the same root/launcher as both production installers.
+  return { appsDir: join(root, "app"), binDir: join(root, "bin"), stateDir: join(root, "state") };
 }
 
 /** Download and install a signed worker package. No downloaded script or command is executed. */
-export async function runInstaller(origin: string, quiet = false): Promise<number> {
+export async function runInstaller(origin: string, quiet = false, fetcher: Fetcher = fetch): Promise<number> {
   try {
     const current = await currentReleaseState();
     if (!current) return 1;
-    await installVerifiedRelease({ origin, platform: PLATFORM, stateDir: stateDirectory(), current, publicKey: RELEASE_PUBLIC_KEY, ...installDirectories(PLATFORM) });
+    await installVerifiedRelease({ origin, fetcher, platform: PLATFORM, current, publicKey: RELEASE_PUBLIC_KEY, ...installDirectories(PLATFORM) });
     return 0;
   } catch {
     if (!quiet) process.stderr.write("Worker update verification or installation failed.\n");

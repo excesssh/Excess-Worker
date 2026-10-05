@@ -1,6 +1,25 @@
-# Native worker boundary builds
+# Native worker boundaries
 
-Native helpers are built separately from the TypeScript workspace. A source build alone does not establish isolation or hardware support. The release stays closed until the packaged boundary completes actual supported workloads and lifecycle checks.
+Native helpers are built separately from the TypeScript workspace. A source build or a fixture pass does not make a package installable or establish GPU support. The binary release remains closed.
+
+## Linux x64
+
+Build all three helpers into a directory outside the source package:
+
+```sh
+mkdir -p .cache/native-linux
+node scripts/public-worker/build-linux-sandbox.mjs .cache/native-linux
+node scripts/public-worker/build-linux-controller.mjs .cache/native-linux
+node scripts/public-worker/build-linux-egress-peer.mjs .cache/native-linux
+```
+
+`excess-sandbox` applies the adapter's Landlock and seccomp restrictions. `excess-controller` is the trusted launcher/supervisor for the worker controller. It creates private user, mount, PID, network, IPC and UTS namespaces; constructs a small private mount tree; drops capabilities and restricts syscalls before executing pinned Node 24.11.1. The controller sees the immutable app and selected model/runtime subdirectories read-only; it receives state only through bounded broker operations, not a writable host-state mount. Its scratch area is a size-limited tmpfs. It has no host home, model download cache, GPU device, host PID tree or direct network route.
+
+`excess-egress-peer` checks the accepted AF_UNIX stream peer credentials and verifies that the peer is in the expected controller network namespace. The broker remains outside that namespace. It validates the configured canonical HTTPS origin, resolves public unicast addresses, applies an exact method/path allowlist, bounds request and response sizes and timeouts, and validates TLS. This is a narrow coordinator bridge, not a general proxy. The separate state broker exposes bounded worker-state operations over its own Unix socket; it does not grant the controller a writable host state mount.
+
+The controller also requires an outside cgroup v2 user service named `excess-worker.service`. It reads and validates `memory.max`, `memory.swap.max`, `pids.max` and `cpu.max` before start. The current accepted range caps memory at 12 GiB, requires swap to be zero and at most 128 tasks, and caps CPU at 200%. The default user unit selects at most 75% of detected memory with a 256 MiB floor. Missing or broader limits fail closed. Provisioning an appropriate systemd user session/cgroup is an operating-system prerequisite; running the native fixture does not prove that a machine is configured for release use.
+
+The builders use the host GCC and libc development files with source/path mapping, stripping and hardening options. Those toolchain inputs are observed local dependencies; the build is not hermetic. The kernel must support unprivileged user namespaces, seccomp and Landlock ABI 6 or newer. No helper permits GPU device access. Review [platform status](PLATFORMS.md) and [security](../SECURITY.md) for evidence and limits.
 
 ## Windows x64
 
@@ -13,7 +32,7 @@ node scripts/public-worker/build-windows-sandbox.mjs
 
 Python 3 downloads Microsoft.Net.Compilers.Toolset 4.14.0 and Microsoft.NETFramework.ReferenceAssemblies.net48 1.0.3 from NuGet over HTTPS. The script checks their fixed sizes and SHA-256 digests in memory, checks selected names and bytes for privacy traces, and extracts only the required compiler files, reference assemblies and attribution. It refuses an existing output directory.
 
-The builder checks the pinned inventory digest and every extracted input before invoking the compiler. Compilation disables default response files, implicit framework references and debug symbols, uses explicit reference assemblies, enables deterministic output, and maps source/tool paths. The source is copied into a temporary build directory; only `ExcessSandbox.exe` and `integrity-win32.json` become runtime payloads. Temporary source files are removed after compilation.
+The builder checks the pinned inventory digest and every extracted input before invoking the compiler. Compilation disables default response files, implicit framework references and debug symbols, uses explicit reference assemblies, enables deterministic output, and maps source/tool paths. The source is copied into a temporary build directory; only `ExcessSandbox.exe` and its integrity file become runtime payloads. Temporary source files are removed after compilation.
 
 Optional arguments select output and prepared-toolchain directories:
 
@@ -22,16 +41,10 @@ node scripts/public-worker/build-windows-sandbox.mjs .cache/native-a .cache/nati
 node scripts/public-worker/build-windows-sandbox.mjs .cache/native-b .cache/native-toolchain/windows
 ```
 
-The helper requires the Windows .NET Framework runtime. That runtime and the operating system remain external execution dependencies. Pinned compiler/reference inputs and matching helper bytes do not establish independent reproducibility of Windows, the CLR, Node.js, GPU drivers or upstream model-runtime binaries.
+The helper requires the Windows .NET Framework runtime. The public Windows source is adapter-only and has no Node controller. The runtime and operating system remain external execution dependencies. Pinned compiler/reference inputs and matching helper bytes do not establish independent reproducibility of Windows, the CLR, Node.js, GPU drivers or upstream model-runtime binaries.
 
-## Linux x64
+## Verification and release
 
-```sh
-node scripts/public-worker/build-linux-sandbox.mjs
-```
+Linux CI builds the helpers, creates a package fixture with the three integrity pins, and runs the kernel and package tests on an Ubuntu runner. The package fixture remains closed: its manifest does not certify the controller and sets CPU/GPU verification false. Local Linux CPU integration evidence uses a fixture coordinator and synthetic ledger; it is not real funding, external-service proof or install evidence.
 
-The current builder uses the host GCC and libc development files, with path mapping, stripping and hardening options. These are observed local dependencies; the build is not yet hermetic. A compatible kernel must expose the required Landlock ABI and seccomp support. GPU access remains unavailable until its supported driver configuration and resource controls pass actual workload verification.
-
-## Release verification
-
-Build the complete final worker from independent clean public-source directories and compare each archive's exact bytes. Bind final helper hashes, tool inputs, upstream exceptions and actual execution evidence to that source commit. Sign the release manifest only after all required release checks pass. A local candidate signature binds its metadata and artifacts; it does not establish hardware execution or public readiness.
+Build final candidates from independent clean source directories and compare the complete archive bytes. Bind helper hashes, tool inputs, upstream exceptions and actual execution evidence to that exact source commit. A locally signed, closed candidate may be used for signature and update-verifier tests; the signature does not attest runtime isolation, hardware execution or release readiness. Publish only after all runtime, bootstrap, installation, OS, privacy and reproducibility gates have passed. Those gates are not complete and no binary release has been published.

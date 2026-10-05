@@ -51,6 +51,7 @@ const nativeRoot=resolve(option("--native-dir")??join(root,"packages","adapters"
 const helperFile=linux?"excess-sandbox":"ExcessSandbox.exe",pinFile=linux?"integrity.json":"integrity-win32.json";
 const expectedProfile=linux?"linux-landlock-v1":"windows-appcontainer-v1";
 let native;
+const controllerFiles=[];
 await noLinks(nativeRoot);
 const helperInfo=await lstat(join(nativeRoot,helperFile)).catch(error=>{if(error.code==="ENOENT")return null;throw error;});
 if(helperInfo){
@@ -62,6 +63,23 @@ if(helperInfo){
   if(pin.profile!==expectedProfile||pin.sha256!==hash)throw Error("RUNTIME_SANDBOX_INTEGRITY_INVALID");
   native={helper,pinBytes,profile:expectedProfile,sha256:hash};
 }else if(linux||args.includes("--require-native"))throw Error("RUNTIME_SANDBOX_BUILD_REQUIRED");
+
+if(linux){
+  for(const [file,pin,profile] of [
+    ["excess-controller","integrity-controller.json","linux-controller-namespaces-v1"],
+    ["excess-egress-peer","integrity-egress-peer.json","linux-af-unix-peercred-v1"],
+  ]){
+    const path=join(nativeRoot,file),pinPath=join(nativeRoot,pin);
+    await noLinks(path);await noLinks(pinPath);
+    const info=await lstat(path).catch(()=>null);
+    if(!info?.isFile())throw Error("CONTROLLER_SANDBOX_BUILD_REQUIRED");
+    const bytes=await readFile(path),pinBytes=await readFile(pinPath);
+    assertPublicBytes(bytes);assertPublicBytes(pinBytes);
+    const value=JSON.parse(pinBytes.toString("utf8"));
+    if(Object.keys(value).sort().join(",")!=="profile,sha256"||value.profile!==profile||value.sha256!==sha256(bytes))throw Error("CONTROLLER_SANDBOX_INTEGRITY_INVALID");
+    controllerFiles.push({file,pin,bytes,pinBytes,profile,sha256:sha256(bytes)});
+  }
+}
 
 if(resolve(stage)===out||relative(out,stage)!==name)throw Error("PACKAGE_OUTPUT_BOUNDARY_INVALID");
 await noLinks(stage);
@@ -86,6 +104,10 @@ for(const pkg of ["adapters","protocol"]){
     await mkdir(join(target,"native"),{recursive:true});
     await writeFile(join(target,"native",helperFile),native.helper);
     await writeFile(join(target,"native",pinFile),native.pinBytes);
+    for(const file of controllerFiles){
+      await writeFile(join(target,"native",file.file),file.bytes);
+      await writeFile(join(target,"native",file.pin),file.pinBytes);
+    }
   }
 }
 await copyTree(join(root,"node_modules","zod"),join(stage,"app","node_modules","zod"));
@@ -145,6 +167,7 @@ await writeFile(join(stage,"manifest.json"),JSON.stringify({product:"EXCESS",pac
   releaseSequence,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:false,releaseGate:"isolated-hardware-execution-pending",codeSigned:false,
   execution:{profile:native?.profile??"unavailable",cpuVerified:false,gpuVerified:false},
   ...(native?{native:{profile:native.profile,file:"app/node_modules/@excess/adapters/native/"+helperFile,sha256:native.sha256}}:{}),
+  ...(linux?{controller:{profile:"linux-controller-namespaces-v1",files:controllerFiles.map(({file,profile,sha256})=>({file:"app/node_modules/@excess/adapters/native/"+file,profile,sha256})),verified:false}}:{}),
   builtAt:new Date(epoch*1000).toISOString()},null,2)+"\n");
 
 async function files(dir){const result=[];for(const entry of await readdir(dir,{withFileTypes:true})){const path=join(dir,entry.name);

@@ -25,6 +25,8 @@ export async function archiveDirectory(root, folder, destination, platform, epoc
 
 function tar(files, folder, epoch) {
   const records = [];
+  const executableFiles = new Set(['excess-worker', 'node/bin/node',
+    ...['excess-sandbox', 'excess-controller', 'excess-egress-peer'].map(name => 'app/node_modules/@excess/adapters/native/' + name)]);
   for (const { name, data } of files) {
     const full = folder + '/' + name, header = Buffer.alloc(512);
     let leaf = full, prefix = '';
@@ -35,7 +37,7 @@ function tar(files, folder, epoch) {
     if (Buffer.byteLength(leaf) > 100 || Buffer.byteLength(prefix) > 155) throw Error('ARCHIVE_NAME_TOO_LONG');
     header.write(leaf, 0, 100); header.write(prefix, 345, 155);
     const octal = (offset, length, value) => header.write(value.toString(8).padStart(length - 1, '0') + '\0', offset, length);
-    octal(100, 8, name === 'excess-worker' || name === 'node/bin/node' || name.endsWith('/excess-sandbox') ? 0o755 : 0o644);
+    octal(100, 8, executableFiles.has(name) ? 0o755 : 0o644);
     octal(108, 8, 0); octal(116, 8, 0); octal(124, 12, data.length); octal(136, 12, epoch);
     header.fill(32, 148, 156); header[156] = 48; header.write('ustar\0', 257, 6); header.write('00', 263, 2);
     const sum = header.reduce((total, byte) => total + byte, 0);

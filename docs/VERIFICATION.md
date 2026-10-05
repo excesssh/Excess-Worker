@@ -1,18 +1,30 @@
-# Verify a release
+# Verify a local candidate
 
-No release has been published. These instructions apply to a local signed candidate and future release files. A signature authenticates the release metadata, not the honesty of jobs, the trust of device keys, or hardware execution.
+No worker release has been published. These steps are for a locally prepared, signed candidate and future release files. A signature authenticates release metadata and artifact hashes; it does not certify isolation, honest work, device-key custody or hardware execution.
 
-Obtain `release.json`, `release.json.minisig`, and the exact archive named in the manifest. The release public key is [minisign.pub](../releases/minisign.pub). Establish that key independently from a trusted source checkout; downloading a new key beside an untrusted archive provides no independent trust.
+## Check the manifest signature
 
-With [Minisign](https://jedisct1.github.io/minisign/) installed:
+Establish the project's Minisign public key from a trusted source checkout. A key downloaded beside an untrusted archive does not provide independent trust. The checked-in key is [minisign.pub](../releases/minisign.pub).
+
+With Minisign installed, verify the manifest signature:
 
 ```sh
 minisign -Vm release.json -x release.json.minisig -p releases/minisign.pub
 ```
 
-After that succeeds, compare the archive basename, byte count and SHA-256 with the authenticated entry in `release.json`. The manifest binds version, monotonically increasing sequence, full source commit, exact filenames, sizes and hashes. It also records declared isolation, permissions and per-artifact reproducibility.
+Then compare the archive name, byte count and SHA-256 with the authenticated platform entry in `release.json`. The manifest binds version, increasing release sequence, source commit, exact filenames and hashes, declared isolation and reproducibility results.
 
-The reviewed local scripts perform signature and archive checks without extraction:
+The local candidate builder compares complete archives from two independent build directories and signs the resulting metadata. It requires `EXCESS_WORKER_MINISIGN_KEY` to be supplied from private credential storage:
+
+```sh
+node scripts/public-worker/release.mjs <build-a/packages> <build-b/packages> <candidate-out>
+```
+
+Signing is permitted for a closed local candidate used by verifier and update tests. The candidate remains closed; its signature is not evidence that runtime or release gates passed.
+
+## Verify-only installer behavior
+
+The installer scripts check the signature, package identity, sizes, hashes and archive paths. With the current closed package flags, they then refuse extraction and installation and return a nonzero status. They do not execute a downloaded script.
 
 ```sh
 sh scripts/worker-install/install.sh release.json release.json.minisig <exact-linux-archive>
@@ -22,8 +34,14 @@ sh scripts/worker-install/install.sh release.json release.json.minisig <exact-li
 powershell -NoProfile -File scripts/worker-install/install.ps1 release.json release.json.minisig <exact-windows-archive>
 ```
 
-They return a nonzero status after successful verification because installation is intentionally unavailable. They never execute a downloaded script. The first-install bootstrap remains a release blocker.
+These commands validate a local candidate and demonstrate the expected closed-gate refusal; they are not an installation path. No public installer or binary release is available.
 
-The website's local file checker compares an archive with the selected manifest's exact filename, size and SHA-256. It reads files locally and does not verify Minisign in the browser. Job-receipt checking is a separate feature and proves only the explicitly signed receipt fields for the supplied device key.
+## Other checks are separate
 
-Packaged production updates verify the pinned Minisign key before parsing metadata, bound downloads and extraction, reject archive links and identity mismatches, and record a sequence/version/source high-water mark. Rollback and same-sequence equivocation are rejected. Source builds and closed-gate candidates cannot self-update. A fresh installation still needs a trusted minimum sequence; deleting local state removes its remembered high-water protection.
+The website's local file checker compares the selected manifest's exact filename, size and SHA-256. It does not verify Minisign in the browser. Job-receipt checking is separate and verifies only the signed fields for the supplied device key.
+
+The local Linux CPU integration report at [verification/linux-controller-cpu.json](verification/linux-controller-cpu.json) used a fixture HTTPS coordinator, ephemeral test CA, test-only PGlite and synthetic ledger. It records one paired CPU job, a three-token output and receipt, a drain request, clean exit, lock release and revocation. It is local integration evidence only: no public coordinator, production database, chain-backed funds, payment, installed package or GPU execution was involved.
+
+Linux kernel and package fixtures test specific namespace, broker, resource and archive boundaries. The CI suite does not set release verification flags. The Linux package marks `publicDistributionReady`, `controller.verified`, `cpuVerified` and `gpuVerified` false. The installer therefore stops after validation, and automatic updates remain unavailable.
+
+Before publication, bind the exact source revision, helper hashes and complete archive bytes to independent builds. Complete bootstrap, install, restart, update, rollback, drain and revocation checks on supported clean hosts. Verify each advertised backend using the exact packaged workload. Linux also requires the bounded cgroup v2 service and supported namespace, Landlock and seccomp features. Windows source currently provides the adapter boundary only. GPU execution has not been verified.

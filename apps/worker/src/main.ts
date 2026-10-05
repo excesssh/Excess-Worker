@@ -1,13 +1,14 @@
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, access, readFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { mkdir, access, readFile, chmod, open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { beginPairing, writeIdentity, finishPairing, sendHeartbeat } from "./identity.js";
 import { textInstallationPlan, installTextAdapter, installMediaModel, mediaInstallationPlan, installedComponents, textInstallDiskCheck, mediaInstallDiskCheck, importModelFiles, type Backend, type DiskCheck } from "@excess/adapters";
 import { priceUnit, servedModel, servedModels } from "./served.js";
 import { runWorker, unpairDevice } from "./runtime.js";
-import { readWorkerStatus, setWorkerControl } from "./control.js";
+import { readWorkerStatus, setWorkerControl, readWorkerControlRequest, startWorkerUpdate } from "./control.js";
 import { describeSchedule, parseScheduleSpec, readWorkerPolicy, writeWorkerPolicy, THERMAL_STOP_MARGIN_C } from "./policy.js";
 import { observeLocalResources, observeTemperatures } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
@@ -16,6 +17,9 @@ import { workerGuide } from "./guide.js";
 import { detectHardware, modelsByFit } from "./hardware.js";
 import { workerService } from "./service.js";
 import { checkForUpdate, currentRelease, runInstaller, supervisedBySystemd, UPDATED_EXIT_CODE } from "./update.js";
+import { startLinuxController } from "./controller.js";
+import { createControllerUpdatePlan } from "./controller-update.js";
+import { configuredControllerOrigin, saveControllerOrigin } from "./controller-config.js";
 const execute = promisify(execFile);
 const gigabytes = (bytes: number) => (bytes / 1073741824).toFixed(1) + " GB";
 const diskMessage = (disk: DiskCheck) => `INSUFFICIENT_DISK_SPACE: this install needs ${gigabytes(disk.requiredBytes)} free on the model drive and ${gigabytes(disk.freeBytes ?? 0)} is free. Free space or set EXCESS_MODEL_DIR to a larger drive.`;
@@ -53,6 +57,16 @@ export async function diagnostics() {
   };
 }
 const print = (value: unknown) => process.stdout.write(JSON.stringify(value, null, 2) + "\n");
+async function controllerIdentity(path: string): Promise<{ origin: string; publicKey: string }> {
+  const file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size < 1 || info.size > 16384) throw Error("CONTROLLER_IDENTITY_INVALID");
+    const value = JSON.parse(await file.readFile("utf8")) as Record<string, unknown>;
+    if (typeof value.origin !== "string" || typeof value.publicKey !== "string") throw Error("CONTROLLER_IDENTITY_INVALID");
+    return { origin: value.origin, publicKey: value.publicKey };
+  } finally { await file.close(); }
+}
 try {
   const command = process.argv[2], args = process.argv.slice(3);
   const flags = new Set(args.filter(arg => arg.startsWith("--"))), positional = args.filter(arg => !arg.startsWith("--"));
@@ -68,8 +82,9 @@ try {
     if (exists) throw Error("Device identity already exists; use complete-pairing or heartbeat, or excess-worker unpair to pair this computer again");
     const origin = process.argv[3] ?? "http://127.0.0.1:4310";
     const result = await beginPairing(origin, process.argv[4] ?? os.hostname());
-    await mkdir(stateDir, { recursive: true });
+    await mkdir(stateDir, { recursive: true, mode: 0o700 });
     await writeIdentity(path, result.identity);
+    if (process.platform === "linux" && origin.startsWith("https://")) await saveControllerOrigin(stateDir, origin, result.identity.publicKey);
     print({ product: "EXCESS", code: result.code, fingerprint: result.fingerprint, expiresAt: result.expiresAt, identityFile: path,
       next: "Approve this code and fingerprint with your wallet, then run complete-pairing." });
   } else if (command === "complete-pairing") process.stdout.write(JSON.stringify(await finishPairing(path)) + "\n");
@@ -175,9 +190,39 @@ try {
   else if (command === "drain" || command === "stop-now") {
     await setWorkerControl(stateDir, command === "drain" ? "drain" : "stop");
     process.stdout.write(JSON.stringify({ product: "EXCESS", requested: command, status: await readWorkerStatus(stateDir) }) + "\n");
+  } else if (command === "controller" && positional[0] === "setup") {
+    if (process.platform !== "linux" || positional.length !== 2) throw Error("Usage: worker controller setup <paired HTTPS origin>");
+    const identity = await controllerIdentity(path);
+    if (positional[1] !== identity.origin) throw Error("Controller origin must match the paired exchange");
+    await chmod(stateDir, 0o700);
+    await saveControllerOrigin(stateDir, positional[1], identity.publicKey);
+    print({ product: "EXCESS", controller: "configured", origin: identity.origin });
   } else if (command === "run" || command === "resume") {
     const controller = new AbortController();
     process.once("SIGINT", () => controller.abort()); process.once("SIGTERM", () => controller.abort());
+    if (process.platform === "linux") {
+      const identity = await controllerIdentity(path);
+      const origin = await configuredControllerOrigin(stateDir, identity.origin, identity.publicKey);
+      const packageDir = resolve(process.argv[1] ?? "", "..", "..", "..", "..");
+      const policy = await readWorkerPolicy(stateDir), current = await currentRelease();
+      const cancellableFetch = (signal: AbortSignal): typeof fetch => (url, init) => fetch(url, {
+        ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+      });
+      const updatePlan = createControllerUpdatePlan({ autoUpdate: policy.autoUpdate, supervised: supervisedBySystemd(), current,
+        check: signal => checkForUpdate(origin, current, cancellableFetch(signal)),
+        readControl: async signal => { signal.throwIfAborted(); return readWorkerControlRequest(stateDir); },
+        install: (signal, revision) => startWorkerUpdate(stateDir, revision, () => {
+          signal.throwIfAborted(); return runInstaller(origin, true, cancellableFetch(signal));
+        }),
+      });
+      const run = await startLinuxController({ packageDir, installDir, stateDir, origin, signal: controller.signal,
+        ...(updatePlan ? { updates: updatePlan.callbacks } : {}) });
+      const result = await run.closed;
+      const status = await readWorkerStatus(stateDir);
+      print({ product: "EXCESS", ...status, controllerCleanup: result.cleaned });
+      if (!result.cleaned || result.code !== 0) process.exitCode = 1;
+      else process.exitCode = await updatePlan?.finish({ run: result, status, signal: controller.signal });
+    } else {
     await setWorkerControl(stateDir, "run");
     // The paired exchange is where updates come from; auto-install needs a supervisor to start the new version.
     let origin: string | undefined;
@@ -187,6 +232,7 @@ try {
     const result = await runWorker({ identityPath: path, stateDir, installDir, telemetry: observeLocalResources, signal: controller.signal, ...(update ? { update } : {}) });
     print({ product: "EXCESS", ...await readWorkerStatus(stateDir) });
     if (result.reason === "updated") process.exitCode = UPDATED_EXIT_CODE;
+    }
   } else if (command === "service") print(await workerService(positional[0]));
   else if (command === "update") {
     if (flags.has("--auto")) {

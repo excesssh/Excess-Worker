@@ -5,11 +5,13 @@ import { AdapterError, parseTextRequest, parseTextResult, type MediaAdapter, typ
 import { MAX_WORKER_MESSAGE_BYTES, MEDIA_LIMITS, mediaRequestSchema, mediaResultSchema, mediaResultUnits, requestDigest, TEXT_LIMITS, textChunkSchema,
   type ArtifactRef, type MediaRequest, type MediaResult, type TextChunk } from "@excess/protocol";
 import { createServedAdapter, isMediaAdapter, servedModel, type ServedAdapter } from "./served.js";
-import { createWorkerConnection, WorkerConnectionError, type WorkerConnection } from "./identity.js";
+import { createWorkerConnection, WorkerConnectionError, type WorkerConnection, type CoordinatorFetcher } from "./identity.js";
 import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
 import { readWorkerOffers, readWorkerAutoPrices, saveWorkerAutoPrices, automaticWorkerPrices, type WorkerOffer } from "./offer.js";
-import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl, writeWorkerStatus, WorkerShutdownError, type WorkerMode, type WorkerProbe } from "./control.js";
+import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl as setDirectWorkerControl, writeWorkerStatus as writeDirectWorkerStatus, stateWriteName,
+  WorkerShutdownError, type WorkerMode, type WorkerProbe, type StateWriteContext } from "./control.js";
+import type { WorkerStateWriter } from "./controller-state.js";
 import { checkForUpdate, runInstaller, type UpdateCheck } from "./update.js";
 
 type Assignment = {
@@ -21,6 +23,10 @@ type Timing = { pollMs: number; heartbeatMs: number; renewMs: number; monitorMs:
 export type WorkerRuntimeOptions = {
   identityPath: string; stateDir: string; installDir: string; policy?: WorkerPolicy;
   telemetry?: () => Promise<ResourceObservation>; signal?: AbortSignal;
+  /** Explicit transport selected by the native-confined entry; no global or environment fallback. */
+  fetcher?: CoordinatorFetcher;
+  /** Confined entry writes through the outside quota-enforcing store. */
+  stateWriter?: WorkerStateWriter;
   // Dependency injection is for explicit local tests, never a CLI fallback.
   adapter?: ServedAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null; offers?: WorkerOffer[];
   /** Checks the paired exchange for a newer published worker (first after firstCheckMs, then every intervalMs) and reports
@@ -83,7 +89,8 @@ const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
 const sha256 = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
 const artifactRefs = (output: MediaResult): ArtifactRef[] => output.kind === "embedding" ? [output.vectors] : output.kind === "image" ? output.images : [];
 // Output artifact bytes are journaled beside the result so a lost upload can be resent after a restart.
-async function writePrivateFile(path: string, data: Buffer): Promise<void> {
+async function writePrivateFile(path: string, data: Buffer, context?: StateWriteContext): Promise<void> {
+  if (context) { await context.writer.replace(stateWriteName(context, path), data); return; }
   const temporary = path + ".pending-" + randomUUID();
   const file = await open(temporary, "wx", 0o600);
   try { await file.writeFile(data); await file.sync(); } finally { await file.close(); }
@@ -120,8 +127,8 @@ export async function unpairDevice(stateDir: string): Promise<{ retired: string 
 }
 
 class AttemptJournal {
-  private constructor(readonly dir: string, readonly deviceId: string, private bytes: number, readonly entries: Map<string, Entry>) {}
-  static async load(dir: string, deviceId: string): Promise<AttemptJournal> {
+  private constructor(readonly dir: string, readonly deviceId: string, private bytes: number, readonly entries: Map<string, Entry>, private readonly writes?: StateWriteContext) {}
+  static async load(dir: string, deviceId: string, writes?: StateWriteContext): Promise<AttemptJournal> {
     const path = join(dir, "attempts.jsonl");
     const markerPath = join(dir, "journal-owner.json");
     let initialized = false;
@@ -135,8 +142,11 @@ class AttemptJournal {
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       if (initialized) throw Error("Worker attempt journal missing; explicit recovery required");
-      const file = await open(path, "wx", 0o600);
-      try { await file.sync(); } finally { await file.close(); }
+      if (writes) await writes.writer.replace("attempts.jsonl", Buffer.alloc(0));
+      else {
+        const file = await open(path, "wx", 0o600);
+        try { await file.sync(); } finally { await file.close(); }
+      }
       data = Buffer.alloc(0);
     }
     if (data.length > MAX_JOURNAL_BYTES) throw Error("Worker attempt journal requires maintenance");
@@ -154,18 +164,24 @@ class AttemptJournal {
     }
     // A torn final append cannot erase an earlier durable 'seen' record.
     if (complete !== data.length) {
-      const file = await open(path, "r+");
-      try { await file.truncate(complete); await file.sync(); } finally { await file.close(); }
+      if (writes) await writes.writer.replace("attempts.jsonl", data.subarray(0, complete));
+      else {
+        const file = await open(path, "r+");
+        try { await file.truncate(complete); await file.sync(); } finally { await file.close(); }
+      }
     }
-    if (!initialized) await atomicPrivateJson(markerPath, { version: 1, deviceId });
-    return new AttemptJournal(dir, deviceId, complete, entries);
+    if (!initialized) await atomicPrivateJson(markerPath, { version: 1, deviceId }, writes);
+    return new AttemptJournal(dir, deviceId, complete, entries, writes);
   }
   async append(value: Entry): Promise<void> {
     const line = JSON.stringify(value) + "\n";
     const bytes = Buffer.byteLength(line);
     if (this.bytes + bytes > MAX_JOURNAL_BYTES) throw Error("Worker attempt journal requires maintenance");
-    const file = await open(join(this.dir, "attempts.jsonl"), "a", 0o600);
-    try { await file.writeFile(line); await file.sync(); } finally { await file.close(); }
+    if (this.writes) await this.writes.writer.appendJournal(Buffer.from(line));
+    else {
+      const file = await open(join(this.dir, "attempts.jsonl"), "a", 0o600);
+      try { await file.writeFile(line); await file.sync(); } finally { await file.close(); }
+    }
     this.bytes += bytes; this.entries.set(value.assignment.attemptId, value);
   }
   resultPath(a: Assignment): string { return join(this.dir, a.attemptId + ".result.json"); }
@@ -174,10 +190,11 @@ class AttemptJournal {
     return join(this.dir, `${a.attemptId}.artifact.${artifactDigest}.bin`);
   }
   async removeOutput(a: Assignment): Promise<void> {
-    try { await unlink(this.resultPath(a)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    const remove = async (path: string) => this.writes ? this.writes.writer.removeOutput(stateWriteName(this.writes, path)) : unlink(path);
+    try { await remove(this.resultPath(a)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     for (const name of await readdir(this.dir)) {
       if (!name.startsWith(a.attemptId + ".artifact.")) continue;
-      try { await unlink(join(this.dir, name)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      try { await remove(join(this.dir, name)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
   }
   async set(a: Assignment, state: Entry["state"], reason: string, resultDigest?: string): Promise<Entry> {
@@ -188,8 +205,15 @@ class AttemptJournal {
 
 export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state: string; reason: string }> {
   const dir = resolve(options.stateDir);
-  await mkdir(dir, { recursive: true });
-  const releaseLock = await acquireRuntimeLock(dir);
+  const writes = options.stateWriter ? { stateDir: dir, writer: options.stateWriter } : undefined;
+  if (!writes) await mkdir(dir, { recursive: true });
+  // The trusted outside bootstrap holds the host-PID lock. Private PID1 must
+  // never record its namespace-relative PID as a host process owner.
+  const releaseLock = writes ? Object.assign(async () => {}, { markShutdownUnverified: () => writes.writer.markShutdownUnverified() }) : await acquireRuntimeLock(dir);
+  const writeWorkerStatus: typeof writeDirectWorkerStatus = (state, status) => writeDirectWorkerStatus(state, status, writes);
+  // Only the outside bootstrap changes control. Internal fatal/abort paths
+  // already stop this loop; the parent records stop when its tree is reaped.
+  const setWorkerControl: typeof setDirectWorkerControl = (state, mode) => writes ? Promise.resolve() : setDirectWorkerControl(state, mode);
   let adapter: ServedAdapter | undefined;
   let connection: WorkerConnection | undefined;
   let lastProbe: WorkerProbe | undefined;
@@ -226,9 +250,9 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       await writeWorkerStatus(dir, { state: statusState, reason: statusReason });
       return { state: "stopped", reason: "explicit_resume_required" };
     }
-    connection = options.connection ?? await createWorkerConnection(options.identityPath);
+    connection = options.connection ?? await createWorkerConnection(options.identityPath, options.fetcher);
     if (!uuid.test(connection.deviceId)) throw Error("Invalid device identity");
-    const journal = await AttemptJournal.load(dir, connection.deviceId);
+    const journal = await AttemptJournal.load(dir, connection.deviceId, writes);
     for (const entry of [...journal.entries.values()]) {
       if (entry.state === "seen" || entry.state === "running") await journal.set(entry.assignment, "abandoned", "interrupted_before_receipt");
       if (entry.state !== "result_pending") await journal.removeOutput(entry.assignment);
@@ -279,7 +303,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         // A malformed or unreadable offers file keeps the last good prices rather than stopping supply.
         if (!fixedOffers) offers = await readWorkerOffers(dir, policy.model).catch(() => offers);
         for(const assetId of lastPublished.keys())if(!offers.some(item=>item.assetId===assetId&&item.auto))lastPublished.delete(assetId);
-        const publication=connection!.origin&&pricingReady?await automaticWorkerPrices(connection!.origin,policy.model,offers,lastPublished,lifetime.signal):offers;
+        const publication=connection!.origin&&pricingReady?await automaticWorkerPrices(connection!.origin,policy.model,offers,lastPublished,lifetime.signal,options.fetcher):offers;
         // One offer per priced asset, each at its own price; they share the device's single slot.
         published = publication.length > 0;
         for (const offer of publication) {
@@ -289,7 +313,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
             // the next worker run still recognises that ask as its own.
             if(offer.auto&&pricingReady){
               lastPublished.set(offer.assetId,offer.netUnits);
-              try {await saveWorkerAutoPrices(dir,policy.model,lastPublished);}catch{pricingReady=false;}
+              try {await saveWorkerAutoPrices(dir,policy.model,lastPublished,writes);}catch{pricingReady=false;}
             }
             const saved=offers.find(item=>item.assetId===offer.assetId)!;
             const netUnits=pricingReady?offer.netUnits:saved.netUnits;
@@ -474,8 +498,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         const output = await leased(media.execute(request, { signal: controller.signal, inputs }));
         const result = boundedResult(request, output, maxUnits);
         authorizeExecution();
-        for (const artifact of output.artifacts) await writePrivateFile(journal.artifactPath(a, artifact.ref.digest), artifact.data);
-        await atomicPrivateJson(journal.resultPath(a), result);
+        for (const artifact of output.artifacts) await writePrivateFile(journal.artifactPath(a, artifact.ref.digest), artifact.data, writes);
+        await atomicPrivateJson(journal.resultPath(a), result, writes);
         authorizeExecution();
         const entry = await journal.set(a, "result_pending", "awaiting_result_receipt", requestDigest(result));
         await leased(sendResult(entry, authorizeExecution, controller.signal));
@@ -563,7 +587,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         if (Buffer.byteLength(JSON.stringify(output)) > MAX_WORKER_MESSAGE_BYTES - 4096) throw Error("Result exceeds signed transport limit");
         const outputDigest = requestDigest(output);
         authorizeExecution();
-        await atomicPrivateJson(journal.resultPath(a), output);
+        await atomicPrivateJson(journal.resultPath(a), output, writes);
         authorizeExecution();
         const entry = await journal.set(a, "result_pending", "awaiting_result_receipt", outputDigest);
         await sendResult(entry, authorizeExecution);

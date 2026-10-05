@@ -10,33 +10,46 @@ npm run privacy
 npm run setup:project
 ```
 
-The source verification workflow builds and tests this standalone workspace on Ubuntu 24.04 and Windows Server 2022 with read-only repository access and pinned actions. It checks every reachable commit for privacy and project identity. It does not establish model execution or release readiness.
+The source workflow checks reachable history for privacy and project identity. Ubuntu 24.04 also builds the Linux helpers and a closed package fixture, then runs Linux controller, hostile-boundary and package checks. Windows Server 2022 validates the Windows adapter and source build; it does not run a Linux controller or establish Windows Node-controller support.
 
-Use npm.cmd in Windows PowerShell. Project setup installs branded commit identity and privacy hooks only when no other hook path is configured; existing identity hooks are preserved.
+Use `npm.cmd` in Windows PowerShell. Project setup installs branded commit identity and privacy hooks only when no other hook path is configured; existing identity hooks are preserved.
 
-Linux x64 packages require GCC and the native helper:
+## Linux native helpers
+
+Linux x64 packages require GCC and three separately built helpers. Keep generated files in a neutral build directory, such as `.cache/native-linux`:
 
 ```sh
-node scripts/public-worker/build-linux-sandbox.mjs
+mkdir -p .cache/native-linux
+node scripts/public-worker/build-linux-sandbox.mjs .cache/native-linux
+node scripts/public-worker/build-linux-controller.mjs .cache/native-linux
+node scripts/public-worker/build-linux-egress-peer.mjs .cache/native-linux
 ```
 
-The helper is compiled with path-prefix mapping, no debug information, hardening flags and a checked binary hash. Its system compiler and C library are presently observed local dependencies, not a hermetic pinned build environment. Linux execution requires a non-root process and Landlock ABI 6 or newer; unsupported profiles refuse execution. Windows x64 uses a C# AppContainer helper with a pinned deterministic build. Prepare Microsoft compiler and reference assemblies with `python scripts/public-worker/prepare-windows-toolchain.py`, then run `node scripts/public-worker/build-windows-sandbox.mjs`. See [native build inputs](NATIVE-BUILD.md) for exact pins and external dependencies.
+The helpers are `excess-sandbox` (`linux-landlock-v1`), `excess-controller` (`linux-controller-namespaces-v1`) and `excess-egress-peer` (`linux-af-unix-peercred-v1`). Each builder writes a SHA-256 integrity file. Builds use compiler hardening and path mapping, but the system GCC and C library are local dependencies; the build is not hermetic.
+
+The controller requires a non-root x64 process, user and network namespace support, Landlock ABI 6 or newer, seccomp, and a dedicated cgroup v2 user service named `excess-worker.service`. The controller verifies finite memory, zero swap, task-count and CPU limits from that outside cgroup and refuses to start if they are missing. The default service is capped at 75% of detected memory, at most 12 GiB, with swap disabled, at most 128 tasks and at most 200% CPU. See [native build inputs](NATIVE-BUILD.md) and [platform status](PLATFORMS.md).
+
+To create a **closed local package fixture** after building the TypeScript workspace and helpers:
+
+```sh
+npm run build
+node scripts/package-worker.mjs --platform linux-x64 --native-dir .cache/native-linux --require-native --out .cache/linux-package
+```
+
+The package manifest deliberately records `publicDistributionReady: false`, `controller.verified: false`, `cpuVerified: false` and `gpuVerified: false`. It contains no models or model runtimes. Packaging is not installation or release approval.
+
+## Windows x64
+
+Windows x64 packages require a Windows x64 builder and the pinned C# AppContainer helper. Prepare Microsoft compiler and reference assemblies with `python scripts/public-worker/prepare-windows-toolchain.py`, then run `node scripts/public-worker/build-windows-sandbox.mjs`. See [native build inputs](NATIVE-BUILD.md) for exact pins and external dependencies. The current public source contains the Windows adapter boundary, not a Node controller.
 
 ```sh
 node scripts/package-worker.mjs --platform win32-x64 --require-native --out <neutral-build-output>
-node scripts/package-worker.mjs --platform linux-x64 --require-native --out <neutral-build-output>
 ```
 
-Windows packaging requires a Windows x64 builder. `--native-dir` selects a separately built helper directory. Each package includes only its platform helper and matching hash pin, and records that hash in its manifest. `--require-native` refuses a missing helper; Linux always requires it. A source-only Windows diagnostics package may omit the helper and records its profile as unavailable. Local signed candidates require both verified native boundaries. Both packages use pinned official Node 24.11.1 archive hashes, preserve Node and zod licence notices, and inspect selected bytes before persistence. The upstream Linux Node binary contains its public iojs build-service path; this is upstream provenance, not a local builder identity. Absolute Windows home paths and the project's blocked owner identifier remain forbidden.
+The Windows helper requires the .NET Framework runtime. That runtime and the operating system remain external execution dependencies. Pinned compiler/reference inputs and matching helper bytes do not establish independent reproducibility of Windows, the CLR, Node.js, GPU drivers or upstream model-runtime binaries.
 
-Archive ordering, timestamps, modes and ownership are deterministic. SOURCE_DATE_EPOCH defaults to the source commit time; EXCESS_RELEASE_SEQUENCE selects the positive release sequence. Packages always carry publicDistributionReady=false while the isolated model and bootstrap gates are incomplete.
+## Reproducibility and release status
 
-Compare packages from two independent clean directories at the same source commit. Securely inject the project-controlled Minisign secret into EXCESS_WORKER_MINISIGN_KEY, set EXCESS_MINISIGN to the reviewed Minisign executable, then prepare a local candidate:
+Archive ordering, timestamps, modes and ownership are deterministic. `SOURCE_DATE_EPOCH` defaults to the source commit time; `EXCESS_RELEASE_SEQUENCE` selects the positive release sequence. The package scripts use pinned official Node 24.11.1 archive hashes and preserve Node and zod licence notices. They inspect selected bytes before persistence. The upstream Linux Node binary contains its public iojs build-service path; this is upstream provenance, not a local builder identity. Absolute Windows home paths and the project's blocked owner identifier remain forbidden.
 
-```sh
-node scripts/public-worker/release.mjs <build-a/packages> <build-b/packages> <candidate-output>
-```
-
-The script scans source history, requires byte-identical archives, binds their names to the full source commit, signs release.json and verifies it with both the bundled verifier and Minisign. Key material is stored briefly in a user-only directory and removed. Keep the signing key in secure project credential storage and never commit it or place it in shell arguments.
-
-CANDIDATE.txt records the closed publication gate. Matching builds on this machine establish per-artifact local reproducibility; they do not establish independent hardware execution, a hermetic native build, or universal reproducibility.
+No release has been published. Local reproducible builds establish artifact equality only. A locally signed, closed candidate may be used to test signature and update-verifier behavior; its signature does not certify runtime readiness. Installation, automatic updates, production distribution, external coordinator/payment execution and GPU support remain unverified or closed. Do not publish a binary from this source preview.

@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "result": "passed",
+  "profile": "linux-controller-namespaces-v1",
+  "execution": {
+    "path": "read-only Linux controller entry with an explicit local-fixture trust seam",
+    "platform": "Linux x64 under WSL",
+    "backend": "cpu",
+    "model": "Qwen3-4B-Q4_K_M",
+    "runtime": "llama.cpp-b10809",
+    "threads": 2,
+    "memoryLimitMiB": 8192,
+    "generatedTokens": 3,
+    "peakRssMiB": 3617
+  },
+  "coordinator": {
+    "kind": "local HTTPS fixture",
+    "tlsTrust": "ephemeral in-memory test CA",
+    "database": "test-only PGlite",
+    "ledger": "synthetic; no chain backing or paid demand"
+  },
+  "journey": {
+    "devicePaired": true,
+    "persistedHeartbeatSequence": 5,
+    "receiptAccepted": true,
+    "output": "Ready.",
+    "drainRequestedDuringExecution": true,
+    "exitCode": 0,
+    "cleanupConfirmed": true,
+    "hostLockReleased": true,
+    "deviceRevoked": true,
+    "modelBytesChanged": false
+  },
+  "limitations": {
+    "realPayments": false,
+    "publicCoordinator": false,
+    "productionDatabase": false,
+    "publicSourceCommitBinding": false,
+    "packageInstalled": false,
+    "packageReadyForDistribution": false,
+    "gpuVerified": false
+  },
+  "note": "Local integration evidence only. It does not demonstrate real funding, an external coordinator, an installed or published package, or GPU execution."
+}
