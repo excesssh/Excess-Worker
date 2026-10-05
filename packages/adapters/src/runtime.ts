@@ -10,6 +10,7 @@ import { verifyInstallation } from "./install.js";
 import { startSupervisedProcess,type ManagedProcess } from "./process.js";
 import { AnswerGate,readLlamaStream,unansweredReasoning,type ChunkCallback } from "./stream.js";
 import { PROMPT_FORMATS } from "./prompt-format.js";
+import { isolateRuntime, type RuntimeIsolation } from "./isolation.js";
 
 export interface AdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:number;modelId?:string;backend?:Backend}
 export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
@@ -19,7 +20,7 @@ export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<A
   residentMb?():number}
 /** Internal seam: where the verified server and model are. Tests substitute a fixture server; the package entry point exposes
  * only createTextAdapter, which always re-verifies the pinned installation. */
-export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}>;executable?:string;prefixArgs?:readonly string[]}
+export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
 // Sampling as pinned in the capability; version 3 entries predate minP and repeatPenalty and used llama-server's neutral values.
@@ -57,7 +58,7 @@ export async function boundedJson(response:Response,maxBytes=65536):Promise<unkn
   try{return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(chunks)));}catch{throw new AdapterError("RUNTIME_RESPONSE_INVALID");}
 }
 export function createTextAdapter(installDir:string,inputOptions:AdapterOptions):TextAdapter {
-  return createTextAdapterWith(inputOptions,{resolve:async()=>{
+  return createTextAdapterWith(inputOptions,{isolate:true,resolve:async()=>{
     const installed=await verifyInstallation(installDir,inputOptions?.modelId??DEFAULT_MODEL_ID,inputOptions?.backend??"cpu");
     return {serverPath:installed.serverPath,modelPath:installed.modelPath};
   }});
@@ -71,8 +72,8 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
   const format=pinned,values=parsedSampling.data;
   if(options.threads>availableParallelism()||options.maxMemoryMb*1048576>totalmem())throw new AdapterError("ADAPTER_POLICY_EXCEEDS_MACHINE");
   const processes=new AdapterProcessState();
-  let origin="",secret="",busy=false,stopping=new AbortController(),marker:number[]=[];
-  async function stop():Promise<void> {stopping.abort();await processes.stop();}
+  let origin="",secret="",busy=false,stopping=new AbortController(),marker:number[]=[],isolation:RuntimeIsolation|undefined;
+  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;}
   const post=(path:string,body:unknown,signal:AbortSignal)=>fetch(origin+path,{method:"POST",redirect:"error",signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+secret},body:JSON.stringify(body)});
   const tokenList=(limit:number)=>z.object({tokens:z.array(z.number().int().nonnegative()).max(limit)});
   async function ensure(signal:AbortSignal) {
@@ -95,12 +96,15 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       for(const key of ["HOME","TMPDIR"])if(process.env[key])env[key]=process.env[key];
     }
     // A split model is opened through its first part; llama.cpp loads the other parts from their standard names beside it.
-    processes.attach(startSupervisedProcess(launch.executable??installed.serverPath,[...(launch.prefixArgs??[]),"--model",installed.modelPath,"--host","127.0.0.1","--port",String(selectedPort),
+    const runtimeArgs=[...(launch.prefixArgs??[]),"--model",installed.modelPath,"--host","127.0.0.1","--port",String(selectedPort),
       "--threads",String(options.threads),"--threads-batch",String(options.threads),"--threads-http","2","--ctx-size",String(entry.capability.contextTokens),
       // GPU builds (CUDA, Vulkan) offload every layer; the CPU build keeps them all on the processor. Prompts are rendered by the
       // pinned format, so the GGUF's own chat template is never used.
-      "--parallel","1","--n-gpu-layers",backend==="cpu"?"0":"999","--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"],
-      {cwd:dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576}));
+      "--parallel","1","--n-gpu-layers",backend==="cpu"?"0":"999","--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"];
+    if(launch.isolate)isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[dirname(installed.serverPath),dirname(installed.modelPath)],
+      maxMemoryBytes:options.maxMemoryMb*1048576,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+    processes.attach(startSupervisedProcess(isolation?.executable??launch.executable??installed.serverPath,isolation?.args??runtimeArgs,
+      {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576}));
     for(;;) {
       signal.throwIfAborted();if(!processes.process?.alive())throw processes.process?.error()??new AdapterError("RUNTIME_EXITED");
       try {const response=await fetch(origin+"/health",{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error"});if(response.ok){await boundedJson(response,4096);break;}await response.body?.cancel();}

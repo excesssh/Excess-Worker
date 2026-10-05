@@ -10,6 +10,7 @@ import { verifyMediaInstallation } from "./media-install.js";
 import { AdapterProcessState,boundedJson,port } from "./runtime.js";
 import { startSupervisedProcess } from "./process.js";
 import { artifactRef,parsePng,parseWav,sha256,strictBase64,toneWav } from "./media-format.js";
+import { isolateRuntime, type RuntimeIsolation } from "./isolation.js";
 
 export interface MediaAdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:number;modelId:string;backend?:Backend}
 export interface MediaArtifact {ref:ArtifactRef;data:Buffer}
@@ -29,7 +30,7 @@ export interface MediaAdapter {
 }
 /** Internal seam: where the verified server and model files are. Tests substitute a fixture server; the package entry point
  * exposes only createMediaAdapter, which always re-verifies the pinned installation. */
-export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonly<Record<string,string>>}>;executable?:string;prefixArgs?:readonly string[]}
+export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonly<Record<string,string>>}>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
 
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   modelId:z.string().min(1).max(64),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
@@ -51,7 +52,8 @@ export function cleanTranscript(content:string):string {
   return text.replace(/<\/asr_text>\s*$/,"").trim();
 }
 export function createMediaAdapter(installDir:string,options:MediaAdapterOptions):MediaAdapter {
-  return createMediaAdapterWith(options,{resolve:async()=>{const installed=await verifyMediaInstallation(installDir,options?.modelId,options?.backend??"cpu");return {serverPath:installed.serverPath,files:installed.files};}});
+  if(mediaCatalogEntry(options.modelId).runtime!=="llama.cpp")throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
+  return createMediaAdapterWith(options,{isolate:true,resolve:async()=>{const installed=await verifyMediaInstallation(installDir,options?.modelId,options?.backend??"cpu");return {serverPath:installed.serverPath,files:installed.files};}});
 }
 export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:MediaLaunch):MediaAdapter {
   const parsed=optionsSchema.safeParse(inputOptions);
@@ -61,8 +63,8 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
   if(options.threads>availableParallelism()||options.maxMemoryMb*MiB>totalmem())throw new AdapterError("ADAPTER_POLICY_EXCEEDS_MACHINE");
   const limits=entry.capability.limits as {sizes?:number[];maxSteps?:number;maxImages?:number};
   const processes=new AdapterProcessState();
-  let origin="",secret="",busy=false,stopping=new AbortController();
-  async function stop():Promise<void> {stopping.abort();await processes.stop();}
+  let origin="",secret="",busy=false,stopping=new AbortController(),isolation:RuntimeIsolation|undefined;
+  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;}
   const headers=(json:boolean)=>({...(json?{"Content-Type":"application/json"}:{}),...(secret?{Authorization:"Bearer "+secret}:{})});
   function serverArgs(files:Readonly<Record<string,string>>,selectedPort:number):string[] {
     const file=(name:string)=>{const path=files[name];if(!path)throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");return path;};
@@ -97,8 +99,11 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
       for(const key of ["HOME","TMPDIR"])if(process.env[key])env[key]=process.env[key];
     }
     if(secret)env.LLAMA_API_KEY=secret;
-    processes.attach(startSupervisedProcess(launch.executable??installed.serverPath,[...(launch.prefixArgs??[]),...serverArgs(installed.files,selectedPort)],
-      {cwd:dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*MiB}));
+    const runtimeArgs=[...(launch.prefixArgs??[]),...serverArgs(installed.files,selectedPort)];
+    if(launch.isolate)isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[dirname(installed.serverPath),...Object.values(installed.files).map(file=>dirname(file))],
+      maxMemoryBytes:options.maxMemoryMb*MiB,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+    processes.attach(startSupervisedProcess(isolation?.executable??launch.executable??installed.serverPath,isolation?.args??runtimeArgs,
+      {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*MiB}));
     // sd-server only listens once its model is loaded; llama-server reports readiness on /health.
     const readiness=llama?"/health":"/v1/models";
     for(;;) {
