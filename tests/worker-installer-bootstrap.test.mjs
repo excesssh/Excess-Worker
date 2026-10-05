@@ -61,7 +61,7 @@ function releaseFor(archive, version = "1.1.0", sourceCommit = commit, sequence 
 
 test("Windows standalone installer stages signed fixtures and rejects altered or closed-gate inputs", {
   skip: process.platform !== "win32",
-}, async () => {
+}, async t => {
   const base = await mkdtemp(resolve(".cache/worker-installer-bootstrap-"));
   try {
     const tools = join(base, "tools"); await mkdir(tools);
@@ -123,6 +123,16 @@ test("Windows standalone installer stages signed fixtures and rejects altered or
       return { child, done };
     }
 
+    const token = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      "$p=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent()); [Console]::Write($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"], { encoding: "utf8" });
+    assert.equal(token.status, 0, "the test identifies its actual Windows token");
+    assert.ok(["True", "False"].includes(token.stdout.trim()));
+    if(token.stdout.trim() === "True") {
+      await runFixture(archive, manifestBytes, signed.signature, "run as the installing user, not as Administrator");
+      t.diagnostic("elevated-token refusal and absent install root verified");
+      t.skip("normal-user installation fixtures require a non-elevated host");
+      return;
+    }
     await runFixture(archive, manifestBytes, signed.signature, "distribution gate is closed");
     const changedArchive = Buffer.from(archive); changedArchive[changedArchive.length - 5] ^= 1;
     await runFixture(changedArchive, manifestBytes, signed.signature, "archive size or SHA-256");
