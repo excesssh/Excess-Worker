@@ -30,15 +30,16 @@ function buildHelper() {
 }
 
 function getAclSnapshot(targets) {
-  return targets.map((target) => {
-    const command = `(Get-Acl -LiteralPath '${target}').Sddl`;
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', command], {
-      encoding: 'utf8',
-      timeout: 10000,
-      windowsHide: true,
-    });
-    assert.equal(result.status, 0, 'ACL snapshot should be readable');
-    const aces = result.stdout.trim().match(/\([^)]*\)/g) || [];
+  const targetList = targets.map((target) => `'${target.replaceAll("'", "''")}'`).join(',');
+  const command = `$targets=@(${targetList}); foreach($target in $targets){$acl=Get-Acl -LiteralPath $target; [Console]::WriteLine($acl.Sddl)}`;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', command], {
+    encoding: 'utf8',
+    timeout: 15000,
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, 'ACL snapshot should be readable');
+  return result.stdout.trim().split(/\r?\n/).map((sddl) => {
+    const aces = sddl.match(/\([^)]*\)/g) || [];
     return aces.length + ':' + aces.sort().join('|');
   });
 }
@@ -87,12 +88,13 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
       arguments: ['--probe-connect', '127.0.0.1', String(port), runtimeRoot, unselectedFile, selectedModel, unselectedModel],
       memoryLimitBytes: 512 * 1024 * 1024,
       processLimit: 1,
+      timeoutMilliseconds: 15000,
     };
     const child = spawnSync(helper, [], {
       cwd: root,
       input: JSON.stringify(config),
       encoding: 'utf8',
-      timeout: 45000,
+      timeout: 90000,
       windowsHide: true,
       env: { ...process.env, EXCESS_SANDBOX_SENTINEL: 'private-probe-value' },
     });
@@ -102,10 +104,29 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     assert.match(child.stdout, /status=cleanup-ok/);
     const exit = Number(child.stdout.match(/code=(\d+)/)[1]);
     assert.ok(exit === 42 || exit === 43, `expected AppContainer loopback denial, observed status code ${exit}`);
+    assert.deepEqual(readdirSync(scratch).sort(), scratchEntriesBefore, 'private per-run scratch should be removed');
+
+    const boundedConfig = {
+      ...config,
+      arguments: ['--probe-hang'],
+      timeoutMilliseconds: 500,
+    };
+    const bounded = spawnSync(helper, [], {
+      cwd: root,
+      input: JSON.stringify(boundedConfig),
+      encoding: 'utf8',
+      timeout: 90000,
+      windowsHide: true,
+      env: { ...process.env, EXCESS_SANDBOX_SENTINEL: 'private-probe-value' },
+    });
+    assert.equal(bounded.error, undefined, 'bounded launcher should finish and clean up');
+    assert.match(bounded.stdout, /status=started pid=\d+/);
+    assert.match(bounded.stdout, /status=timed-out pid=\d+ code=124/);
+    assert.match(bounded.stdout, /status=cleanup-ok/);
     const aclAfter = getAclSnapshot(aclTargets);
     assert.equal(aclAfter.every((value, index) => value === aclBefore[index]), true,
       'all temporary ACL grants should be restored');
-    assert.deepEqual(readdirSync(scratch).sort(), scratchEntriesBefore, 'private per-run scratch should be removed');
+    assert.deepEqual(readdirSync(scratch).sort(), scratchEntriesBefore, 'bounded-run scratch should be removed');
   } finally {
     await new Promise((resolve) => server.close(resolve));
     if (existsSync(unselectedFile)) unlinkSync(unselectedFile);

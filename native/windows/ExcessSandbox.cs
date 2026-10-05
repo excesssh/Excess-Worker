@@ -31,6 +31,7 @@ internal static class ExcessSandbox
     private const uint OpenExisting = 3;
     private const uint FileAttributeNormal = 0x80;
     private const uint WaitObject0 = 0;
+    private const uint WaitTimeout = 0x00000102;
     private const uint Infinite = 0xffffffff;
 
     private static int Main(string[] args)
@@ -39,6 +40,11 @@ internal static class ExcessSandbox
             return ProbeConnect(args);
         if (args.Length > 0 && args[0] == "--probe-idle")
             return 57;
+        if (args.Length > 0 && args[0] == "--probe-hang")
+        {
+            System.Threading.Thread.Sleep(-1);
+            return 58;
+        }
 
         var pinnedFiles = new List<FileStream>();
         try
@@ -68,7 +74,9 @@ internal static class ExcessSandbox
             ulong memoryLimitBytes = RequiredUInt64(config, "memoryLimitBytes");
             currentStage = "config-process-limit";
             uint processLimit = checked((uint)RequiredUInt64(config, "processLimit"));
-            if (memoryLimitBytes < 16UL * 1024 * 1024 || processLimit < 1 || processLimit > 256)
+            uint timeoutMilliseconds = checked((uint)RequiredUInt64(config, "timeoutMilliseconds"));
+            if (memoryLimitBytes < 16UL * 1024 * 1024 || processLimit < 1 || processLimit > 256 ||
+                timeoutMilliseconds < 100 || timeoutMilliseconds > 600000)
                 return Fail("invalid-limits", 2);
 
             currentStage = "path-validation";
@@ -144,7 +152,7 @@ internal static class ExcessSandbox
 
                 currentStage = "launch";
                 childResult = RunInContainer(packageSid, appContainerSid, executable, runtimeRoot, scratch,
-                    childArguments, memoryLimitBytes, processLimit);
+                    childArguments, memoryLimitBytes, processLimit, timeoutMilliseconds);
             }
             finally
             {
@@ -181,7 +189,7 @@ internal static class ExcessSandbox
 
     private static int RunInContainer(SecurityIdentifier packageSid, IntPtr packageSidPtr,
         string executable, string runtimeRoot, string scratch, string[] arguments,
-        ulong memoryLimitBytes, uint processLimit)
+        ulong memoryLimitBytes, uint processLimit, uint timeoutMilliseconds)
     {
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
         if (job == IntPtr.Zero) throw LastError();
@@ -282,10 +290,22 @@ internal static class ExcessSandbox
             if (ResumeThread(thread) == 0xffffffff) throw LastError();
 
             Console.WriteLine("status=started pid=" + info.dwProcessId);
-            uint wait = WaitForSingleObject(process, Infinite);
+            uint wait = WaitForSingleObject(process, timeoutMilliseconds);
+            if (wait == WaitTimeout)
+            {
+                TerminateJobObject(job, 124);
+                if (WaitForSingleObject(job, Infinite) != WaitObject0) throw LastError();
+                Console.WriteLine("status=timed-out pid=" + info.dwProcessId + " code=124");
+                return 124;
+            }
             if (wait != WaitObject0) throw LastError();
             uint exitCode;
             if (!GetExitCodeProcess(process, out exitCode)) throw LastError();
+            if (WaitForSingleObject(job, 0) != WaitObject0)
+            {
+                if (!TerminateJobObject(job, exitCode)) throw LastError();
+                if (WaitForSingleObject(job, Infinite) != WaitObject0) throw LastError();
+            }
             Console.WriteLine("status=exited pid=" + info.dwProcessId + " code=" + exitCode);
             return exitCode > 255 ? 1 : (int)exitCode;
         }
@@ -644,6 +664,7 @@ internal static class ExcessSandbox
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returnedSize);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CreateProcess(string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string currentDirectory, ref StartupInfoEx startup, out ProcessInformation info);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
