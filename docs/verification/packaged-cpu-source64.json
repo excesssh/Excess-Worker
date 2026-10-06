@@ -1,0 +1,104 @@
+{
+  "format": 1,
+  "sourceCommit": "c689aa15261b22607a4ae3712865983dafdfb653",
+  "releaseSequence": 5,
+  "scope": "Actual isolated CPU jobs using unchanged local closed-package bytes; ephemeral fixture HTTPS coordinator, test-only PGlite and synthetic ledger. No production funds or chain backing.",
+  "model": {
+    "id": "qwen3-4b",
+    "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "copied": false
+  },
+  "platforms": [
+    {
+      "platform": "win32-x64",
+      "archiveSha256": "b871fe68575afe6b5db2b45e1782649d9e51b32aae1ce686df93b6b30e0bcfc3",
+      "packageInventorySha256": "37d6b6a5bd16c70914b2e150846d7287270bb7ecdf81e89ce19a199c379d5ea9",
+      "controllerHelperSha256": "1210d509ccd16f2d86547d849782d43e9b7b70581fa887489a699864c4c19d3f",
+      "productionEntrySha256": "4b81a1ad13d28551625c4bbe14556de0976a1dad725fbe6c289912b502800c1f",
+      "runtimeServerSha256": "cb29f66008d4d73cce17cab2c2569ab318eb244b0b2ca2a15024b44d90dfcd3f",
+      "proofDriverSha256": "e26d71d5dfe4185cf344c39f6c0fc34a1438cc813f49016953ec7853365f5e9b",
+      "elapsedSeconds": 37.17,
+      "threads": 2,
+      "configuredMemoryMb": 4096,
+      "probePeakRssMb": 3606,
+      "output": {
+        "text": "Ready.",
+        "generatedTokens": 3,
+        "sha256": "7883e8573e449a421a5a3f3b97c7a2ccc5c66298f01e7261acbe24fe3154710c"
+      },
+      "lifecycle": {
+        "paired": true,
+        "drainDuringBuyerJob": true,
+        "cleanExit": true,
+        "cleanupConfirmed": true,
+        "runtimeLockReleased": true,
+        "deviceRevoked": true,
+        "packageBytesUnchanged": true,
+        "modelUnchanged": true
+      }
+    },
+    {
+      "platform": "linux-x64",
+      "archiveSha256": "c41f4cf0e0b346d2dec66e8b1cab703254b9511b54a0ae90f892691397718c62",
+      "packageInventorySha256": "9a2edef99429ca579c276639270ab217171425822dd36dac8974a0480dddae56",
+      "controllerHelperSha256": "08404f09d5093a6d1bd0a80908424edce6550cd485854044ecd9be97ae69213f",
+      "productionEntrySha256": "e63887249dcc671632a2f7ae93d2d006453809a3b95a3cda479bd9f811dcbb7f",
+      "runtimeServerSha256": "07723ae07835bdf11cf0d00d68eb4df8308df0603f689c64c9f841a626cad01d",
+      "proofDriverSha256": "6d26993052e28e086282bc180e4f3f8b1cb5b84b345ae3c8cf7905d6f3882bf9",
+      "elapsedSeconds": 51.69,
+      "threads": 2,
+      "configuredMemoryMb": 8192,
+      "probePeakRssMb": 3617,
+      "output": {
+        "text": "Ready.",
+        "generatedTokens": 3,
+        "sha256": "7883e8573e449a421a5a3f3b97c7a2ccc5c66298f01e7261acbe24fe3154710c"
+      },
+      "lifecycle": {
+        "paired": true,
+        "drainDuringBuyerJob": true,
+        "cleanExit": true,
+        "cleanupConfirmed": true,
+        "runtimeLockReleased": true,
+        "deviceRevoked": true,
+        "packageBytesUnchanged": true,
+        "modelUnchanged": true
+      }
+    }
+  ],
+  "signedCandidate": "Source-bound local manifest and both complete archives verified; independent A/B builds are byte-identical. Official Minisign and bundled verifiers reject altered metadata and wrong keys.",
+  "installation": "Both real installers refused the closed distribution flags and removed staging; positive installation is not verified.",
+  "linuxService": {
+    "configuredMemoryMaxBytes": 8589934592,
+    "configuredSwapMaxBytes": 0,
+    "configuredTasksMax": 64,
+    "configuredCpuQuotaPercent": 200,
+    "runtimeMaxSec": 300,
+    "accountingCaveat": "The systemd summary reported 512 KiB peak; that counter is excluded from model-memory evidence. Native probe RSS and required cgroup property validation are separate observations."
+  },
+  "failedLinuxAttempts": [
+    {
+      "phase": "start",
+      "error": "CONTROLLER_RESOURCE_BOUNDARY_REQUIRED",
+      "change": "Launcher moved into an explicitly bounded transient user service."
+    },
+    {
+      "phase": "pairing_begin",
+      "error": "COORDINATOR_UNAVAILABLE",
+      "change": "Safe diagnostics added; failure retained and not reproduced in later runs."
+    },
+    {
+      "phase": "start",
+      "error": "CONTROLLER_PACKAGE_INTEGRITY_INVALID",
+      "change": "Fresh extraction uses umask 0077; all package bytes, helpers and checksums remain unchanged."
+    }
+  ],
+  "notVerified": [
+    "Positive verified installation and restart on a clean host.",
+    "Production signed update exchange and rollback.",
+    "Trusted Windows platform signing.",
+    "NVIDIA GPU execution or device-memory isolation.",
+    "Public coordinator, real payment, chain-backed ledger or public downloads."
+  ],
+  "publicDistributionReady": false
+}
