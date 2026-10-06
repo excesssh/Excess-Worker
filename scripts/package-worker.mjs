@@ -6,6 +6,7 @@ import {fileURLToPath} from "node:url";
 import {nodeRuntime} from "./public-worker/node-runtime.mjs";
 import {archiveDirectory} from "./public-worker/archive.mjs";
 import {assertPublicBytes} from "./public-worker/privacy.mjs";
+import {bundleWindowsControllerEntry} from "./public-worker/build-windows-controller-entry.mjs";
 
 // Builds the supplier worker package for Windows x64 (default) or Linux x64 (--platform linux-x64): a Node runtime,
 // the compiled worker and only its runtime dependencies, a launcher, onboarding notes and SHA-256 sums.
@@ -64,10 +65,12 @@ if(helperInfo){
   native={helper,pinBytes,profile:expectedProfile,sha256:hash};
 }else if(linux||args.includes("--require-native"))throw Error("RUNTIME_SANDBOX_BUILD_REQUIRED");
 
-if(linux){
-  for(const [file,pin,profile] of [
+{
+  for(const [file,pin,profile] of linux?[
     ["excess-controller","integrity-controller.json","linux-controller-namespaces-v1"],
     ["excess-egress-peer","integrity-egress-peer.json","linux-af-unix-peercred-v1"],
+  ]:[
+    ["ExcessController.exe","integrity-controller-win32.json","windows-appcontainer-controller-v1"],
   ]){
     const path=join(nativeRoot,file),pinPath=join(nativeRoot,pin);
     await noLinks(path);await noLinks(pinPath);
@@ -76,7 +79,7 @@ if(linux){
     const bytes=await readFile(path),pinBytes=await readFile(pinPath);
     assertPublicBytes(bytes);assertPublicBytes(pinBytes);
     const value=JSON.parse(pinBytes.toString("utf8"));
-    if(Object.keys(value).sort().join(",")!=="profile,sha256"||value.profile!==profile||value.sha256!==sha256(bytes))throw Error("CONTROLLER_SANDBOX_INTEGRITY_INVALID");
+    if((linux&&Object.keys(value).sort().join(",")!=="profile,sha256")||value.profile!==profile||value.sha256!==sha256(bytes))throw Error("CONTROLLER_SANDBOX_INTEGRITY_INVALID");
     controllerFiles.push({file,pin,bytes,pinBytes,profile,sha256:sha256(bytes)});
   }
 }
@@ -95,6 +98,11 @@ if(nodeLicense)await safeCopy(resolve(nodeLicense),join(stage,"licenses","node-L
 await mkdir(join(stage,"app","worker"),{recursive:true});
 await safeCopy(join(root,"apps/worker/package.json"),join(stage,"app","worker","package.json"));
 await copyTree(join(root,"apps/worker/dist"),join(stage,"app","worker","dist"));
+if(!linux){
+  const bundle=await bundleWindowsControllerEntry();
+  await writeFile(join(stage,"app","worker","dist","windows-controller-entry.js"),bundle.bytes);
+  await writeFile(join(stage,"app","worker","controller-bundle-inputs.json"),JSON.stringify(bundle.metadata,null,2)+"\n");
+}
 for(const pkg of ["adapters","protocol"]){
   const target=join(stage,"app","node_modules","@excess",pkg);
   await mkdir(target,{recursive:true});
@@ -167,7 +175,7 @@ await writeFile(join(stage,"manifest.json"),JSON.stringify({product:"EXCESS",pac
   releaseSequence,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:false,releaseGate:"isolated-hardware-execution-pending",codeSigned:false,
   execution:{profile:native?.profile??"unavailable",cpuVerified:false,gpuVerified:false},
   ...(native?{native:{profile:native.profile,file:"app/node_modules/@excess/adapters/native/"+helperFile,sha256:native.sha256}}:{}),
-  ...(linux?{controller:{profile:"linux-controller-namespaces-v1",files:controllerFiles.map(({file,profile,sha256})=>({file:"app/node_modules/@excess/adapters/native/"+file,profile,sha256})),verified:false}}:{}),
+  controller:{profile:linux?"linux-controller-namespaces-v1":"windows-appcontainer-controller-v1",files:controllerFiles.map(({file,profile,sha256})=>({file:"app/node_modules/@excess/adapters/native/"+file,profile,sha256})),verified:false},
   builtAt:new Date(epoch*1000).toISOString()},null,2)+"\n");
 
 async function files(dir){const result=[];for(const entry of await readdir(dir,{withFileTypes:true})){const path=join(dir,entry.name);

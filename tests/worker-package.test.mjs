@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {spawn,spawnSync} from "node:child_process";
 import {mkdir,mkdtemp,readFile,readdir,writeFile} from "node:fs/promises";
-import {join,resolve,relative,sep} from "node:path";
+import {join,resolve,relative,sep,isAbsolute} from "node:path";
 import {once} from "node:events";
 import {createServer} from "node:http";
 
@@ -18,15 +18,19 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const nativeHash=createHash("sha256").update(helper).digest("hex");
   await writeFile(join(native,"ExcessSandbox.exe"),helper);
   await writeFile(join(native,"integrity-win32.json"),JSON.stringify({profile:"windows-appcontainer-v1",sha256:nativeHash}));
+  await writeFile(join(native,"ExcessController.exe"),helper);
+  await writeFile(join(native,"integrity-controller-win32.json"),JSON.stringify({profile:"windows-appcontainer-controller-v1",sha256:nativeHash}));
   await writeFile(join(native,"unrelated-fixture.txt"),"must not ship");
   const buildArgs=["scripts/package-worker.mjs","--out",out,"--no-zip","--native-dir",native,"--require-native"];
+  // Source archives have no Git metadata; use a fixed fixture timestamp.
+  const buildEnv={...process.env,SOURCE_DATE_EPOCH:"1728000000"};
   await writeFile(join(native,"ExcessSandbox.exe"),"ALTERED NATIVE PACKAGING FIXTURE");
-  const altered=spawnSync(process.execPath,buildArgs,{encoding:"utf8"});
+  const altered=spawnSync(process.execPath,buildArgs,{encoding:"utf8",env:buildEnv});
   assert.notEqual(altered.status,0);assert.match(altered.stderr,/RUNTIME_SANDBOX_INTEGRITY_INVALID/);
-  const missing=spawnSync(process.execPath,[...buildArgs.slice(0,-3),"--native-dir",join(out,"missing-native"),"--require-native"],{encoding:"utf8"});
+  const missing=spawnSync(process.execPath,[...buildArgs.slice(0,-3),"--native-dir",join(out,"missing-native"),"--require-native"],{encoding:"utf8",env:buildEnv});
   assert.notEqual(missing.status,0);assert.match(missing.stderr,/RUNTIME_SANDBOX_BUILD_REQUIRED/);
   await writeFile(join(native,"ExcessSandbox.exe"),helper);
-  const built=spawnSync(process.execPath,buildArgs,{encoding:"utf8"});
+  const built=spawnSync(process.execPath,buildArgs,{encoding:"utf8",env:buildEnv});
   assert.equal(built.status,0,built.stderr);
   const summary=JSON.parse(built.stdout.trim().split("\n").at(-1)),dir=summary.directory;
   assert.equal(summary.licensesIncluded,true,"the pinned Node runtime ships with its own licence text");
@@ -34,7 +38,17 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const manifest=JSON.parse(await readFile(join(dir,"manifest.json"),"utf8"));
   assert.deepEqual(manifest.native,{profile:"windows-appcontainer-v1",file:"app/node_modules/@excess/adapters/native/ExcessSandbox.exe",sha256:nativeHash});
   assert.deepEqual(manifest.execution,{profile:"windows-appcontainer-v1",cpuVerified:false,gpuVerified:false});
-  assert.deepEqual(await readdir(join(dir,"app/node_modules/@excess/adapters/native")),["ExcessSandbox.exe","integrity-win32.json"],"only the selected verified platform helper and pin ship");
+  assert.deepEqual((await readdir(join(dir,"app/node_modules/@excess/adapters/native"))).sort(),
+    ["ExcessController.exe","ExcessSandbox.exe","integrity-controller-win32.json","integrity-win32.json"],"only the selected platform helpers and pins ship");
+  assert.deepEqual(manifest.controller,{profile:"windows-appcontainer-controller-v1",files:[{
+    file:"app/node_modules/@excess/adapters/native/ExcessController.exe",profile:"windows-appcontainer-controller-v1",sha256:nativeHash}],verified:false});
+  const bundledEntry=await readFile(join(dir,"app/worker/dist/windows-controller-entry.js"));
+  const bundleInputs=JSON.parse(await readFile(join(dir,"app/worker/controller-bundle-inputs.json"),"utf8"));
+  assert.deepEqual([bundleInputs.builder,bundleInputs.version],["esbuild","0.28.2"]);
+  assert.equal(bundleInputs.sha256,createHash("sha256").update(bundledEntry).digest("hex"));
+  assert.equal(bundleInputs.bytes,bundledEntry.length);
+  assert.ok(bundleInputs.inputs.length>0&&bundleInputs.inputs.every(input=>!input.path.includes("..")&&!isAbsolute(input.path)&&/^[0-9a-f]{64}$/.test(input.sha256)));
+  for(const input of bundleInputs.inputs)assert.equal(createHash("sha256").update(await readFile(input.path)).digest("hex"),input.sha256,"bundle input is bound to actual compiled source");
   assert.deepEqual([manifest.platform,manifest.node,manifest.codeSigned],["win32-x64","v24.11.1",false],
     "the package pins its Node runtime rather than copying whichever node.exe built it");
   assert.ok((await readFile(join(dir,"licenses","node-LICENSE.txt"),"utf8")).includes("Node.js is licensed for use as follows"),

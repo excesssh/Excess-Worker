@@ -18,7 +18,9 @@ import { detectHardware, modelsByFit } from "./hardware.js";
 import { workerService } from "./service.js";
 import { checkForUpdate, currentRelease, runInstaller, supervisedBySystemd, UPDATED_EXIT_CODE } from "./update.js";
 import { startLinuxController } from "./controller.js";
+import { runWindowsWorker } from "./windows-worker.js";
 import { createControllerUpdatePlan } from "./controller-update.js";
+import { createCoordinatorFetcher } from "./coordinator-fetch.js";
 import { configuredControllerOrigin, saveControllerOrigin } from "./controller-config.js";
 const execute = promisify(execFile);
 const gigabytes = (bytes: number) => (bytes / 1073741824).toFixed(1) + " GB";
@@ -205,7 +207,8 @@ try {
       const origin = await configuredControllerOrigin(stateDir, identity.origin, identity.publicKey);
       const packageDir = resolve(process.argv[1] ?? "", "..", "..", "..", "..");
       const policy = await readWorkerPolicy(stateDir), current = await currentRelease();
-      const cancellableFetch = (signal: AbortSignal): typeof fetch => (url, init) => fetch(url, {
+      const coordinatorFetch = createCoordinatorFetcher(origin);
+      const cancellableFetch = (signal: AbortSignal): typeof fetch => (url, init) => coordinatorFetch(url, {
         ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
       });
       const updatePlan = createControllerUpdatePlan({ autoUpdate: policy.autoUpdate, supervised: supervisedBySystemd(), current,
@@ -222,6 +225,11 @@ try {
       print({ product: "EXCESS", ...status, controllerCleanup: result.cleaned });
       if (!result.cleaned || result.code !== 0) process.exitCode = 1;
       else process.exitCode = await updatePlan?.finish({ run: result, status, signal: controller.signal });
+    } else if (process.platform === "win32") {
+      const packageDir = resolve(process.argv[1] ?? "", "..", "..", "..", "..");
+      const result = await runWindowsWorker({ packageDir, stateDir, installDir, signal: controller.signal });
+      print({ product: "EXCESS", ...await readWorkerStatus(stateDir), controllerCleanup: result.cleaned });
+      if (!result.cleaned || !result.reaped || result.exitCode !== 0) process.exitCode = 1;
     } else {
     await setWorkerControl(stateDir, "run");
     // The paired exchange is where updates come from; auto-install needs a supervisor to start the new version.

@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "checkedAt": "2026-10-06T10:46:51.397215+00:00",
+  "repository": "https://github.com/excesssh/Excess-Worker",
+  "kind": "Native Windows boundary fixtures",
+  "environment": {
+    "platform": "Windows x64",
+    "node": "v24.11.1",
+    "nodeBinarySha256": "f13ac3ca23248dc389507e8fe38c34489ab7edb3e6d6700eb6da6a0b7e128eaf",
+    "compiler": "Microsoft.Net.Compilers.Toolset 4.14.0",
+    "references": "Microsoft.NETFramework.ReferenceAssemblies.net48 1.0.3",
+    "toolchainInventorySha256": "051d04fab3d3756d47d766b01e009fab3000445134d4db909bc0a034e71ac3bd",
+    "execution": "Explicit serial tests with approved neutral fixture roots"
+  },
+  "tests": {
+    "tests": 3,
+    "pass": 3,
+    "fail": 0,
+    "skipped": 0
+  },
+  "seconds": 33.14,
+  "sanitizedLogSha256": "c967eccf8306d215b68c62eb985b8a1a32b7a1961687735c8d1097cac6edcdce",
+  "source": [
+    {
+      "path": "native/windows/ExcessController.cs",
+      "sha256": "f8980435b6b430d3fac07161d11a0bb8ec14bee312e7ebf9345ba0e21fde4ba8"
+    },
+    {
+      "path": "native/windows/ExcessSandbox.cs",
+      "sha256": "07d0624f5a204a5f415d04a009611f652b1bffdcbb1f397eb23135d76f8a9e0b"
+    },
+    {
+      "path": "apps/worker/src/windows-controller.ts",
+      "sha256": "77858d05e483acdcc387fd99e2fe706242550d25db6ede7321af416354c96bc7"
+    },
+    {
+      "path": "apps/worker/src/windows-controller-coordinator.ts",
+      "sha256": "c6971f1f002273e1ab8c129878842fbfc78c57d9f49642594e9d97f5c18db052"
+    },
+    {
+      "path": "apps/worker/src/windows-controller-entry.ts",
+      "sha256": "10755ee3a12b2b353a6c28ea3ca1e3c11ec7f8bafa4048312ba4b9a8f6e1e91f"
+    },
+    {
+      "path": "apps/worker/src/windows-worker.ts",
+      "sha256": "baad904ea1b82ade2ef92ac069248d4c35b9217969e43d00d9d73772672f1033"
+    },
+    {
+      "path": "scripts/public-worker/build-windows-controller.mjs",
+      "sha256": "b33bab46013fdbaff0fcf290e648370e8dfb88571e87cfd0593f0ecdb1894510"
+    },
+    {
+      "path": "scripts/public-worker/build-windows-sandbox.mjs",
+      "sha256": "541dd01ae043f8ecfd7ae7c84554da4ee942370283a7601c3d20fafbd066320e"
+    },
+    {
+      "path": "tests/windows-controller.test.mjs",
+      "sha256": "1495b8c19ea36c5f202f5a9fb4ef831329f3ecc5a7d3bfab6471eecb5e3c887c"
+    },
+    {
+      "path": "tests/windows-sandbox.test.mjs",
+      "sha256": "b328602a451f7f7dd90586f8b9979fa60bbd6cb0d44fac74016ec910b8841171"
+    }
+  ],
+  "verified": [
+    "Bounded fail-closed controller RPC and hostile-pipe cleanup",
+    "Selected read-only file access and restored ACLs",
+    "External and inverse loopback denial",
+    "Allowed relay between confined processes",
+    "Reported native memory observations",
+    "Runtime timeout, stop and setup cancellation cleanup",
+    "Bounded control queue saturation"
+  ],
+  "limitations": [
+    "Synthetic helper probes, not real model or GPU execution",
+    "No final-package installation, production update or platform signing",
+    "No production coordinator, database or payments"
+  ],
+  "previousAttempts": "A failed exported-fixture cleanup omitted its generated integrity pin. A later run exposed an unapproved test scratch root. The known pin cleanup and explicit approved fixture root resolved these setup issues; neither native runtime source nor isolation policy was weakened."
+}

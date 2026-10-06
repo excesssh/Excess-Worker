@@ -16,7 +16,7 @@ Model installation is opt-in and requires both `--accept-download` and `--accept
 
 Package checksums detect accidental changes when compared with a trusted value; they do not authenticate a publisher. The release public key is distributed in the source tree, but no public release has been published. A locally signed, closed candidate may exercise signature and update-verifier behavior; its signature does not certify runtime isolation, model behavior, hardware execution or public readiness.
 
-The Windows model installer verifies the pinned system Visual C++ redistributable prerequisite; the redistributable binaries are not bundled. Windows source includes the adapter AppContainer helper and CPU adapter, not a Node controller.
+The Windows model installer verifies the pinned system Visual C++ redistributable prerequisite; the redistributable binaries are not bundled. Windows source includes a Node AppContainer controller, a typed host broker and a separate adapter runtime sandbox. The controller receives no identity-file or state-directory mount and has no direct network capability. The native cleanup fixture still needs a stable clean-suite rerun, and Windows update reporting and signed update verification are not implemented in this path.
 
 ## Linux controller boundary
 

@@ -10,12 +10,16 @@ const [firstArg, secondArg, outArg] = process.argv.slice(2);
 if (!firstArg || !secondArg || !outArg) throw Error('Usage: release.mjs <build-a/packages> <build-b/packages> <candidate-out>');
 const first = resolve(firstArg), second = resolve(secondArg), out = resolve(outArg);
 for(const directory of [first,second,out])assertPublicBytes(Buffer.from(directory));
+const status = execFileSync('git', ['-c','safe.directory='+process.cwd().replaceAll('\\','/'),'status','--porcelain=v1','--untracked-files=all'], {encoding:'utf8'});
+if(status.trim())throw Error('RELEASE_SOURCE_TREE_DIRTY');
 const key = process.env.EXCESS_WORKER_MINISIGN_KEY;
 if (!key) throw Error('EXCESS_WORKER_MINISIGN_KEY must be injected from secure project credential storage');
 const tool = process.env.EXCESS_MINISIGN ?? 'minisign';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 scanHistory();
 const sourceCommit = execFileSync('git', ['-c','safe.directory='+process.cwd().replaceAll('\\','/'),'rev-parse','HEAD'], {encoding:'utf8'}).trim();
+const controllerSource=await readFile('native/windows/ExcessController.cs');assertPublicBytes(controllerSource);
+const controllerSourceSha256=hash(controllerSource);
 const files = [], comparisons = [], isolation = {}; let version, sequence, releasedAt;
 await mkdir(out,{recursive:true});
 for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linux-x64','linux-x64','.tar.gz']]) {
@@ -46,8 +50,24 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
       const integrity=JSON.parse(pinBytes);
       if(!declared||declared.profile!==profile||declared.sha256!==hash(left)||!left.equals(right)||Object.keys(integrity).sort().join(',')!=='profile,sha256'||integrity.profile!==profile||integrity.sha256!==hash(left))throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
     }
+  } else {
+    const relative='app/node_modules/@excess/adapters/native/ExcessController.exe';
+    const pinRelative='app/node_modules/@excess/adapters/native/integrity-controller-win32.json';
+    if(manifest.controller?.profile!=='windows-appcontainer-controller-v1'||manifest.controller.verified!==false||manifest.controller.files?.length!==1)throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
+    const declared=manifest.controller.files[0];
+    const [controllerA,controllerB,pinA,pinB]=await Promise.all([readFile(join(first,folder,relative)),readFile(join(second,folder,relative)),readFile(join(first,folder,pinRelative)),readFile(join(second,folder,pinRelative))]);
+    for(const bytes of [controllerA,controllerB,pinA,pinB])assertPublicBytes(bytes);
+    const integrity=JSON.parse(pinA.toString('utf8'));
+    const keys=['compiler','debugSymbols','deterministic','profile','references','sha256','sourceSha256','toolchainInventorySha256'];
+    if(!controllerA.equals(controllerB)||!pinA.equals(pinB)||declared.file!==relative||declared.profile!=='windows-appcontainer-controller-v1'||
+      declared.sha256!==hash(controllerA)||Object.keys(integrity).sort().join(',')!==keys.sort().join(',')||
+      integrity.profile!=='windows-appcontainer-controller-v1'||integrity.sha256!==hash(controllerA)||
+      integrity.sourceSha256!==controllerSourceSha256||
+      integrity.compiler!=='Microsoft.Net.Compilers.Toolset 4.14.0'||integrity.references!=='Microsoft.NETFramework.ReferenceAssemblies.net48 1.0.3'||
+      integrity.toolchainInventorySha256!=='051d04fab3d3756d47d766b01e009fab3000445134d4db909bc0a034e71ac3bd'||
+      integrity.deterministic!==true||integrity.debugSymbols!==false||!/^[0-9a-f]{64}$/.test(integrity.sourceSha256))throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
   }
-  isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and linux-landlock-v1':expectedProfile)+': local candidate; packaged execution gates incomplete';
+  isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and linux-landlock-v1':'windows-appcontainer-controller-v1 and '+expectedProfile)+': local candidate; packaged execution gates incomplete';
   if(version&&(manifest.version!==version||manifest.releaseSequence!==sequence||manifest.builtAt!==releasedAt))throw Error('CANDIDATE_METADATA_MISMATCH');
   version=manifest.version;sequence=manifest.releaseSequence;releasedAt=manifest.builtAt;
   const file='excess-worker-'+version+'-'+sourceCommit.slice(0,12)+'-'+suffix+extension;
@@ -58,7 +78,7 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
 const manifest = {format:1,product:'Excess Worker',version,sequence,sourceCommit,repository:'https://github.com/excesssh/Excess-Worker',releasedAt,files,
   isolation,
   permissions:{filesystem:'Verified runtime files and selected model files are read-only; private scratch is writable. Unsupported profiles refuse execution.',
-    network:'Linux controller has a private network namespace and fixed-origin, bounded HTTPS coordinator broker; the model runtime cannot open outbound TCP, UDP or Unix sockets. Windows controller outbound networking remains unconfined; its model runtime and relay communicate inside a unique AppContainer.',
+  network:'Linux controller has a private network namespace and fixed-origin, bounded HTTPS coordinator broker; the model runtime cannot open outbound TCP, UDP or Unix sockets. Windows controller and model runtime run in zero-network AppContainers; the controller uses a bounded typed host broker for the paired HTTPS origin.',
     credentials:'Revocable device Ed25519 machine key stays outside the model runtime and cannot authorize wallet spending or withdrawals.'}};
 const bytes=Buffer.from(JSON.stringify(manifest,null,2)+'\n');parseReleaseManifest(bytes);assertPublicBytes(bytes);
 const target=join(out,'release.json');await writeFile(target,bytes);

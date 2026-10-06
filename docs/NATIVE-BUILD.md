@@ -27,24 +27,28 @@ Prepare the exact compiler inputs without running a downloaded installer:
 
 ```powershell
 python scripts/public-worker/prepare-windows-toolchain.py
-node scripts/public-worker/build-windows-sandbox.mjs
+New-Item -ItemType Directory -Path .cache/native-windows
+node scripts/public-worker/build-windows-sandbox.mjs .cache/native-windows .cache/native-toolchain/windows
+node scripts/public-worker/build-windows-controller.mjs .cache/native-windows .cache/native-toolchain/windows
 ```
 
 Python 3 downloads Microsoft.Net.Compilers.Toolset 4.14.0 and Microsoft.NETFramework.ReferenceAssemblies.net48 1.0.3 from NuGet over HTTPS. The script checks their fixed sizes and SHA-256 digests in memory, checks selected names and bytes for privacy traces, and extracts only the required compiler files, reference assemblies and attribution. It refuses an existing output directory.
 
-The builder checks the pinned inventory digest and every extracted input before invoking the compiler. Compilation disables default response files, implicit framework references and debug symbols, uses explicit reference assemblies, enables deterministic output, and maps source/tool paths. The source is copied into a temporary build directory; only `ExcessSandbox.exe` and its integrity file become runtime payloads. Temporary source files are removed after compilation.
+Each builder checks the pinned inventory digest and every extracted input before invoking the compiler. Compilation disables default response files, implicit framework references and debug symbols, uses explicit reference assemblies, enables deterministic output, and maps source/tool paths. Sources are copied into temporary build directories; only the corresponding helper executable and integrity file become runtime payloads. Temporary source files are removed after compilation. The Windows controller entry is bundled by the package builder with pinned esbuild so its confined process does not need directory enumeration for module resolution.
 
 Optional arguments select output and prepared-toolchain directories:
 
 ```powershell
 node scripts/public-worker/build-windows-sandbox.mjs .cache/native-a .cache/native-toolchain/windows
 node scripts/public-worker/build-windows-sandbox.mjs .cache/native-b .cache/native-toolchain/windows
+node scripts/public-worker/build-windows-controller.mjs .cache/native-a .cache/native-toolchain/windows
+node scripts/public-worker/build-windows-controller.mjs .cache/native-b .cache/native-toolchain/windows
 ```
 
-The helper requires the Windows .NET Framework runtime. The public Windows source is adapter-only and has no Node controller. The runtime and operating system remain external execution dependencies. Pinned compiler/reference inputs and matching helper bytes do not establish independent reproducibility of Windows, the CLR, Node.js, GPU drivers or upstream model-runtime binaries.
+The helpers require the Windows .NET Framework runtime. Windows source includes an AppContainer Node controller with a typed host broker and a separate model-runtime sandbox. The trusted host keeps the Windows device signing key outside the AppContainer and performs signed release checks using its captured paired origin and current package release. The controller receives only a fixed status-check operation; Windows automatic installation stays disabled, and the manual signed host-side CLI update flow remains. With the approved fixture roots and pinned toolchain documented in [build instructions](BUILD.md), the Windows controller and sandbox native fixtures passed 3/3 with no skips or failures. Those tests establish the covered native boundaries only; they do not establish updated final-package model execution, positive installation, production signed-update behavior, hardware execution or platform signing. The runtime and operating system remain external execution dependencies. Pinned compiler/reference inputs and matching helper bytes do not establish independent reproducibility of Windows, the CLR, Node.js, GPU drivers or upstream model-runtime binaries.
 
 ## Verification and release
 
-Linux CI builds the helpers, creates a package fixture with the three integrity pins, and runs the kernel and package tests on an Ubuntu runner. The package fixture remains closed: its manifest does not certify the controller and sets CPU/GPU verification false. Local Linux CPU integration evidence uses a fixture coordinator and synthetic ledger; it is not real funding, external-service proof or install evidence.
+Linux CI builds the helpers, creates a package fixture with the three integrity pins, and runs the kernel and package tests on an Ubuntu runner. Windows packages include separate AppContainer runtime and controller pins. Package manifests remain closed and set controller, CPU and GPU verification false. Local Linux CPU integration evidence uses a fixture coordinator and synthetic ledger; it is not real funding, external-service proof or install evidence.
 
 Build final candidates from independent clean source directories and compare the complete archive bytes. Bind helper hashes, tool inputs, upstream exceptions and actual execution evidence to that exact source commit. A locally signed, closed candidate may be used for signature and update-verifier tests; the signature does not attest runtime isolation, hardware execution or release readiness. Publish only after all runtime, bootstrap, installation, OS, privacy and reproducibility gates have passed. Those gates are not complete and no binary release has been published.

@@ -15,7 +15,7 @@ export interface UpdateCheck { current: string | null; latest: string; available
 type Fetcher = typeof fetch;
 type UpdateTestOptions = {
   origin: string; fetcher?: Fetcher; publicKey: string; platform: ReleasePlatform; stateDir: string;
-  current?: ReleaseState | null; sequenceFloor?: number;
+  current?: ReleaseState | null; sequenceFloor?: number; signal?: AbortSignal;
 };
 type InstallTestOptions = UpdateTestOptions & { appsDir: string; binDir: string };
 type ReleaseEnvelope = { manifest: ReleaseManifest; manifestDigest: string };
@@ -93,11 +93,13 @@ function signatureText(bytes: Buffer): string {
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw Error("Release signature is not UTF-8"); }
 }
 
-async function fetchReleaseEnvelope(origin: string, fetcher: Fetcher, publicKey: string): Promise<ReleaseEnvelope> {
+async function fetchReleaseEnvelope(origin: string, fetcher: Fetcher, publicKey: string, signal?: AbortSignal): Promise<ReleaseEnvelope> {
   if (!validOrigin(origin)) throw Error("Updates need the HTTPS exchange this worker is paired with");
-  const manifestResponse = await fetcher(origin + "/downloads/release.json", { redirect: "error", signal: AbortSignal.timeout(15000), cache: "no-store" });
+  const manifestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000);
+  const manifestResponse = await fetcher(origin + "/downloads/release.json", { redirect: "error", signal: manifestSignal, cache: "no-store" });
   const bytes = await boundedResponse(manifestResponse, 64 * 1024, "Release manifest");
-  const signatureResponse = await fetcher(origin + "/downloads/release.json.minisig", { redirect: "error", signal: AbortSignal.timeout(15000), cache: "no-store" });
+  const signatureSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000);
+  const signatureResponse = await fetcher(origin + "/downloads/release.json.minisig", { redirect: "error", signal: signatureSignal, cache: "no-store" });
   const signature = signatureText(await boundedResponse(signatureResponse, 10 * 1024, "Release signature"));
   verifyMinisign(bytes, signature, publicKey);
   return { manifest: parseReleaseManifest(bytes), manifestDigest: digest(bytes) };
@@ -119,7 +121,7 @@ async function assertReleaseAllowed(manifest: ReleaseManifest, manifestDigest: s
 }
 
 async function fetchAndCheck(options: UpdateTestOptions): Promise<UpdateCheck> {
-  const { manifest, manifestDigest } = await fetchReleaseEnvelope(options.origin, options.fetcher ?? fetch, options.publicKey);
+  const { manifest, manifestDigest } = await fetchReleaseEnvelope(options.origin, options.fetcher ?? fetch, options.publicKey, options.signal);
   selectedFile(manifest, options.platform);
   await assertReleaseAllowed(manifest, manifestDigest, options);
   const currentState = options.current === undefined ? await currentReleaseState() : options.current;
@@ -312,11 +314,12 @@ async function updateCheck(options: Omit<UpdateTestOptions, "publicKey"> & { pub
   return fetchAndCheck(resolved);
 }
 
-export async function checkForUpdate(origin: string, current: string | null, fetcher: Fetcher = fetch): Promise<UpdateCheck> {
+export async function checkForUpdate(origin: string, current: string | null, fetcher: Fetcher = fetch, signal?: AbortSignal): Promise<UpdateCheck> {
   const packaged = await currentReleaseState();
   // Source builds remain ineligible even when the exchange has a newer signed package.
   void current;
-  return updateCheck({ origin, fetcher, platform: PLATFORM, stateDir: stateDirectory(), current: packaged });
+  const resolved: UpdateTestOptions = { origin, fetcher, platform: PLATFORM, stateDir: stateDirectory(), current: packaged, publicKey: RELEASE_PUBLIC_KEY };
+  return fetchAndCheck({ ...resolved, ...(signal ? { signal } : {}) });
 }
 
 /** Test-only fixture seam for ephemeral signing keys. Production calls keep the trusted key module private and pinned. */

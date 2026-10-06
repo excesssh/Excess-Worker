@@ -12,6 +12,7 @@ import { readWorkerOffers, readWorkerAutoPrices, saveWorkerAutoPrices, automatic
 import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl as setDirectWorkerControl, writeWorkerStatus as writeDirectWorkerStatus, stateWriteName,
   WorkerShutdownError, type WorkerMode, type WorkerProbe, type StateWriteContext } from "./control.js";
 import type { WorkerStateWriter } from "./controller-state.js";
+import type { WorkerStateReader } from "./controller-state-reader.js";
 import { checkForUpdate, runInstaller, type UpdateCheck } from "./update.js";
 
 type Assignment = {
@@ -27,12 +28,14 @@ export type WorkerRuntimeOptions = {
   fetcher?: CoordinatorFetcher;
   /** Confined entry writes through the outside quota-enforcing store. */
   stateWriter?: WorkerStateWriter;
+  /** Typed reads for a controller with no host-state filesystem access. */
+  stateReader?: WorkerStateReader;
   // Dependency injection is for explicit local tests, never a CLI fallback.
   adapter?: ServedAdapter; connection?: WorkerConnection; timings?: Partial<Timing>; offer?: WorkerOffer | null; offers?: WorkerOffer[];
   /** Checks the paired exchange for a newer published worker (first after firstCheckMs, then every intervalMs) and reports
    * it in status. With autoInstall, an idle worker installs it and returns reason "updated" so its supervisor restarts it. */
-  update?: { origin: string; current: string | null; autoInstall: boolean; firstCheckMs?: number; intervalMs?: number;
-    check?: () => Promise<UpdateCheck>; install?: () => Promise<number> };
+   update?: { origin?: string; current?: string | null; autoInstall: boolean; firstCheckMs?: number; intervalMs?: number;
+     check?: (signal: AbortSignal) => Promise<UpdateCheck>; install?: () => Promise<number> };
 };
 // Listed offers need a probe newer than the coordinator's five-minute window.
 const REPROBE_MS = 240_000;
@@ -127,18 +130,26 @@ export async function unpairDevice(stateDir: string): Promise<{ retired: string 
 }
 
 class AttemptJournal {
-  private constructor(readonly dir: string, readonly deviceId: string, private bytes: number, readonly entries: Map<string, Entry>, private readonly writes?: StateWriteContext) {}
-  static async load(dir: string, deviceId: string, writes?: StateWriteContext): Promise<AttemptJournal> {
+  private constructor(readonly dir: string, readonly deviceId: string, private bytes: number, readonly entries: Map<string, Entry>, private readonly writes?: StateWriteContext,
+    private readonly reads?: WorkerStateReader) {}
+  static async load(dir: string, deviceId: string, writes?: StateWriteContext, reads?: WorkerStateReader): Promise<AttemptJournal> {
     const path = join(dir, "attempts.jsonl");
     const markerPath = join(dir, "journal-owner.json");
     let initialized = false;
     try {
-      const owner = JSON.parse(await readFile(markerPath, "utf8")) as { version?: unknown; deviceId?: unknown };
-      if (owner.version !== 1 || owner.deviceId !== deviceId) throw Error("Attempt journal belongs to another device (an earlier pairing); run excess-worker unpair, then pair again");
-      initialized = true;
+      const bytes = reads ? await reads.readJournalOwner() : await readFile(markerPath);
+      if (bytes !== null) {
+        const owner = JSON.parse(Buffer.from(bytes).toString("utf8")) as { version?: unknown; deviceId?: unknown };
+        if (owner.version !== 1 || owner.deviceId !== deviceId) throw Error("Attempt journal belongs to another device (an earlier pairing); run excess-worker unpair, then pair again");
+        initialized = true;
+      }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     let data: Buffer;
-    try { data = await readFile(path); }
+    try {
+      const bytes = reads ? await reads.readJournal() : await readFile(path);
+      if (bytes === null) throw Object.assign(Error("Journal missing"), { code: "ENOENT" });
+      data = Buffer.from(bytes);
+    }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       if (initialized) throw Error("Worker attempt journal missing; explicit recovery required");
@@ -171,7 +182,7 @@ class AttemptJournal {
       }
     }
     if (!initialized) await atomicPrivateJson(markerPath, { version: 1, deviceId }, writes);
-    return new AttemptJournal(dir, deviceId, complete, entries, writes);
+    return new AttemptJournal(dir, deviceId, complete, entries, writes, reads);
   }
   async append(value: Entry): Promise<void> {
     const line = JSON.stringify(value) + "\n";
@@ -192,7 +203,7 @@ class AttemptJournal {
   async removeOutput(a: Assignment): Promise<void> {
     const remove = async (path: string) => this.writes ? this.writes.writer.removeOutput(stateWriteName(this.writes, path)) : unlink(path);
     try { await remove(this.resultPath(a)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    for (const name of await readdir(this.dir)) {
+    for (const name of this.reads ? await this.reads.listOutputs(a.attemptId) : await readdir(this.dir)) {
       if (!name.startsWith(a.attemptId + ".artifact.")) continue;
       try { await remove(join(this.dir, name)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
@@ -204,6 +215,7 @@ class AttemptJournal {
 }
 
 export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state: string; reason: string }> {
+  if (options.stateReader && (!options.stateWriter || !options.connection || !options.adapter)) throw Error("CONTROLLER_DEPENDENCIES_REQUIRED");
   const dir = resolve(options.stateDir);
   const writes = options.stateWriter ? { stateDir: dir, writer: options.stateWriter } : undefined;
   if (!writes) await mkdir(dir, { recursive: true });
@@ -214,6 +226,8 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   // Only the outside bootstrap changes control. Internal fatal/abort paths
   // already stop this loop; the parent records stop when its tree is reaped.
   const setWorkerControl: typeof setDirectWorkerControl = (state, mode) => writes ? Promise.resolve() : setDirectWorkerControl(state, mode);
+  const readControl = () => options.stateReader ? options.stateReader.readControl() : readWorkerControl(dir);
+  const readOffers = (modelId: string) => options.stateReader ? options.stateReader.readOffers(modelId) : readWorkerOffers(dir, modelId);
   let adapter: ServedAdapter | undefined;
   let connection: WorkerConnection | undefined;
   let lastProbe: WorkerProbe | undefined;
@@ -236,15 +250,15 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     if (error instanceof WorkerConnectionError && [401, 403].includes(error.status ?? 0)) { fatal = "device_revoked_or_unauthorized"; mode = "stop"; }
   };
   try {
-    const policy = options.policy ? parseWorkerPolicy(options.policy) : await readWorkerPolicy(dir);
+    const policy = options.policy ? parseWorkerPolicy(options.policy) : options.stateReader ? await options.stateReader.readPolicy() : await readWorkerPolicy(dir);
     // The worker serves exactly one catalog model at a time, chosen in its policy: text or a buffered media kind.
     const served = servedModel(policy.model);
     capabilityDigest = served.capabilityDigest;
     // Prices set with `excess-worker offer` while the worker runs take effect at the next publication (within 30 seconds);
     // an asset switched off is no longer renewed and lapses with its offer. Offers passed in options are fixed.
     const fixedOffers = options.offers ?? (options.offer !== undefined ? (options.offer ? [options.offer] : []) : undefined);
-    let offers = fixedOffers ?? await readWorkerOffers(dir, policy.model);
-    mode = await readWorkerControl(dir);
+    let offers = fixedOffers ?? await readOffers(policy.model);
+    mode = await readControl();
     if (mode !== "run") {
       statusState = "stopped"; statusReason = mode === "drain" ? "drained" : "explicit_resume_required";
       await writeWorkerStatus(dir, { state: statusState, reason: statusReason });
@@ -252,7 +266,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     }
     connection = options.connection ?? await createWorkerConnection(options.identityPath, options.fetcher);
     if (!uuid.test(connection.deviceId)) throw Error("Invalid device identity");
-    const journal = await AttemptJournal.load(dir, connection.deviceId, writes);
+    const journal = await AttemptJournal.load(dir, connection.deviceId, writes, options.stateReader);
     for (const entry of [...journal.entries.values()]) {
       if (entry.state === "seen" || entry.state === "running") await journal.set(entry.assignment, "abandoned", "interrupted_before_receipt");
       if (entry.state !== "result_pending") await journal.removeOutput(entry.assignment);
@@ -269,7 +283,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       let lastStatus = 0;
       while (!closing && !lifetime.signal.aborted) {
         try {
-          mode = options.signal?.aborted || fatal ? "stop" : await readWorkerControl(dir);
+          mode = options.signal?.aborted || fatal ? "stop" : await readControl();
           if (mode === "stop") { abortActive("stop_now"); lifetime.abort(); }
           else if (!decide().allowed && active) abortActive("local_resource_policy");
           if (Date.now() - lastStatus >= 1000) { await state(); lastStatus = Date.now(); }
@@ -298,10 +312,10 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     tasks.push((async () => {
       let published = false;
       let pricingReady=true,lastPublished:Map<string,string>;
-      try {lastPublished=await readWorkerAutoPrices(dir,policy.model);}catch{pricingReady=false;lastPublished=new Map();}
+      try {lastPublished=options.stateReader ? new Map(await options.stateReader.readAutoPrices(policy.model)) : await readWorkerAutoPrices(dir,policy.model);}catch{pricingReady=false;lastPublished=new Map();}
       while (!closing && !lifetime.signal.aborted) {
         // A malformed or unreadable offers file keeps the last good prices rather than stopping supply.
-        if (!fixedOffers) offers = await readWorkerOffers(dir, policy.model).catch(() => offers);
+        if (!fixedOffers) offers = await readOffers(policy.model).catch(() => offers);
         for(const assetId of lastPublished.keys())if(!offers.some(item=>item.assetId===assetId&&item.auto))lastPublished.delete(assetId);
         const publication=connection!.origin&&pricingReady?await automaticWorkerPrices(connection!.origin,policy.model,offers,lastPublished,lifetime.signal,options.fetcher):offers;
         // One offer per priced asset, each at its own price; they share the device's single slot.
@@ -337,7 +351,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       while (!closing && !lifetime.signal.aborted) {
         let retryMs = u.intervalMs ?? 6 * 3_600_000;
         try {
-          updateState = await (u.check ?? (() => checkForUpdate(u.origin, u.current)))();
+          updateState = await (u.check ? u.check(lifetime.signal) : checkForUpdate(u.origin!, u.current!));
           if (updateState.available && u.autoInstall && mode === "run") {
             // Stop advertising capacity first, then install only if no job arrived in the meantime.
             updating = true;
@@ -345,7 +359,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
             if (active || claimed || pending()) { updating = false; retryMs = Math.min(60_000, retryMs); }
             else {
               statusState = "updating"; statusReason = "installing_" + updateState.latest; statusDetail = undefined; await state();
-              if (await (u.install ?? (() => runInstaller(u.origin, true)))() === 0) { updated = true; mode = "stop"; lifetime.abort(); return; }
+              if (await (u.install ?? (() => runInstaller(u.origin!, true)))() === 0) { updated = true; mode = "stop"; lifetime.abort(); return; }
               updateState = { ...updateState, installFailed: true }; updating = false;
             }
           }
@@ -365,7 +379,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       for (const ref of artifactRefs(output)) {
         if (sent.has(ref.digest)) continue;
         sent.add(ref.digest);
-        const data = await readFile(journal.artifactPath(a, ref.digest));
+        const data = options.stateReader ? Buffer.from(await options.stateReader.readArtifact(a.attemptId, ref.digest)) : await readFile(journal.artifactPath(a, ref.digest));
         if (data.length !== ref.bytes || sha256(data) !== ref.digest) throw Error("Cached artifact digest mismatch");
         const parts = Math.ceil(ref.bytes / partBytes);
         for (let part = 0; part < parts; part++) {
@@ -379,7 +393,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     };
     const sendResult = async (entry: Entry, authorize?: () => void, signal: AbortSignal = lifetime.signal): Promise<boolean> => {
       try {
-        const data = await readFile(journal.resultPath(entry.assignment), "utf8");
+        const data = options.stateReader ? Buffer.from(await options.stateReader.readResult(entry.assignment.attemptId)).toString("utf8") : await readFile(journal.resultPath(entry.assignment), "utf8");
         if (Buffer.byteLength(data) > MAX_WORKER_MESSAGE_BYTES) throw Error("Cached result too large");
         const value: unknown = JSON.parse(data);
         // Media results carry a kind; text results keep their untagged shape.

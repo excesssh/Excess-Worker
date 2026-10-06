@@ -87,6 +87,13 @@ test("update checks verify signed release metadata and only packaged workers rep
     const options={origin:"https://excess.example",fetcher,publicKey:fixture.publicKey,platform,stateDir,current:{sequence:1,version:"0.1.0",sourceCommit:"a".repeat(40)}};
     assert.deepEqual((({checkedAt,...rest})=>rest)(await __testCheckForUpdate(options)),{current:`0.1.0-${"a".repeat(12)}`,latest:`0.1.1-${commit.slice(0,12)}`,available:true});
     assert.deepEqual(requested,["https://excess.example/downloads/release.json","https://excess.example/downloads/release.json.minisig"]);
+    const controller=new AbortController();let signatureSignal,enteredResolve;
+    const entered=new Promise(resolve=>{enteredResolve=resolve;});
+    const pending=__testCheckForUpdate({...options,signal:controller.signal,fetcher:async(url,init)=>{
+      if(url.endsWith(".minisig")){signatureSignal=init.signal;enteredResolve();return new Promise((_,reject)=>init.signal.addEventListener("abort",()=>reject(Error("aborted")),{once:true}));}
+      return new Response(fixture.bytes);
+    }});
+    await entered;controller.abort();assert.equal(signatureSignal.aborted,true);await assert.rejects(pending,/aborted/);
     await assert.rejects(__testCheckForUpdate({...options,origin:"http://excess.example"}),/HTTPS exchange/);
     await assert.rejects(__testCheckForUpdate({...options,fetcher:async()=>new Response("",{status:404})}),/download failed/);
     await assert.rejects(__testCheckForUpdate({...options,current:{sequence:2,version:"0.1.1",sourceCommit:"c".repeat(40)}}),/equivocation/);
