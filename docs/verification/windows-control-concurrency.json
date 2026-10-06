@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "checkedAt": "2026-10-06T11:02:24.950356+00:00",
+  "repository": "https://github.com/excesssh/Excess-Worker",
+  "environment": "Windows x64, Node 24.11.1, local filesystem",
+  "before": {
+    "sourceSha256": "b1330a2bf04665e5263b0094f86785c4f28ca41cd77e23cd7e8218f647660e50",
+    "actualConcurrentFailures": {
+      "initialRounds": 40,
+      "initialFailedRounds": 1,
+      "diagnosticRounds": 66,
+      "diagnosticFailedRounds": 3,
+      "error": "EPERM opening control-write.lock",
+      "diagnosticOpenModes": [
+        "wx",
+        "wx",
+        0
+      ]
+    },
+    "diagnosticNote": "Open-mode instrumentation retained original filesystem calls and did not alter retry behavior."
+  },
+  "correction": "Retry transient Windows EPERM, EACCES and EBUSY lock opens within the existing five-second deadline. An unreadable, malformed or live lock never grants ownership; stale-owner identity checks remain unchanged.",
+  "targetedVerification": {
+    "tests": 18,
+    "passed": 18,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 10.31,
+    "sanitizedLogSha256": "f3805e06bbf50cd78ab7eaa8d70d7e0b1ae4b1dd138c7422a3326418220eb2cb",
+    "concurrentControlBursts": {
+      "rounds": 32,
+      "processesPerRound": 4,
+      "requestsPerProcess": 8,
+      "totalRequests": 1024,
+      "assertions": "All actors complete, and final request revision/mode match legacy control bytes after every burst."
+    }
+  },
+  "source": [
+    {
+      "path": "apps/worker/src/control.ts",
+      "sha256": "952d125640c704017a8144381ad15dc20ff640c5907ae625de959439eb0bb93e"
+    },
+    {
+      "path": "tests/worker-control-request.test.mjs",
+      "sha256": "d94b27b8795dd1faac03473cf7b90b1a1464701244f07502adc30fc773efadde"
+    }
+  ],
+  "limitations": [
+    "Local filesystem/control concurrency, not installed-package inference, GPU execution or production updates",
+    "Full integration checkpoint recorded separately; prior failed full run remains preserved."
+  ]
+}

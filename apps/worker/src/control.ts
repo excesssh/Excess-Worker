@@ -85,6 +85,8 @@ export async function stopWorkerControlAfterReap(stateDir: string): Promise<void
 
 async function controlTransaction<T>(stateDir: string, action: () => Promise<T>): Promise<T> {
   const lockPath = join(resolve(stateDir), "control-write.lock");
+  const transientOpen = (error: unknown) => process.platform === "win32" &&
+    ["EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "");
   return withPrivateFile(lockPath, async () => {
     const deadline = Date.now() + 5000;
     let lock;
@@ -95,12 +97,16 @@ async function controlTransaction<T>(stateDir: string, action: () => Promise<T>)
         catch (error) { await created.close(); await unlink(lockPath).catch(() => {}); throw error; }
       }
       catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const exists = (error as NodeJS.ErrnoException).code === "EEXIST";
+        if (!exists && !transientOpen(error)) throw error;
+        // Concurrent Windows opens can briefly refuse either creation or an
+        // ownership read. Wait within the same deadline; never infer ownership
+        // from a sharing error or remove a live or unreadable lock.
         // Empty lock files can be observed while their owner writes its PID.
         // Malformed or live ownership is never removed to obtain a lock.
-        const ownerFile = await open(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW).catch(error => {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error;
-        });
+        const ownerFile = exists ? await open(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW).catch(error => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT" || transientOpen(error)) return undefined; throw error;
+        }) : undefined;
         if (ownerFile) {
           try {
             const info = await ownerFile.stat();
