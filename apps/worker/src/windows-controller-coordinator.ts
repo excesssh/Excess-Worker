@@ -41,7 +41,9 @@ function updateCheck(value: unknown, expectedCurrent?: string | null): UpdateChe
 function validateMessage(type: string, data: Payload, deviceId: string): void {
   // Validate before invoking even an injected connection. The host supplies all
   // envelope, identity, counter and signature fields; none come from the child.
-  if (Object.hasOwn(data, "deviceId") || Object.hasOwn(data, "sequence")) fail();
+  // Streaming chunks carry their own schema-checked sequence. The heartbeat
+  // counter and device identity remain host-owned.
+  if (Object.hasOwn(data, "deviceId") || (type !== "job.chunk" && Object.hasOwn(data, "sequence"))) fail();
   const raw = JSON.stringify({ version: 1, messageId: randomUUID(), correlationId: randomUUID(), sentAt: new Date().toISOString(), type,
     data: { ...data, deviceId, ...(type === "worker.heartbeat" ? { sequence: 0 } : {}) } });
   if (Buffer.byteLength(raw, "utf8") > MAX_WORKER_MESSAGE_BYTES) fail();

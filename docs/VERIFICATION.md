@@ -58,3 +58,5 @@ Before publication, bind the exact source revision, helper hashes and complete a
 Ubuntu 24.04 hosted CI temporarily permits unprivileged user namespaces on its disposable runner and restores the previous AppArmor sysctl in an always-run step. The namespace probe must then pass before the native fixtures run. This is an explicit CI host prerequisite, not evidence that every default Ubuntu host permits the production profile. See the [Ubuntu 24.04 namespace restrictions](https://documentation.ubuntu.com/release-notes/24.04/). Production launch continues to fail closed when its host disallows the required namespaces.
 
 Anonymous Minisign signing is the release authentication gate. Windows binaries have no trusted Authenticode publisher signature; certificates and identity verification are outside scope. Superseded-repository deletion is a separate migration task and does not gate a release.
+
+The Windows streaming host bridge distinguishes the required chunk sequence from the host-owned heartbeat counter. The focused and standalone regression evidence is in `verification/streaming-chunk-regression.json`; real signed-package buyer verification remains required.

@@ -50,6 +50,24 @@ test("invalid routes, signing envelopes, identity overrides, capacities and capa
   } finally { f.host.close(); }
 });
 
+test("streaming chunk sequence reaches the signing connection while identity and heartbeat counters remain host-owned", async () => {
+  const f = fixture();
+  try {
+    const c = await f.client();
+    const data = { jobId: randomUUID(), attemptId: randomUUID(), fence: "1", sequence: 1,
+      delta: "Ready.", tokenIds: [1], chunkDigest: "2".repeat(64) };
+    assert.deepEqual(await c.connection.command("job.chunk", data), { accepted: true });
+    assert.deepEqual(f.calls, [["job.chunk", data]]);
+    for (const patch of [{ sequence: 0 }, { sequence: -1 }, { sequence: "1" }, { deviceId: randomUUID() }])
+      await assert.rejects(c.connection.command("job.chunk", { ...data, ...patch }), /CONTROLLER_COORDINATOR_INVALID/);
+    await assert.rejects(c.connection.command("worker.poll", { sequence: 1 }), /CONTROLLER_COORDINATOR_INVALID/);
+    await assert.rejects(f.host.handle({ action: "heartbeat", capacity: {
+      totalSlots: 1, availableSlots: 1, capabilityDigests: [capabilityDigest], sequence: 1,
+    } }, signal()), /CONTROLLER_COORDINATOR_INVALID/);
+    assert.equal(f.calls.length, 1);
+  } finally { await f.host.close(); }
+});
+
 test("HTTP revocation remains a typed connection error and private exception details are discarded", async () => {
   const f = fixture({ command: async () => { throw new WorkerConnectionError(403); } });
   try { const c = await f.client(); await assert.rejects(c.connection.command("worker.poll", {}), error => error instanceof WorkerConnectionError && error.status === 403); }
