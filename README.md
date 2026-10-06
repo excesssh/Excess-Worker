@@ -4,7 +4,7 @@
 
 Run selected models on your computer and supply inference capacity through [Excess](https://excess.sh). The worker pairs with a separately operated coordinator, applies your local policy, and signs device results. Wallet approvals stay in the website.
 
-**Source preview.** No downloadable worker release is published. Local signed candidates have completed real isolated CPU jobs on Windows and Linux, including pairing, draining and revocation, against a test coordinator and synthetic ledger. Positive installation, production updates, trusted Windows signing and GPU support remain unverified. Windows automatic installation is disabled. See the [verification scope](docs/VERIFICATION.md) before running or packaging the worker.
+**Source preview.** No downloadable worker release is published. Local signed candidates have completed real isolated CPU jobs on Windows and Linux, including pairing, draining and revocation, against a test coordinator and synthetic ledger. Positive installation and production updates remain incomplete. GPU support remains unverified. Windows automatic installation is disabled. See the [verification scope](docs/VERIFICATION.md) before running or packaging the worker.
 
 [Installation](docs/INSTALLATION.md) | [Release verification](docs/VERIFICATION.md) | [Releases](https://github.com/excesssh/Excess-Worker/releases) | [MIT licence](LICENSE)
 
@@ -35,3 +35,5 @@ Linux boundary fixtures cover host-path and host-process isolation, direct-netwo
 The standalone npm workspace contains `apps/worker`, `packages/adapters` and `packages/protocol`, with their tests and build tooling. Coordinator services, custody and settlement signing are maintained separately.
 
 [Build and packaging](docs/BUILD.md) | [Architecture](docs/ARCHITECTURE.md) | [Contributing](CONTRIBUTING.md) | [Source history](docs/HISTORY.md)
+
+Release signing uses the anonymous project Minisign key. Windows executables have no trusted Authenticode publisher signature. Trusted Windows publisher signing, paid certificates and identity verification are outside release scope. See [pinned model download/import](docs/MODELS.md).

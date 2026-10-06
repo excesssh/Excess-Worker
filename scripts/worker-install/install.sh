@@ -4,7 +4,7 @@ set -eu
 
 usage() {
   cat <<'TEXT'
-Usage: sh install.sh release.json release.json.minisig worker-linux-x64.tar.gz [--prefix ABSOLUTE_USER_DIRECTORY]
+Usage: sh install.sh release.json release.json.minisig worker-linux-x64.tar.gz [--prefix ABSOLUTE_USER_DIRECTORY] [--verification-candidate]
 
 The three release files must be local. This script verifies the pinned Minisign key and
 the signed archive digest before extracting. It never downloads or executes a script.
@@ -13,8 +13,19 @@ ${EXCESS_INSTALL_ROOT:-$HOME/.local/share/excess}/bin on PATH to use the launche
 TEXT
 }
 fail() { printf 'EXCESS worker install: %s\n' "$*" >&2; exit 1; }
-[ "$#" -eq 3 ] || { [ "$#" -eq 5 ] && [ "$4" = --prefix ] || { usage; exit 2; }; }
+[ "$#" -ge 3 ] || { usage; exit 2; }
 manifest=$1 signature=$2 archive=$3
+shift 3
+prefix=${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-"$HOME/.local/share"}/excess}
+candidate=0
+prefix_seen=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prefix) [ "$#" -ge 2 ] && [ "$prefix_seen" -eq 0 ] || { usage; exit 2; }; prefix=$2; prefix_seen=1; shift 2 ;;
+    --verification-candidate) [ "$candidate" -eq 0 ] || { usage; exit 2; }; candidate=1; shift ;;
+    *) usage; exit 2 ;;
+  esac
+done
 [ "$(uname -s)" = Linux ] || fail 'Linux x64 only.'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail 'Linux x64 only.' ;; esac
 [ "$(id -u)" -ne 0 ] || fail 'run as the installing user, not root.'
@@ -37,11 +48,9 @@ minisign -Vm "$manifest" -x "$signature" -p "$key" >/dev/null || fail 'pinned Mi
 rm -f "$key"
 trap - EXIT HUP INT TERM
 
-prefix=${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-"$HOME/.local/share"}/excess}
-if [ "$#" -eq 5 ]; then prefix=$5; fi
 case "$prefix" in /*) ;; *) fail 'install prefix must be an absolute path.' ;; esac
 export EXCESS_INSTALL_ROOT="$prefix"
-python3 - "$manifest" "$archive" "$archive_bytes" <<'PY'
+python3 - "$manifest" "$archive" "$archive_bytes" "$candidate" <<'PY'
 import fcntl, gzip, hashlib, json, os, re, shutil, stat, sys, tarfile, tempfile
 from pathlib import Path, PurePosixPath
 
@@ -49,6 +58,7 @@ MAX_TOTAL = 1024 * 1024 * 1024
 MAX_ENTRY = 128 * 1024 * 1024
 FLOOR = 1
 manifest_path, archive_path, archive_size = sys.argv[1], sys.argv[2], int(sys.argv[3])
+verification_candidate = sys.argv[4] == '1'
 prefix = Path(os.environ['EXCESS_INSTALL_ROOT'])
 platform = 'linux-x64'
 
@@ -228,7 +238,10 @@ try:
             expected[match.group(2)] = match.group(1)
         if set(expected) != seen - {'SHA256SUMS.txt'} or any(hashes[p] != value for p,value in expected.items()): stop('package checksum list does not match extracted contents')
     package_bytes, package = json_bytes(stage/'manifest.json',65536)
-    if package.get('product') != 'EXCESS' or package.get('package') != 'worker' or package.get('publicDistributionReady') is not True: stop('worker package distribution gate is closed')
+    if package.get('product') != 'EXCESS' or package.get('package') != 'worker': stop('worker package identity is invalid')
+    if package.get('publicDistributionReady') is not True:
+        if not verification_candidate or package.get('publicDistributionReady') is not False or package.get('releaseGate') != 'isolated-hardware-execution-pending' or package.get('licensesIncluded') is not True: stop('worker package distribution gate is closed')
+        print('Installing a local signed verification candidate. Public release readiness remains closed.')
     if package.get('version') != version or package.get('releaseSequence') != sequence or package.get('sourceCommit') != commit or package.get('platform') != platform: stop('worker package source or platform identity mismatch')
     for path in stage.rglob('*'):
         if path.is_symlink() or (not path.is_file() and not path.is_dir()): stop('staged package contains a link or special entry')

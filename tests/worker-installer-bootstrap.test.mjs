@@ -100,13 +100,13 @@ test("Windows standalone installer stages signed fixtures and rejects altered or
       assert.equal(installed, false, "rejected fixture leaves install root absent");
     }
 
-    async function prepareSuccessfulFixture(archiveBytes, manifestBytesForRun, signatureForRun, installRoot, label) {
+    async function prepareSuccessfulFixture(archiveBytes, manifestBytesForRun, signatureForRun, installRoot, label, candidate = false) {
       const localDir = join(base, label); await mkdir(localDir);
       const localManifest = join(localDir, "release.json"), localSignature = join(localDir, "release.json.minisig");
       await writeFile(localManifest, manifestBytesForRun); await writeFile(localSignature, signatureForRun);
       const release = JSON.parse(manifestBytesForRun.toString("utf8"));
       const releaseArchive = join(localDir, release.files[0].file); await writeFile(releaseArchive, archiveBytes);
-      return `$env:PATH=${quote(tools)}+';'+$env:PATH; $source=Get-Content -LiteralPath ${quote(testScript)} -Raw; try { & ([scriptblock]::Create($source)) ${quote(localManifest)} ${quote(localSignature)} ${quote(releaseArchive)} -InstallRoot ${quote(installRoot)} *> $null; exit 0 } catch { $m=$_.Exception.Message -replace '^EXCESS worker install: ',''; Write-Output ('FIXTURE_REASON_' + ($m -replace '[^A-Za-z0-9]+','_')); exit 1 }`;
+      return `$env:PATH=${quote(tools)}+';'+$env:PATH; $source=Get-Content -LiteralPath ${quote(testScript)} -Raw; try { & ([scriptblock]::Create($source)) ${quote(localManifest)} ${quote(localSignature)} ${quote(releaseArchive)} -InstallRoot ${quote(installRoot)} ${candidate ? '-VerificationCandidate' : ''} *> $null; exit 0 } catch { $m=$_.Exception.Message -replace '^EXCESS worker install: ',''; Write-Output ('FIXTURE_REASON_' + ($m -replace '[^A-Za-z0-9]+','_')); exit 1 }`;
     }
 
     async function runSuccessfulFixture(archiveBytes, manifestBytesForRun, signatureForRun, installRoot, label = "success") {
@@ -138,6 +138,24 @@ test("Windows standalone installer stages signed fixtures and rejects altered or
     await runFixture(changedArchive, manifestBytes, signed.signature, "archive size or SHA-256");
     const alteredManifest = Buffer.from(manifestBytes); alteredManifest[alteredManifest.indexOf(Buffer.from("1.1.0"))] = 0x32;
     await runFixture(archive, alteredManifest, signed.signature, "Minisign signature verification failed");
+
+    const candidatePackage = Buffer.from(JSON.stringify({product:'EXCESS',package:'worker',publicDistributionReady:false,
+      releaseGate:'isolated-hardware-execution-pending',licensesIncluded:true,
+      releaseSequence:2,version:'1.1.0',sourceCommit:commit,platform:'win32-x64'}));
+    const candidateArchive=zipArchive({[root+'manifest.json']:candidatePackage,[root+'excess-worker.cmd']:'@echo off\r\n',[root+'node/node.exe']:'fixture runtime'});
+    const candidateManifest=releaseFor(candidateArchive), candidateSignature=signer.sign(candidateManifest);
+    await runFixture(candidateArchive,candidateManifest,candidateSignature,'distribution gate is closed');
+    const candidateRoot=join(base,'candidate-install');
+    const candidateCommand=await prepareSuccessfulFixture(candidateArchive,candidateManifest,candidateSignature,candidateRoot,'candidate-verification',true);
+    const candidateResult=spawnSync('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-Command',candidateCommand],{encoding:'utf8',cwd:process.cwd()});
+    assert.equal(candidateResult.status,0,'explicit signed candidate installation succeeds');
+    const installedCandidate=JSON.parse(await readFile(join(candidateRoot,'app',`1.1.0-${commit.slice(0,12)}`,'manifest.json'),'utf8'));
+    assert.equal(installedCandidate.publicDistributionReady,false,'verification installation cannot promote readiness');
+    const candidateStateBefore=await readFile(join(candidateRoot,'state','release-high-water.json'));
+    const invalidCommand=await prepareSuccessfulFixture(candidateArchive,alteredManifest,candidateSignature,candidateRoot,'candidate-tampered',true);
+    const invalidResult=spawnSync('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-Command',invalidCommand],{encoding:'utf8',cwd:process.cwd()});
+    assert.notEqual(invalidResult.status,0,'candidate mode retains signature checks');
+    assert.deepEqual(await readFile(join(candidateRoot,'state','release-high-water.json')),candidateStateBefore);
 
     const installRoot = join(base, "successful-install");
     const readyPackage = value => Buffer.from(JSON.stringify({ product: "EXCESS", package: "worker", publicDistributionReady: true,

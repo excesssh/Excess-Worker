@@ -3,7 +3,8 @@ param(
   [Parameter(Mandatory = $true, Position = 0)][string]$ManifestPath,
   [Parameter(Mandatory = $true, Position = 1)][string]$SignaturePath,
   [Parameter(Mandatory = $true, Position = 2)][string]$ArchivePath,
-  [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'EXCESS')
+  [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'EXCESS'),
+  [switch]$VerificationCandidate
 )
 $ErrorActionPreference = 'Stop'
 $maximumManifest = 64KB
@@ -129,7 +130,11 @@ try {
     $sumPath=Join-Path $stage 'SHA256SUMS.txt'
     if(Test-Path -LiteralPath $sumPath){$sumSet=@{};foreach($line in [IO.File]::ReadAllLines($sumPath)){if($line -cnotmatch '^([0-9a-f]{64})  ([A-Za-z0-9._+@/-]+)$' -or $sumSet.ContainsKey($Matches[2])){Stop-Unsafe 'package checksum list is invalid.'};$sumSet[$Matches[2]]=$Matches[1]};if($sumSet.Count -ne $expectedHashes.Count-1){Stop-Unsafe 'package checksum list does not cover extracted contents.'};foreach($name in $sumSet.Keys){if(-not $expectedHashes.ContainsKey($name) -or $expectedHashes[$name] -cne $sumSet[$name]){Stop-Unsafe 'package checksum list does not match extracted contents.'}}}
     $package=Read-BoundedJson (Join-Path $stage 'manifest.json') 65536
-    if($package.product -cne 'EXCESS' -or $package.package -cne 'worker' -or $package.publicDistributionReady -ne $true){Stop-Unsafe 'worker package distribution gate is closed.'}
+    if($package.product -cne 'EXCESS' -or $package.package -cne 'worker'){Stop-Unsafe 'worker package identity is invalid.'}
+    if($package.publicDistributionReady -ne $true){
+      if(-not $VerificationCandidate -or $package.publicDistributionReady -ne $false -or $package.releaseGate -cne 'isolated-hardware-execution-pending' -or $package.licensesIncluded -ne $true){Stop-Unsafe 'worker package distribution gate is closed.'}
+      Write-Host 'Installing a local signed verification candidate. Public release readiness remains closed.'
+    }
     if($package.version -cne $version -or $package.releaseSequence -ne $sequence -or $package.sourceCommit -cne $commit -or $package.platform -cne 'win32-x64'){Stop-Unsafe 'worker package source or platform identity mismatch.'}
     foreach($name in $expectedHashes.Keys){$path=Join-Path $stage ($name.Replace('/',[IO.Path]::DirectorySeparatorChar));if((Get-Sha256 $path) -cne $expectedHashes[$name]){Stop-Unsafe 'staged package rehash failed.'}}
     $target=Join-Path $appRoot $appName

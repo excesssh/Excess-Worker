@@ -19,6 +19,12 @@ export function assertIdentifierFree(bytes) {
 }
 export function assertPublicBytes(bytes) {
   assertIdentifierFree(bytes);
+  assertNoPersonalPathsOrCredentials(bytes);
+}
+// Pinned upstream artefacts may contain vocabulary or required attribution.
+// Their specialised verifier checks provenance before using this narrower check.
+// Source, history, package and identity checks continue to use assertPublicBytes.
+export function assertNoPersonalPathsOrCredentials(bytes) {
   const text = bytes.toString('utf8');
   if (patterns.some(pattern => pattern.test(text))) throw Error('PRIVACY_CONTENT_BLOCKED');
 }

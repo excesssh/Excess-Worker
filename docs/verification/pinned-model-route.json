@@ -1,0 +1,87 @@
+{
+  "scope": "real pinned GGUF and licence; neutral-store import and fresh upstream download; no hardware or release-readiness claim",
+  "sourceInputs": {
+    "scripts/public-worker/model-route.mjs": "d808416249ae9a4af339265cc43934f03616396a17fc87b2951e800cb6dae204",
+    "scripts/public-worker/privacy.mjs": "859eed630d966a163bb51324e6027c062a135648c848a69bf75b2bec2e939719",
+    "packages/adapters/src/manifest.ts": "5860b3831da3befe383db6f88acf370af0b0bbef97c573b2c9158c9fb4587793",
+    "packages/adapters/src/install.ts": "094f141940332c466ab02fe58f79662f022b92af7fea6a88e2785ee717c51018"
+  },
+  "import": {
+    "modelId": "qwen3-4b",
+    "installed": true,
+    "missing": [],
+    "files": [
+      {
+        "artifact": "model.gguf",
+        "method": "link"
+      }
+    ],
+    "licences": [
+      {
+        "artifact": "licences/Qwen3-Apache-2.0.txt",
+        "bytes": 11544,
+        "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd",
+        "source": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/raw/bc640142c66e1fdd12af0bd68f40445458f3869b/LICENSE"
+      }
+    ],
+    "reports": [
+      {
+        "modelId": "qwen3-4b",
+        "artifact": "model.gguf",
+        "bytes": 2497280256,
+        "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        "source": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
+        "licence": "Apache-2.0",
+        "immutableUpstreamVocabulary": true,
+        "format": "GGUF v3",
+        "fields": 28,
+        "tensors": 398,
+        "checkedStrings": 435,
+        "vocabularyStrings": 303323,
+        "vocabularyIdentifierMatches": 2,
+        "inspectedHeaderBytes": 5956328,
+        "personalMetadata": "passed"
+      }
+    ]
+  },
+  "freshDownload": {
+    "modelId": "qwen3-4b",
+    "installed": true,
+    "missing": [],
+    "files": [
+      {
+        "artifact": "model.gguf",
+        "method": "link"
+      }
+    ],
+    "licences": [
+      {
+        "artifact": "licences/Qwen3-Apache-2.0.txt",
+        "bytes": 11544,
+        "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd",
+        "source": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/raw/bc640142c66e1fdd12af0bd68f40445458f3869b/LICENSE"
+      }
+    ],
+    "reports": [
+      {
+        "modelId": "qwen3-4b",
+        "artifact": "model.gguf",
+        "bytes": 2497280256,
+        "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        "source": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
+        "licence": "Apache-2.0",
+        "immutableUpstreamVocabulary": true,
+        "format": "GGUF v3",
+        "fields": 28,
+        "tensors": 398,
+        "checkedStrings": 435,
+        "vocabularyStrings": 303323,
+        "vocabularyIdentifierMatches": 2,
+        "inspectedHeaderBytes": 5956328,
+        "personalMetadata": "passed"
+      }
+    ],
+    "elapsedSeconds": 28.84
+  },
+  "strictSourceHistoryScanner": "unchanged assertions; specialised artifact inspection only"
+}

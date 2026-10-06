@@ -173,6 +173,7 @@ let commit="unknown";
 try{commit=execFileSync("git",["-c","safe.directory="+root.replaceAll("\\","/").replace(/\/$/,""),"rev-parse","HEAD"],{cwd:root,encoding:"utf8",stdio:["ignore","pipe","ignore"]}).trim();}catch{}
 await writeFile(join(stage,"manifest.json"),JSON.stringify({product:"EXCESS",package:"worker",version,platform,node:nodeVersion,sourceCommit:commit,
   releaseSequence,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:false,releaseGate:"isolated-hardware-execution-pending",codeSigned:false,
+  releaseSigning:"anonymous-minisign",...(!linux?{windowsPublisher:"no-trusted-authenticode-signature"}:{}),
   execution:{profile:native?.profile??"unavailable",cpuVerified:false,gpuVerified:false},
   ...(native?{native:{profile:native.profile,file:"app/node_modules/@excess/adapters/native/"+helperFile,sha256:native.sha256}}:{}),
   controller:{profile:linux?"linux-controller-namespaces-v1":"windows-appcontainer-controller-v1",files:controllerFiles.map(({file,profile,sha256})=>({file:"app/node_modules/@excess/adapters/native/"+file,profile,sha256})),verified:false},

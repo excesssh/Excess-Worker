@@ -58,8 +58,9 @@ function makeRelease(archive, { version, commit, sequence }) {
   }));
 }
 
-function packageFiles({ version, commit, sequence, ready = true, packageCommit = commit }) {
+function packageFiles({ version, commit, sequence, ready = true, packageCommit = commit, candidate = false }) {
   const manifest = Buffer.from(JSON.stringify({ product: "EXCESS", package: "worker", publicDistributionReady: ready,
+    ...(candidate?{releaseGate:'isolated-hardware-execution-pending',licensesIncluded:true}:{}),
     releaseSequence: sequence, version, sourceCommit: packageCommit, platform: "linux-x64" }));
   const launcher = ["#!/bin/sh", "set -eu", "DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)",
     "exec \"$DIR/node/bin/node\" \"$DIR/app/worker/dist/main.js\" \"$@\"", ""].join("\n");
@@ -82,8 +83,8 @@ test("Linux standalone installer executes signed fixture install, upgrade, rollb
     add(manifest, release); add(sig, signature); add(`cases/${name}/${filename}`, archiveBytes);
     input[`cases/${name}/filename.txt`] = Buffer.from(filename).toString("base64");
   }
-  function signedCase(name, { version = "1.1.0", commit = firstCommit, sequence = 2, ready = true, packageCommit = commit, symlink = false } = {}) {
-    const folder = `excess-worker-${version}-linux-x64`, archive = tarArchive(folder, packageFiles({ version, commit, sequence, ready, packageCommit }), symlink);
+  function signedCase(name, { version = "1.1.0", commit = firstCommit, sequence = 2, ready = true, packageCommit = commit, symlink = false, candidate = false } = {}) {
+    const folder = `excess-worker-${version}-linux-x64`, archive = tarArchive(folder, packageFiles({ version, commit, sequence, ready, packageCommit,candidate }), symlink);
     const release = makeRelease(archive, { version, commit, sequence }), signature = signer.sign(release);
     addCase(name, archive, release, signature);
     return { archive, release, signature };
@@ -101,6 +102,9 @@ test("Linux standalone installer executes signed fixture install, upgrade, rollb
   const alteredManifest = Buffer.from(first.release); alteredManifest[alteredManifest.indexOf(Buffer.from("1.1.0"))] = 0x32;
   addCase("tamper-manifest", first.archive, alteredManifest, first.signature);
   signedCase("closed", { ready: false });
+  const candidate=signedCase('candidate',{ready:false,candidate:true});
+  const alteredCandidate=Buffer.from(candidate.archive);alteredCandidate[alteredCandidate.length-5]^=1;
+  addCase('candidate-tampered',candidate.archive,candidate.release,candidate.signature,alteredCandidate);
   signedCase("unsafe", { symlink: true });
   signedCase("identity", { packageCommit: "f".repeat(40) });
 
@@ -128,6 +132,14 @@ chmod 700 "$tools/install-under-test.sh"
 run_ok() { case_name=$1; prefix=$2; case_dir="$tools/cases/$case_name"; filename=$(cat "$case_dir/filename.txt"); EXCESS_INSTALL_ROOT="$prefix" sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$prefix" >"$tools/output" 2>&1 || { printf 'fixture-success-failed:%s\n' "$case_name"; exit 1; }; }
 run_fail() { case_name=$1; prefix=$2; expected_text=$3; case_dir="$tools/cases/$case_name"; filename=$(cat "$case_dir/filename.txt"); if EXCESS_INSTALL_ROOT="$prefix" sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$prefix" >"$tools/output" 2>&1; then printf 'fixture-should-refuse:%s\n' "$case_name"; exit 1; fi; grep -F -q "$expected_text" "$tools/output" || { printf 'fixture-wrong-refusal:%s\n' "$case_name"; exit 1; }; }
 prefix="$tools/installed"
+step=candidate-installation
+run_fail candidate "$tools/candidate-default" 'distribution gate is closed'
+case_dir="$tools/cases/candidate"; filename=$(cat "$case_dir/filename.txt")
+sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --verification-candidate --prefix "$tools/candidate-install" >"$tools/output" 2>&1
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["publicDistributionReady"] is False' "$tools/candidate-install/app/1.1.0-0123456789ab/manifest.json"
+case_dir="$tools/cases/candidate-tampered"; filename=$(cat "$case_dir/filename.txt")
+if sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$tools/candidate-install" --verification-candidate >"$tools/output" 2>&1; then exit 91; fi
+grep -F -q 'archive SHA-256 mismatch' "$tools/output"
 step=initial-install
 run_ok first "$prefix"
 [ -x "$prefix/bin/excess-worker" ] && [ -f "$prefix/app/1.1.0-0123456789ab/manifest.json" ]
