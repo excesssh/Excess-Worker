@@ -118,7 +118,7 @@ function noOwnerMarker(result: TextResult): void {
   const marker = ["aa", "ron"].join("").toLowerCase();
   if (result.text.toLowerCase().includes(marker)) invalid("CONTROLLER_EXECUTION_OUTPUT_PRIVACY");
 }
-function parseProof(value: unknown, deviceId: string, capabilityDigest: string, now: number): WindowsTextExecutionProof {
+export function parseWindowsTextExecutionProof(value: unknown, deviceId: string, capabilityDigest: string, now: number): WindowsTextExecutionProof {
   const proof = object(value);
   const keys = Object.keys(proof).sort().join(",");
   if (keys !== "assignment,completedAt,inputDigest,output,outputDigest" &&
@@ -158,7 +158,7 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
   const load = async (signal: AbortSignal) => {
     if (!loadPromise) loadPromise = (async () => {
       const value = await options.proofStore.load();
-      return value === null ? null : parseProof(value, options.deviceId, options.capabilityDigest, now());
+      return value === null ? null : parseWindowsTextExecutionProof(value, options.deviceId, options.capabilityDigest, now());
     })();
     const proof = await loadPromise;
     if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");

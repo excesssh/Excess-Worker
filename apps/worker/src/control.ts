@@ -113,9 +113,15 @@ async function controlTransaction<T>(stateDir: string, action: () => Promise<T>)
             if (!info.isFile() || info.size > 128 || (process.platform !== "win32" && (info.uid !== process.getuid?.() || (info.mode & 0o077)))) throw Error("CONTROL_LOCK_INVALID");
             const text = await ownerFile.readFile("utf8");
             if (text) {
-              const owner = JSON.parse(text) as { pid?: unknown };
-              if (Object.keys(owner).join(",") !== "pid" || !Number.isSafeInteger(owner.pid) || Number(owner.pid) < 1) throw Error("CONTROL_LOCK_INVALID");
-              if (!processAlive(owner.pid)) {
+              // Creation precedes the PID write. A reader can see a partial
+              // JSON document; unknown ownership waits, never reclaims.
+              let owner: { pid?: unknown } | undefined;
+              try {
+                const value = JSON.parse(text);
+                if (value && typeof value === "object" && !Array.isArray(value) &&
+                    Object.keys(value).join(",") === "pid" && Number.isSafeInteger(value.pid) && value.pid > 0) owner = value;
+              } catch { /* An incomplete or malformed owner remains locked. */ }
+              if (owner && !processAlive(owner.pid)) {
                 const current = await open(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => undefined);
                 if (current) { try { const present = await current.stat(); if (present.dev === info.dev && present.ino === info.ino) await unlink(lockPath); } finally { await current.close(); } }
               }

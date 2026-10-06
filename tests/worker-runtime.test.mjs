@@ -13,6 +13,7 @@ import { removeWorkerOffer, writeWorkerOffer } from "../apps/worker/dist/offer.j
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 import { createControllerStateStore } from "../apps/worker/dist/controller-state.js";
+import { createWindowsExecutionProofStore } from "../apps/worker/dist/windows-execution-proof-store.js";
 
 const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 };
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
@@ -304,14 +305,35 @@ test("unpair retires the identity and journal for a new pairing, never while the
   await writeFile(join(f.dir, f.a.attemptId + ".result.json"), JSON.stringify(output), { mode: 0o600 });
   await assert.rejects(unpairDevice(f.dir), /1 finished job result still waits for the exchange/);
   await writeFile(join(f.dir, "attempts.jsonl"), line("finished"), { flag: "a" });
+  const store = await createWindowsExecutionProofStore(f.dir);
+  const proof = { assignment: f.a, inputDigest: 'c'.repeat(64), output, outputDigest: requestDigest(output),
+    completedAt: new Date().toISOString() };
+  await store.save(proof);
+  await assert.rejects(unpairDevice(f.dir), /CONTROLLER_EXECUTION_RECEIPT_PENDING/);
+  assert.equal((await store.load()).receiptAccepted, undefined);
+  await access(join(f.dir, 'identity.json'));
+  await store.save({ ...proof, receiptAccepted: true }); await store.close();
   const lock = await acquireRuntimeLock(f.dir);
   await assert.rejects(unpairDevice(f.dir), /already running/);
   await lock();
   const retired = await unpairDevice(f.dir);
   assert.deepEqual([retired.deviceId, retired.origin], [f.a.deviceId, "https://exchange.test"]);
-  assert.deepEqual((await readdir(retired.retired)).sort(), [f.a.attemptId + ".result.json", "attempts.jsonl", "identity.json", "journal-owner.json"].sort());
+  assert.deepEqual((await readdir(retired.retired)).sort(), [f.a.attemptId + ".result.json", "attempts.jsonl", "identity.json", "journal-owner.json", "host-execution-proof"].sort());
+  assert.equal(JSON.parse(await readFile(join(retired.retired, 'host-execution-proof/proof.json'), 'utf8')).proof.receiptAccepted, true);
+  await assert.rejects(access(join(f.dir, 'host-execution-proof')), { code: 'ENOENT' });
   for (const name of ["identity.json", "attempts.jsonl", "journal-owner.json"]) await assert.rejects(access(join(f.dir, name)), { code: "ENOENT" });
   assert.equal((await unpairDevice(f.dir)).retired, null, "nothing left to unpair");
+});
+
+test('unpair refuses a proof for another device without moving either identity or recovery evidence', async () => {
+  const f = await fixture();
+  await writeFile(join(f.dir, 'identity.json'), JSON.stringify({ deviceId: randomUUID(), origin: 'https://exchange.test' }), { mode: 0o600 });
+  const store = await createWindowsExecutionProofStore(f.dir);
+  await store.save({ assignment: f.a, inputDigest: 'c'.repeat(64), output, outputDigest: requestDigest(output),
+    completedAt: new Date().toISOString(), receiptAccepted: true }); await store.close();
+  await assert.rejects(unpairDevice(f.dir), /CONTROLLER_EXECUTION_DEVICE_MISMATCH/);
+  await access(join(f.dir, 'identity.json')); await access(join(f.dir, 'host-execution-proof/proof.json'));
+  await assert.rejects(access(join(f.dir, 'retired')), { code: 'ENOENT' });
 });
 
 test("fixture worker never probes with unavailable idle observation and aborts when user returns", async () => {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { AdapterError, parseTextRequest, parseTextResult, type MediaAdapter, type MediaOutput, type TextAdapter, type TextResult } from "@excess/adapters";
 import { MAX_WORKER_MESSAGE_BYTES, MEDIA_LIMITS, mediaRequestSchema, mediaResultSchema, mediaResultUnits, requestDigest, TEXT_LIMITS, textChunkSchema,
@@ -14,6 +14,7 @@ import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerCont
 import type { WorkerStateWriter } from "./controller-state.js";
 import type { WorkerStateReader } from "./controller-state-reader.js";
 import { checkForUpdate, runInstaller, type UpdateCheck } from "./update.js";
+import { createWindowsExecutionProofStore } from "./windows-execution-proof-store.js";
 
 type Assignment = {
   jobId: string; attemptId: string; deviceId: string; fence: string; leaseExpiresAt: string;
@@ -106,6 +107,7 @@ async function writePrivateFile(path: string, data: Buffer, context?: StateWrite
  * retired/; nothing is deleted. */
 export async function unpairDevice(stateDir: string): Promise<{ retired: string | null; deviceId: string | null; origin: string | null }> {
   const dir = resolve(stateDir), release = await acquireRuntimeLock(dir);
+  let executionProof: Awaited<ReturnType<typeof createWindowsExecutionProofStore>> | undefined;
   try {
     let identity: { deviceId?: unknown; origin?: unknown } | null = null;
     try { identity = JSON.parse(await readFile(join(dir, "identity.json"), "utf8")); }
@@ -121,12 +123,21 @@ export async function unpairDevice(stateDir: string): Promise<{ retired: string 
     const names = (await readdir(dir)).filter(name => ["identity.json", "attempts.jsonl", "journal-owner.json"].includes(name) ||
       /\.result\.json$/.test(name) || /\.artifact\.[0-9a-f]{64}\.bin$/.test(name));
     const deviceId = typeof identity?.deviceId === "string" ? identity.deviceId : null, origin = typeof identity?.origin === "string" ? identity.origin : null;
+    let hasProof = false;
+    try { await lstat(join(dir, "host-execution-proof")); hasProof = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (hasProof) {
+      executionProof = await createWindowsExecutionProofStore(dir);
+      await executionProof.checkRetirement(deviceId ?? "");
+      if (owner && owner.deviceId !== deviceId) throw Error("CONTROLLER_EXECUTION_DEVICE_MISMATCH");
+    }
     if (!names.length) return { retired: null, deviceId, origin };
     const folder = join(dir, "retired", new Date().toISOString().replace(/[:.]/g, "-") + "-" + (deviceId ?? "unfinished-pairing"));
     await mkdir(folder, { recursive: true, mode: 0o700 });
+    if (executionProof) await executionProof.retire(deviceId!, folder);
     for (const name of names) await rename(join(dir, name), join(folder, name));
     return { retired: folder, deviceId, origin };
-  } finally { await release(); }
+  } finally { try { await executionProof?.close(); } finally { await release(); } }
 }
 
 class AttemptJournal {

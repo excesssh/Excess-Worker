@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { join, parse, relative, resolve, sep } from "node:path";
 import { requestDigest, TEXT_LIMITS } from "@excess/protocol";
-import type { WindowsTextExecutionProof, WindowsTextExecutionProofStore } from "./windows-controller-execution.js";
+import { parseWindowsTextExecutionProof, type WindowsTextExecutionProof, type WindowsTextExecutionProofStore } from "./windows-controller-execution.js";
 
 const LIMIT = TEXT_LIMITS.maxOutputBytes * 4 + 16384;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -44,7 +44,11 @@ function proof(value: unknown): WindowsTextExecutionProof {
 /** Host-only recovery data. The parent state directory must already have its
  * private ACL; this subdirectory inherits it and is absent from all controller
  * state selectors and AppContainer grants. No prompt is stored. */
-export async function createWindowsExecutionProofStore(stateDir: string): Promise<WindowsTextExecutionProofStore & { close(): Promise<void> }> {
+export async function createWindowsExecutionProofStore(stateDir: string): Promise<WindowsTextExecutionProofStore & {
+  checkRetirement(deviceId: string): Promise<void>;
+  retire(deviceId: string, destination: string): Promise<void>;
+  close(): Promise<void>;
+}> {
   const root = join(resolve(stateDir), "host-execution-proof"), target = join(root, "proof.json");
   await noLinks(stateDir);
   await mkdir(root, { mode: 0o700 }).catch(error => { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; });
@@ -84,8 +88,33 @@ export async function createWindowsExecutionProofStore(stateDir: string): Promis
     return result.finally(() => { queued--; });
   };
   await directory();
+  const accepted = async (deviceId: string) => {
+    if (!UUID.test(deviceId)) fail("CONTROLLER_EXECUTION_DEVICE_MISMATCH");
+    const previous = await read();
+    if (!previous) return;
+    if (previous.assignment.deviceId !== deviceId) fail("CONTROLLER_EXECUTION_DEVICE_MISMATCH");
+    parseWindowsTextExecutionProof(previous, deviceId, previous.assignment.capabilityDigest, Date.now());
+    if (previous.receiptAccepted !== true) fail("CONTROLLER_EXECUTION_RECEIPT_PENDING");
+  };
   return Object.freeze({
     load: () => serialize(read),
+    checkRetirement: (deviceId: string) => serialize(() => accepted(deviceId)),
+    // Called only while the outside host runtime lock excludes execution.
+    // Preserve accepted evidence with the retired identity; do not discard it.
+    retire: (deviceId: string, destination: string) => serialize(async () => {
+      await accepted(deviceId);
+      await noLinks(destination);
+      const folder = await lstat(destination), before = await lstat(root);
+      if (!folder.isDirectory() || (process.platform === "linux" &&
+          (folder.uid !== process.getuid?.() || (folder.mode & 0o777) !== 0o700))) fail();
+      const target = join(destination, "host-execution-proof");
+      try { await lstat(target); fail("CONTROLLER_EXECUTION_PROOF_RECOVERY_REQUIRED"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      await directory();
+      const current = await lstat(root);
+      if (current.dev !== before.dev || current.ino !== before.ino) fail();
+      await rename(root, target);
+    }),
     save: (value: WindowsTextExecutionProof) => {
       let candidate: WindowsTextExecutionProof, bytes: Buffer;
       try {

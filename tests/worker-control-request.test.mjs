@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, open, readFile, writeFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,7 +51,7 @@ test('Windows concurrent control bursts preserve the final request and legacy by
   const dir = await mkdtemp(join(tmpdir(), 'excess-control-bursts-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const module = fileURLToPath(new URL('../apps/worker/dist/control.js', import.meta.url));
-  const program = "const {pathToFileURL}=await import('node:url');const {setWorkerControl}=await import(pathToFileURL(process.argv[1]));try{for(let i=0;i<8;i++)await setWorkerControl(process.argv[2],process.argv[3]);}catch(error){process.stderr.write(/^[A-Z_]{1,80}$/.test(error.code??'')?error.code:'CONTROL_FAILED');process.exitCode=1;}";
+  const program = "const {pathToFileURL}=await import('node:url');const {setWorkerControl}=await import(pathToFileURL(process.argv[1]));try{for(let i=0;i<8;i++)await setWorkerControl(process.argv[2],process.argv[3]);}catch(error){const code=error.code??error.message;process.stderr.write(/^[A-Z_]{1,80}$/.test(code??'')?code:error instanceof SyntaxError?'CONTROL_SYNTAX_ERROR':'CONTROL_FAILED');process.exitCode=1;}";
   const child = mode => new Promise((resolve, reject) => {
     const processChild = spawn(process.execPath, ['--input-type=module', '-e', program, module, dir, mode], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     let code = ''; processChild.stderr.setEncoding('utf8');
@@ -65,4 +65,31 @@ test('Windows concurrent control bursts preserve the final request and legacy by
     assert.equal(request.mode, await readWorkerControl(dir));
     assert.equal((await readWorkerControlRequest(dir)).revision, request.revision);
   }
+});
+
+test('control waits for a partially written live owner without removing its lock', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'excess-control-partial-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'control-write.lock'), owner = await open(path, 'wx', 0o600);
+  await owner.writeFile('{"pid":');
+  const request = setWorkerControl(dir, 'drain');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(await readFile(path, 'utf8'), '{"pid":');
+  await owner.writeFile(String(process.pid) + '}\n'); await owner.sync();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal((JSON.parse(await readFile(path, 'utf8'))).pid, process.pid);
+  await owner.close(); await unlink(path);
+  await request;
+  assert.equal((await readWorkerControlRequest(dir)).mode, 'drain');
+});
+
+test('permanently malformed control ownership refuses within the deadline and preserves evidence', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'excess-control-malformed-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'control-write.lock'), bytes = '{"pid":';
+  await writeFile(path, bytes, { mode: 0o600 });
+  const started = Date.now();
+  await assert.rejects(setWorkerControl(dir, 'run'), /CONTROL_LOCK_UNAVAILABLE/);
+  assert.ok(Date.now() - started >= 4900 && Date.now() - started < 7000);
+  assert.equal(await readFile(path, 'utf8'), bytes);
 });
