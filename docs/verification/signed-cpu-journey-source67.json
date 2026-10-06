@@ -1,0 +1,87 @@
+{
+  "sourceCommit": "58a361662406ab37ec616ce46f5f6d23e7b68dc2",
+  "releaseSequence": 8,
+  "candidateFiles": [
+    {
+      "platform": "win32-x64",
+      "file": "excess-worker-0.1.0-58a361662406-win-x64.zip",
+      "bytes": 35568606,
+      "sha256": "6eec175c85d090fbc3c3db174e1b263adcac4264ef281e769f53c839108ad285",
+      "reproducible": true
+    },
+    {
+      "platform": "linux-x64",
+      "file": "excess-worker-0.1.0-58a361662406-linux-x64.tar.gz",
+      "bytes": 44517292,
+      "sha256": "dcd846844e11e0d9246330f955393aaf992d891e5ffc2d8c4a42a6be50c23ab6",
+      "reproducible": true
+    }
+  ],
+  "modelSha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+  "scope": "Actual project-Minisign-signed candidates on this workstation and WSL, production HTTPS coordinator and funded project testnet buyer; no fixture coordinator/ledger, organic-demand, independent supplier, fresh-OS or GPU claim.",
+  "platforms": {
+    "win32-x64": {
+      "cpuVerified": true,
+      "candidateSourceCommit": "58a361662406ab37ec616ce46f5f6d23e7b68dc2",
+      "receiptSignatureVerified": true,
+      "producedTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "terminalState": "succeeded",
+      "billingStatus": "accounted",
+      "accountedTokens": 27,
+      "drainObservedDuringActiveAttempt": true,
+      "successfulSteps": [
+        "buyer-auth-and-existing-balance",
+        "actual-pairing",
+        "real-isolated-probe-and-supply",
+        "real-buyer-job-admitted",
+        "real-buyer-inference",
+        "drain-and-reap",
+        "restart",
+        "revoke"
+      ],
+      "memoryPolicyMiB": 4096,
+      "actualSignedOfflineUpdate": "sequence7 to8; high-water verified",
+      "manualRollback": "Previous signed package fully verified before launcher recovery; high-water8 retained; actual confined probe and signed roll-forward passed",
+      "automaticNetworkUpdate": "Not completed: publication/feed and public-distribution gates remain closed."
+    },
+    "linux-x64": {
+      "cpuVerified": true,
+      "candidateSourceCommit": "58a361662406ab37ec616ce46f5f6d23e7b68dc2",
+      "receiptSignatureVerified": true,
+      "producedTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "terminalState": "succeeded",
+      "billingStatus": "accounted",
+      "accountedTokens": 27,
+      "drainObservedDuringActiveAttempt": true,
+      "successfulSteps": [
+        "buyer-auth-and-existing-balance",
+        "actual-pairing",
+        "real-isolated-probe-and-supply",
+        "real-buyer-job-admitted",
+        "real-buyer-inference",
+        "drain-and-reap",
+        "restart",
+        "revoke"
+      ],
+      "memoryPolicyMiB": 8192,
+      "actualSignedOfflineUpdate": "sequence7 to8; high-water verified",
+      "manualRollback": "Previous signed package fully verified before launcher recovery; high-water8 retained; actual confined probe and signed roll-forward passed",
+      "automaticNetworkUpdate": "Not completed: publication/feed and public-distribution gates remain closed."
+    }
+  },
+  "publicDistributionReady": false,
+  "gpuVerified": false,
+  "anonymousMinisignVerified": true,
+  "windowsPublisher": "no-trusted-authenticode-signature",
+  "linuxRecoveryCgroup": {
+    "actualCgroupLimits": {
+      "memory.max": "8589934592",
+      "memory.swap.max": "0",
+      "pids.max": "64",
+      "cpu.max": "200000 100000"
+    },
+    "actualMemoryPeakBytes": 6537515008
+  }
+}

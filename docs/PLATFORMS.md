@@ -18,3 +18,5 @@ The local CPU report is not evidence of a live coordinator, funded demand, an ex
 Before widening support, run the exact signed package through bootstrap, installation, restart, update, rollback, drain and revocation on clean supported hosts. Verify actual outputs and clean shutdown with each claimed backend. Keep CPU, GPU, fixture and external-service evidence separate.
 
 The project uses anonymous Minisign release signing. Windows binaries have no trusted Authenticode publisher signature; publisher certificates and identity verification are outside scope.
+
+Signed source67 CPU candidates have now completed real project-funded testnet buyer jobs on Windows and WSL Linux with native isolation retained. Offline signed update and manual recovery passed; GPU isolation and the production signed update feed remain unverified.

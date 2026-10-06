@@ -1,4 +1,5 @@
 {
+  "scope": "Regression verified: schema-checked job.chunk.sequence is forwarded; device identity and heartbeat sequence remain host-owned. No hardware or buyer execution claimed from these tests.",
   "build": {
     "exitCode": 0,
     "seconds": 1.44,
@@ -8,13 +9,22 @@
     "exitCode": 0,
     "seconds": 0.44,
     "logSha256": "cfd45f054b1842c3c2f0c983744f012ad2bd120f5d5bc950b45b75b6a342c232",
-    "summary": {}
+    "summary": {
+      "tests": 35,
+      "pass": 35,
+      "fail": 0,
+      "skipped": 0
+    }
   },
   "standalone": {
     "exitCode": 0,
     "seconds": 28.66,
     "logSha256": "f483efcc1e3b1e02298168971a2a77f8ecc4d199cf59e80ddbd7bc913ff45b96",
-    "summary": {}
-  },
-  "scope": "Regression verified: schema-checked job.chunk.sequence is forwarded; device identity and heartbeat sequence remain host-owned. No hardware or buyer execution claimed from these tests."
+    "summary": {
+      "tests": 240,
+      "pass": 223,
+      "fail": 0,
+      "skipped": 17
+    }
+  }
 }
