@@ -99,8 +99,8 @@ function tarArchive(folder, entries, { symlink = false } = {}) {
 function packageFiles(platform, sequence = 2, ready = true) {
   const pkg = Buffer.from(JSON.stringify({ product: "EXCESS", package: "worker", publicDistributionReady: ready, releaseSequence: sequence, version: "1.1.0", sourceCommit: commit, platform }));
   return platform === "win32-x64"
-    ? { "manifest.json": pkg, "excess-worker.cmd": Buffer.from("@echo off\r\n"), "node/node.exe": Buffer.from("node-fixture") }
-    : { "manifest.json": pkg, "excess-worker": Buffer.from("#!/bin/sh\n"), "node/bin/node": Buffer.from("node-fixture") };
+    ? { "manifest.json": pkg, "excess-worker.cmd": Buffer.from("@echo off\r\n"), "node/node.exe": Buffer.from("node-fixture"), "app/node_modules/@excess/adapters/dist/index.js":Buffer.from("inert package fixture") }
+    : { "manifest.json": pkg, "excess-worker": Buffer.from("#!/bin/sh\n"), "node/bin/node": Buffer.from("node-fixture"), "app/node_modules/@excess/adapters/dist/index.js":Buffer.from("inert package fixture") };
 }
 
 function feedFor(platform, archive, overrides = {}) {

@@ -2,7 +2,9 @@ import { inflateRawSync } from "node:zlib";
 import { AdapterError } from "./manifest.js";
 
 export interface ZipEntry { name:string; data:Buffer }
-export interface ZipLimits { maxInputBytes:number; maxTotalBytes:number; maxEntryBytes:number }
+export interface ZipLimits { maxInputBytes:number; maxTotalBytes:number; maxEntryBytes:number;
+  /** Only signed worker packages contain app/node_modules/@excess. Runtime downloads keep this unset. */
+  allowExcessWorkerScope?:boolean }
 const MiB=1024*1024;
 export const DEFAULT_ZIP_LIMITS:Readonly<ZipLimits>=Object.freeze({maxInputBytes:32*MiB,maxTotalBytes:256*MiB,maxEntryBytes:128*MiB});
 
@@ -24,7 +26,9 @@ export function scanSafeZip(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEntr
     const nameSize=input.readUInt16LE(at+28),extra=input.readUInt16LE(at+30),comment=input.readUInt16LE(at+32),local=input.readUInt32LE(at+42);
     if(at+46+nameSize+extra+comment>end||input.readUInt16LE(at+34)!==0||(flags&~0x808)!==0||![0,8].includes(method))return bad();
     const name=input.subarray(at+46,at+46+nameSize).toString("utf8"),segments=name.replace(/\/$/,"").split("/");
-    if(!name||name.length>240||name.includes("\\")||segments.some(s=>!s||s==="."||s===".."||!/^[-A-Za-z0-9._]+$/.test(s)||s.endsWith(".")||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(s))||names.has(name.toLowerCase()))return bad();
+    if(!name||name.length>240||name.includes("\\")||segments.some((s,i)=>!s||s==="."||s===".."||
+      (!/^[-A-Za-z0-9._]+$/.test(s)&&!(limits.allowExcessWorkerScope===true&&i===3&&s==="@excess"&&segments[1]==="app"&&segments[2]==="node_modules"))||
+      s.endsWith(".")||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(s))||names.has(name.toLowerCase()))return bad();
     names.add(name.toLowerCase());
     const mode=(input.readUInt32LE(at+38)>>>16)&0xf000;
     if(mode!==0&&mode!==0x8000&&mode!==0x4000)return bad();

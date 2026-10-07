@@ -28,7 +28,7 @@ export function scanSafeTarGz(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEn
     const size=parseInt(sizeText,8),type=String.fromCharCode(header[156]!),dataAt=at+512,next=dataAt+Math.ceil(size/512)*512;
     if(next>tar.length||!name||name.length>240||name.startsWith("/")||name.includes("\\"))return bad();
     const segments=name.replace(/\/$/,"").split("/");
-    if(!segments.every(segmentOk))return bad();
+    if(!segments.every((segment,index)=>segmentOk(segment)||limits.allowExcessWorkerScope===true&&index===3&&segment==="@excess"&&segments[1]==="app"&&segments[2]==="node_modules"))return bad();
     if(root===undefined)root=segments[0];else if(segments[0]!==root)return bad();
     const relativeName=segments.slice(1).join("/");
     if(type==="5") {
@@ -41,6 +41,7 @@ export function scanSafeTarGz(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEn
         if(size>limits.maxEntryBytes||total>limits.maxTotalBytes)return bad();
         files.set(relativeName,Buffer.from(tar.subarray(dataAt,dataAt+size)));
       } else if(type==="2") {
+        if(limits.allowExcessWorkerScope===true)return bad();
         const target=text(at+157,100);
         if(size!==0||!segmentOk(target))return bad();
         const directory=segments.slice(1,-1).join("/");

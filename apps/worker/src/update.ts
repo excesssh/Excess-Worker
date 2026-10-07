@@ -23,7 +23,7 @@ type ReleaseEnvelope = { manifest: ReleaseManifest; manifestDigest: string };
 const PLATFORM: ReleasePlatform = process.platform === "win32" ? "win32-x64" : "linux-x64";
 const RELEASE_STATE_FILE = "release-high-water.json";
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
-const ARCHIVE_LIMITS = { maxInputBytes: MAX_ARCHIVE_BYTES, maxTotalBytes: 1024 * 1024 * 1024, maxEntryBytes: 128 * 1024 * 1024 };
+const ARCHIVE_LIMITS = { maxInputBytes: MAX_ARCHIVE_BYTES, maxTotalBytes: 1024 * 1024 * 1024, maxEntryBytes: 128 * 1024 * 1024, allowExcessWorkerScope: true };
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const releaseId = (state: ReleaseState | null) => state ? state.version + "-" + state.sourceCommit.slice(0, 12) : null;
 const validOrigin = (origin: string) => /^https:\/\/[a-z0-9.-]+(?::[0-9]+)?$/.test(origin);

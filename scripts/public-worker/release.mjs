@@ -4,8 +4,9 @@ import { readFile, writeFile, mkdir, mkdtemp, rm, copyFile } from 'node:fs/promi
 import { resolve, join, dirname } from 'node:path';
 import { parseReleaseManifest, verifyMinisign } from '../../packages/protocol/dist/release.js';
 import { assertPublicBytes, scanHistory } from './privacy.mjs';
+import { packagePayloadFingerprint, verifyExecutionEvidence } from './execution-gates.mjs';
 
-// Prepare a signed local candidate. Publication requires separate completed hardware gates.
+// Sign reproducible local artifacts. Publication follows exact-package and HTTPS verification.
 const [firstArg, secondArg, outArg] = process.argv.slice(2);
 if (!firstArg || !secondArg || !outArg) throw Error('Usage: release.mjs <build-a/packages> <build-b/packages> <candidate-out>');
 const first = resolve(firstArg), second = resolve(secondArg), out = resolve(outArg);
@@ -20,7 +21,7 @@ scanHistory();
 const sourceCommit = execFileSync('git', ['-c','safe.directory='+process.cwd().replaceAll('\\','/'),'rev-parse','HEAD'], {encoding:'utf8'}).trim();
 const controllerSource=await readFile('native/windows/ExcessController.cs');assertPublicBytes(controllerSource);
 const controllerSourceSha256=hash(controllerSource);
-const files = [], comparisons = [], isolation = {}; let version, sequence, releasedAt;
+const files = [], comparisons = [], isolation = {}; let version, sequence, releasedAt, releaseReady;
 await mkdir(out,{recursive:true});
 for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linux-x64','linux-x64','.tar.gz']]) {
   const workerVersion = JSON.parse(await readFile('apps/worker/package.json','utf8')).version;
@@ -30,18 +31,37 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
   if(!left.equals(right))throw Error('ARTIFACT_NOT_REPRODUCIBLE '+platform);
   const manifest = JSON.parse(await readFile(join(first,folder,'manifest.json'),'utf8'));
   const otherManifest = JSON.parse(await readFile(join(second,folder,'manifest.json'),'utf8'));
-  if(manifest.sourceCommit!==sourceCommit||!manifest.licensesIncluded||manifest.publicDistributionReady!==false)throw Error('CANDIDATE_IDENTITY_INVALID');
+  if(manifest.sourceCommit!==sourceCommit||!manifest.licensesIncluded||typeof manifest.publicDistributionReady!=='boolean')throw Error('CANDIDATE_IDENTITY_INVALID');
+  const ready=manifest.publicDistributionReady;
+  if(releaseReady!==undefined&&ready!==releaseReady)throw Error('CANDIDATE_READINESS_MISMATCH');
+  releaseReady=ready;
   const expectedProfile=platform==='win32-x64'?'windows-appcontainer-v1':'linux-landlock-v1';
   const helperFile=platform==='win32-x64'?'ExcessSandbox.exe':'excess-sandbox';
   const expectedFile='app/node_modules/@excess/adapters/native/'+helperFile;
   if(manifest.native?.profile!==expectedProfile||manifest.native.file!==expectedFile||manifest.execution?.profile!==expectedProfile||
-    manifest.execution.cpuVerified!==false||manifest.execution.gpuVerified!==false||JSON.stringify(manifest)!==JSON.stringify(otherManifest))throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
+    JSON.stringify(manifest)!==JSON.stringify(otherManifest))throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
+  if(ready){
+    const evidence=await readFile('releases/execution-evidence.json');assertPublicBytes(evidence);
+    const committed=execFileSync('git',['show','HEAD:releases/execution-evidence.json']);
+    if(!evidence.equals(committed))throw Error('EXECUTION_EVIDENCE_NOT_COMMITTED');
+    const verified=verifyExecutionEvidence(evidence,platform,await packagePayloadFingerprint(join(first,folder)),manifest.releaseSequence);
+    execFileSync('git',['merge-base','--is-ancestor',verified.testedSourceCommit,sourceCommit],{stdio:'ignore'});
+    if(JSON.stringify(verified)!==JSON.stringify(manifest.verification)||manifest.execution.cpuVerified!==true||
+      manifest.execution.gpuVerified!==verified.gpuVerified||manifest.controller?.verified!==true||
+      manifest.releaseGate!=='verified-execution'||manifest.releaseSigning!=='anonymous-minisign'||manifest.codeSigned!==false||
+      platform==='win32-x64'&&manifest.windowsPublisher!=='no-trusted-authenticode-signature')throw Error('CANDIDATE_EXECUTION_EVIDENCE_INVALID');
+    isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and '+expectedProfile:'windows-appcontainer-controller-v1 and '+expectedProfile)+(verified.gpuVerified?' + windows-cuda-budget-v1':'')+': '+verified.configuration;
+  }else{
+    if(manifest.execution.cpuVerified!==false||manifest.execution.gpuVerified!==false||manifest.controller?.verified!==false||manifest.verification!==undefined)
+      throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
+    isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and '+expectedProfile:'windows-appcontainer-controller-v1 and '+expectedProfile)+': local candidate; packaged execution gates incomplete';
+  }
   const [helperA,helperB]=await Promise.all([readFile(join(first,folder,expectedFile)),readFile(join(second,folder,expectedFile))]);
   assertPublicBytes(helperA);assertPublicBytes(helperB);
   if(!helperA.equals(helperB)||manifest.native.sha256!==hash(helperA))throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
   if(platform==='linux-x64') {
     const expected=[['excess-controller','integrity-controller.json','linux-controller-namespaces-v1'],['excess-egress-peer','integrity-egress-peer.json','linux-af-unix-peercred-v1']];
-    if(manifest.controller?.profile!=='linux-controller-namespaces-v1'||manifest.controller.verified!==false||manifest.controller.files?.length!==expected.length)throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
+    if(manifest.controller?.profile!=='linux-controller-namespaces-v1'||manifest.controller.verified!==ready||manifest.controller.files?.length!==expected.length)throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
     for(const [file,pin,profile] of expected) {
       const path='app/node_modules/@excess/adapters/native/'+file;
       const declared=manifest.controller.files.find(item=>item.file===path);
@@ -53,7 +73,7 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
   } else {
     const relative='app/node_modules/@excess/adapters/native/ExcessController.exe';
     const pinRelative='app/node_modules/@excess/adapters/native/integrity-controller-win32.json';
-    if(manifest.controller?.profile!=='windows-appcontainer-controller-v1'||manifest.controller.verified!==false||manifest.controller.files?.length!==1)throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
+    if(manifest.controller?.profile!=='windows-appcontainer-controller-v1'||manifest.controller.verified!==ready||manifest.controller.files?.length!==1)throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
     const declared=manifest.controller.files[0];
     const [controllerA,controllerB,pinA,pinB]=await Promise.all([readFile(join(first,folder,relative)),readFile(join(second,folder,relative)),readFile(join(first,folder,pinRelative)),readFile(join(second,folder,pinRelative))]);
     for(const bytes of [controllerA,controllerB,pinA,pinB])assertPublicBytes(bytes);
@@ -67,7 +87,6 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
       integrity.toolchainInventorySha256!=='051d04fab3d3756d47d766b01e009fab3000445134d4db909bc0a034e71ac3bd'||
       integrity.deterministic!==true||integrity.debugSymbols!==false||!/^[0-9a-f]{64}$/.test(integrity.sourceSha256))throw Error('CANDIDATE_CONTROLLER_BOUNDARY_INVALID');
   }
-  isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and linux-landlock-v1':'windows-appcontainer-controller-v1 and '+expectedProfile)+': local candidate; packaged execution gates incomplete';
   if(version&&(manifest.version!==version||manifest.releaseSequence!==sequence||manifest.builtAt!==releasedAt))throw Error('CANDIDATE_METADATA_MISMATCH');
   version=manifest.version;sequence=manifest.releaseSequence;releasedAt=manifest.builtAt;
   const file='excess-worker-'+version+'-'+sourceCommit.slice(0,12)+'-'+suffix+extension;
@@ -90,7 +109,7 @@ try {
     execFileSync('icacls',[privateDir,'/inheritance:r','/grant:r','*'+sid+':(OI)(CI)F'],{stdio:'ignore'});
   }
   const privateKey=join(privateDir,'release.key');assertPublicBytes(Buffer.from(key));await writeFile(privateKey,key,{mode:0o600});
-  execFileSync(tool,['-S','-s',privateKey,'-m',target,'-t','Excess Worker candidate '+version+' sequence '+sequence,'-c','Excess Worker release manifest'],{stdio:['ignore','ignore','pipe']});
+  execFileSync(tool,['-S','-s',privateKey,'-m',target,'-t','Excess Worker '+(releaseReady?'release ':'candidate ')+version+' sequence '+sequence,'-c','Excess Worker release manifest'],{stdio:['ignore','ignore','pipe']});
   const publicKey=await readFile('releases/minisign.pub','utf8'),signature=await readFile(target+'.minisig','utf8');
   verifyMinisign(bytes,signature,publicKey);
   execFileSync(tool,['-V','-H','-q','-p',resolve('releases/minisign.pub'),'-m',target],{stdio:['ignore','ignore','pipe']});
@@ -99,6 +118,8 @@ try {
   if(dirname(privateDir)!==out||!privateDir.startsWith(join(out,'.signing-')))throw Error('SIGNING_CLEANUP_BOUNDARY_INVALID');
   await rm(privateDir,{recursive:true,force:true});
 }
-await writeFile(join(out,'CANDIDATE.txt'),'LOCAL CANDIDATE — NOT PUBLISHED\nOS-enforced CPU/GPU model workloads have not passed the release gates.\nThe signature verifies source and artifact metadata; it does not certify hardware execution.\n');
-await writeFile(join(out,'reproducibility.json'),JSON.stringify({sourceCommit,node:process.version,comparisons,signature:'verified by bundled verifier and Minisign 0.12',publication:'blocked by isolated hardware execution'},null,2)+'\n');
-console.log(JSON.stringify({sourceCommit,files,signature:'verified',publication:'not attempted; hardware gates pending'}));
+await writeFile(join(out,releaseReady?'RELEASE.txt':'CANDIDATE.txt'),releaseReady
+  ?'LOCAL VERIFIED RELEASE ARTIFACTS — NOT YET PUBLISHED\nExecution evidence is bound to unchanged payload bytes. Verify the exact signed installation and HTTPS update journey before publication.\nAnonymous Minisign verifies integrity, not publisher identity or hardware attestation. Windows has no trusted Authenticode publisher signature.\n'
+  :'LOCAL CANDIDATE — NOT PUBLISHED\nOS-enforced CPU/GPU model workloads have not passed the release gates.\nThe signature verifies source and artifact metadata; it does not certify hardware execution.\n');
+await writeFile(join(out,'reproducibility.json'),JSON.stringify({sourceCommit,node:process.version,comparisons,signature:'verified by bundled verifier and Minisign 0.12',publication:releaseReady?'exact final installation and HTTPS verification pending':'blocked by isolated hardware execution'},null,2)+'\n');
+console.log(JSON.stringify({sourceCommit,files,signature:'verified',publication:releaseReady?'not attempted; final package and HTTPS gates pending':'not attempted; hardware gates pending'}));

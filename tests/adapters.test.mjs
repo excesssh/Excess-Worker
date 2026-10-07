@@ -50,6 +50,16 @@ test("adapter manifest is immutable, exact and import-only; requests and outputs
   assert.equal(parseTextResult({text:"x".repeat(65536),generatedTokens:2048,finishReason:"length"}).generatedTokens,2048);
   for(const input of [{text:"",generatedTokens:0,finishReason:"stop"},{text:"x",generatedTokens:2049,finishReason:"stop"},{text:"x".repeat(65537),generatedTokens:1,finishReason:"stop"},{text:"x",generatedTokens:1,finishReason:"unknown"},{text:"x",generatedTokens:1,finishReason:"stop",url:"file:///secret"}])assert.throws(()=>parseTextResult(input),/INVALID_TEXT_RESULT/);
 });
+test("worker ZIP scope is explicit, exact and does not widen runtime download names",()=>{
+  const path="root/app/node_modules/@excess/adapters/dist/index.js";
+  const limits={maxInputBytes:1024*1024,maxTotalBytes:1024*1024,maxEntryBytes:512*1024};
+  assert.throws(()=>readSafeZip(fixtureZip([[path,"SCOPED PACKAGE FIXTURE"]]),limits),/UNSAFE_RUNTIME_ARCHIVE/);
+  assert.equal(readSafeZip(fixtureZip([[path,"SCOPED PACKAGE FIXTURE"]]),{...limits,allowExcessWorkerScope:true})[0].name,path);
+  for(const denied of ["root/app/node_modules/@other/a.js","root/else/node_modules/@excess/a.js","root/app/@excess/a.js",
+    "root/app/node_modules/@excess/../outside.js","root/app/node_modules/@excess/CON.js"])
+    assert.throws(()=>readSafeZip(fixtureZip([[denied,"x"]]),{...limits,allowExcessWorkerScope:true}),/UNSAFE_RUNTIME_ARCHIVE/);
+});
+
 test("reviewed ZIP reader rejects traversal, Windows aliases, links, duplicate names and oversized expansion",()=>{
   const valid=readSafeZip(fixtureZip([["llama-server.exe","FAKE FIXTURE"],["lib/ggml.dll","FAKE DLL FIXTURE"]]));
   assert.deepEqual(valid.map(e=>e.name),["llama-server.exe","lib/ggml.dll"]);
