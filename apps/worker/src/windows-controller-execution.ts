@@ -151,6 +151,7 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
   const now = options.now ?? Date.now;
   let current: Attempt | undefined, pendingProof: WindowsTextExecutionProof | undefined;
   let deferredAssignment: DeferredAssignment | undefined, probeSessionId: string | undefined, probeStarting = false, probePulling = false, stopInFlight = false;
+  let stopPromise: Promise<WindowsControllerJson> | undefined;
   let closing = false, closePromise: Promise<void> | undefined;
   let mutationTail: Promise<void> = Promise.resolve();
   let activeHandlers = 0, drainHandlers: (() => void) | undefined;
@@ -478,16 +479,25 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
       } finally { if (current === active) active.pulling = false; }
     }
     if (action === "stop") {
-      if (Object.keys(request).length !== 1 || stopInFlight) invalid();
-      const active = current;
-      stopInFlight = true;
-      try {
-        const result = await options.adapter.handle(payload, signal);
-        if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
-        if (active && current === active && active.phase === "running") { active.stopObserved = true; delete active.sessionId; }
-        probeSessionId = undefined;
-        return result;
-      } finally { stopInFlight = false; }
+      if (Object.keys(request).length !== 1) invalid();
+      // Abort listeners, execution unwind and final shutdown can all request
+      // stop. They must await the same verified reap; a duplicate is not a
+      // cleanup failure, and an actual reap failure remains a failure for all.
+      if (!stopPromise) {
+        const active = current;
+        stopInFlight = true;
+        stopPromise = Promise.resolve().then(async () => {
+          const result = await options.adapter.handle(payload, signal);
+          if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
+          if (exact(result, "stopped").stopped !== true) invalid("CONTROLLER_ADAPTER_STOP_UNCONFIRMED");
+          if (active && current === active && active.phase === "running") { active.stopObserved = true; delete active.sessionId; }
+          probeSessionId = undefined;
+          return result;
+        }).finally(() => { stopInFlight = false; stopPromise = undefined; });
+      }
+      const result = await stopPromise;
+      if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
+      return result;
     }
     invalid("CONTROLLER_EXECUTION_ADAPTER_ACTION_INVALID");
     } finally { leave(); }

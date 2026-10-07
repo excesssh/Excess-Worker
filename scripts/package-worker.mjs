@@ -7,6 +7,7 @@ import {nodeRuntime} from "./public-worker/node-runtime.mjs";
 import {archiveDirectory} from "./public-worker/archive.mjs";
 import {assertPublicBytes} from "./public-worker/privacy.mjs";
 import {bundleWindowsControllerEntry} from "./public-worker/build-windows-controller-entry.mjs";
+import {packagePayloadFingerprint,verifyExecutionEvidence} from "./public-worker/execution-gates.mjs";
 
 // Builds the supplier worker package for Windows x64 (default) or Linux x64 (--platform linux-x64): a Node runtime,
 // the compiled worker and only its runtime dependencies, a launcher, onboarding notes and SHA-256 sums.
@@ -172,12 +173,29 @@ await writeFile(join(stage,"licenses","NOTICE.txt"),[
 
 let commit="unknown";
 try{commit=execFileSync("git",["-c","safe.directory="+root.replaceAll("\\","/").replace(/\/$/,""),"rev-parse","HEAD"],{cwd:root,encoding:"utf8",stdio:["ignore","pipe","ignore"]}).trim();}catch{}
+let verification;
+if(args.includes("--release-ready")){
+  const evidence=await readFile(join(root,"releases/execution-evidence.json"));assertPublicBytes(evidence);
+  const gitArgs=["-c","safe.directory="+root.replaceAll("\\","/").replace(/\/$/,"")];
+  const committed=execFileSync("git",[...gitArgs,"show","HEAD:releases/execution-evidence.json"],{cwd:root,stdio:["ignore","pipe","ignore"]});
+  if(!evidence.equals(committed))throw Error("EXECUTION_EVIDENCE_NOT_COMMITTED");
+  execFileSync("git",[...gitArgs,"diff","--quiet"],{cwd:root,stdio:"ignore"});
+  execFileSync("git",[...gitArgs,"diff","--cached","--quiet"],{cwd:root,stdio:"ignore"});
+  verification=verifyExecutionEvidence(evidence,platform,await packagePayloadFingerprint(stage),releaseSequence);
+  execFileSync("git",[...gitArgs,"merge-base","--is-ancestor",verification.testedSourceCommit,commit],{cwd:root,stdio:"ignore"});
+  const notes=await readFile(join(stage,"ONBOARDING.txt"),"utf8");
+  await writeFile(join(stage,"ONBOARDING.txt"),notes.replace("Excess Worker local candidate", "Excess Worker")
+    .replace("UNRELEASED: isolated CPU/GPU execution has not passed the release gates. Model execution fails closed on unsupported isolation profiles.",
+      "Verified configuration: "+verification.configuration+". Unsupported model and isolation profiles refuse execution. Anonymous Minisign release signing; Windows has no trusted publisher signature."));
+}
+const ready=verification!==undefined;
 await writeFile(join(stage,"manifest.json"),JSON.stringify({product:"EXCESS",package:"worker",version,platform,node:nodeVersion,sourceCommit:commit,
-  releaseSequence,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:false,releaseGate:"isolated-hardware-execution-pending",codeSigned:false,
+  releaseSequence,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:ready,releaseGate:ready?"verified-execution":"isolated-hardware-execution-pending",codeSigned:false,
   releaseSigning:"anonymous-minisign",...(!linux?{windowsPublisher:"no-trusted-authenticode-signature"}:{}),
-  execution:{profile:native?.profile??"unavailable",cpuVerified:false,gpuVerified:false},
+  execution:{profile:native?.profile??"unavailable",cpuVerified:ready,gpuVerified:verification?.gpuVerified??false},
+  ...(verification?{verification}:{}),
   ...(native?{native:{profile:native.profile,file:"app/node_modules/@excess/adapters/native/"+helperFile,sha256:native.sha256}}:{}),
-  controller:{profile:linux?"linux-controller-namespaces-v1":"windows-appcontainer-controller-v1",files:controllerFiles.map(({file,profile,sha256})=>({file:"app/node_modules/@excess/adapters/native/"+file,profile,sha256})),verified:false},
+  controller:{profile:linux?"linux-controller-namespaces-v1":"windows-appcontainer-controller-v1",files:controllerFiles.map(({file,profile,sha256})=>({file:"app/node_modules/@excess/adapters/native/"+file,profile,sha256})),verified:ready},
   builtAt:new Date(epoch*1000).toISOString()},null,2)+"\n");
 
 async function files(dir){const result=[];for(const entry of await readdir(dir,{withFileTypes:true})){const path=join(dir,entry.name);
@@ -196,4 +214,4 @@ if(zip){
   await archiveDirectory(stage,name,path,platform,epoch);
   archive={path,sha256:sha256(await readFile(path)),bytes:(await stat(path)).size};
 }
-process.stdout.write(JSON.stringify({product:"EXCESS",package:name,platform,directory:stage,files:sums.length,archive,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:false})+"\n");
+process.stdout.write(JSON.stringify({product:"EXCESS",package:name,platform,directory:stage,files:sums.length,archive,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:ready})+"\n");

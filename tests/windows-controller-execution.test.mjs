@@ -62,6 +62,32 @@ function completeResult(attemptData = attempt, value = output) {
   return { ...attemptData, output: value, outputDigest: requestDigest(value), reportedUnits: String(value.generatedTokens) };
 }
 
+test("overlapping cancellation stops await one confirmed reap and preserve stop failures", async () => {
+  for (const confirmed of [true, false]) {
+    let release;
+    const f = fixture({ adapterHandle: async payload => {
+      assert.equal(payload.action, "stop");
+      await new Promise(resolve => { release = resolve; });
+      if (!confirmed) throw Error("CONTROLLER_ADAPTER_STOP_UNCONFIRMED");
+      return { stopped: true };
+    } });
+    try {
+      const first = f.adapterCall({ action: "stop" });
+      await new Promise(resolve => setImmediate(resolve));
+      const second = f.adapterCall({ action: "stop" });
+      const settled = Promise.allSettled([first, second]);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(f.adapterCalls.length, 1, "duplicates share the native reap operation");
+      release();
+      const results = await settled;
+      for (const result of results) {
+        if (confirmed) { assert.equal(result.status, "fulfilled"); assert.deepEqual(result.value, { stopped: true }); }
+        else { assert.equal(result.status, "rejected"); assert.match(result.reason.message, /STOP_UNCONFIRMED/); }
+      }
+    } finally { await (await f.host).close(); }
+  }
+});
+
 async function begin(f, deliveryMode = "buffered") {
   await f.command("worker.poll", {});
   await f.command("job.input", attempt);
