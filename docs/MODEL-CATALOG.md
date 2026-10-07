@@ -1,6 +1,6 @@
 # Local model catalogue
 
-The source catalogue contains **13 text models and four media models**. These are pinned, selectable adapter entries; a catalogue entry or a hardware-fit estimate does not establish successful execution. Hosted-provider models are separate: they are served by the exchange through its provider integration and cannot be installed on a supplier worker.
+The local source catalogue contains **17 pinned entries: 13 text models and four media models**. A catalogue entry or hardware-fit estimate does not establish successful execution. As of 7 October 2026, the source catalogue separately contains **43 hosted-provider entries** through its provider integration; these are a distinct service and cannot be installed on a supplier worker. The hosted inventory can change independently of the pinned local catalogue.
 
 Download totals below include pinned model parts and licence files, in decimal GB. Memory is estimated GiB at the adapter's configured context and includes its documented buffers. Runtime downloads are additional and shared by models using the same backend. Allow free system memory, installation cache/disk space and a resource budget above measured peaks. FLUX requires GPU execution.
 
@@ -32,7 +32,7 @@ Download totals below include pinned model parts and licence files, in decimal G
 | Embeddings and transcription | llama.cpp b10809: Windows CPU/CUDA; Linux CPU/Vulkan | No current signed-release buyer execution evidence for these adapters. |
 | Images | stable-diffusion.cpp master-869-07a85c7: Windows CPU/CUDA; Linux CPU/Vulkan | No current signed-release buyer execution evidence for these adapters. |
 
-Implementation of a runtime route does not establish admission by the isolation profile or execution on a machine. **0.1.0 refuses Linux GPU execution. Windows CUDA admission is restricted to Qwen3-4B.** Other text models and media adapters remain individually unverified in the current signed release. Earlier unconfined execution reports are historical and do not verify the current boundaries. See [measured platform requirements](PLATFORMS.md) and [signed release evidence](VERIFICATION.md#current-evidence). New Linux NVIDIA work must pass its own profile, model and buyer checks before any broader support claim.
+Implementation of a runtime route does not establish admission by the isolation profile or execution on a machine. **0.1.0 refuses Linux GPU execution. Windows CUDA admission is restricted to Qwen3-4B.** Other text models and media adapters remain individually unverified in the current signed release. Earlier unconfined execution reports are historical and do not verify the current boundaries. See [measured platform requirements](PLATFORMS.md) and [signed release evidence](VERIFICATION.md#current-evidence). Source 0.2.0 now has an independently reproduced CUDA 12.9 Update 1/SM90 runtime pin set with FlashAttention disabled; this establishes build inputs only. No Linux CUDA model run or buyer job has been verified. The per-model candidate coverage is recorded in [Linux CUDA catalogue coverage](linux-cuda-catalogue-coverage.md).
 
 ## Select, inspect and install
 
@@ -52,3 +52,5 @@ Text is billed per output token, including hidden reasoning tokens for gpt-oss. 
 ## Exact pins and licences
 
 All model parts, runtime artifacts, model revisions, licence URLs, hashes, limits and prompt formats are defined in [the manifest](../packages/adapters/src/manifest.ts). The [machine-readable inventory](../evidence/model-catalogue-inventory.json) lists every model artifact and licence pin. Licence consent covers the selected model and runtime; retain original pinned licence and tokenizer bytes. Licence labels here do not replace the full terms.
+
+Development-source CLI selection keeps RAM/VRAM estimates separate from selectable operating-system/backend profiles and recorded execution evidence. The installation plan separately describes pinned downloads and consent. A fitting size estimate does not override a refused backend or establish that a model will run; a successful installation still needs the local probe and an eligible live offer. The published 0.1.0 package retains its existing interface and restrictions.

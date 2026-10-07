@@ -58,7 +58,7 @@ Before deciding to run, confirm the repository and key, the valid manifest signa
 excess-worker pair https://excess.sh "my-worker"
 ```
 
-Open [Excess Supply](https://excess.sh/supply), sign in with your wallet, and compare both the code and device fingerprint with the CLI before approving. Then:
+Open [Excess Supply](https://excess.sh/supply) and sign in. Choose **Add a machine**, then **Next: pair your machine**. Enter the code shown by the CLI and compare the device fingerprint. Approve only when both match, then return to the CLI and run:
 
 ```sh
 excess-worker complete-pairing

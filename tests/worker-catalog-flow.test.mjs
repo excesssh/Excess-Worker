@@ -234,14 +234,14 @@ test("the running worker publishes the automatic ask from the exchange's public 
   } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 }));
 
-test("the worker lists models by what fits this computer and explains import", async () => temporary(async dir => {
+test("the worker lists memory estimates separately from execution profiles and explains import", async () => temporary(async dir => {
   const home = join(dir, "worker"), models = join(dir, "ai"), listed = json(home, models, "models");
   assert.equal(listed.models.length, 17);
   assert.deepEqual([...listed.fitsThisComputer, ...listed.tooLargeForThisComputer], listed.models.map(item => item.id), "fitting models come first");
   for (const item of listed.models) assert.equal(item.fits === "no", listed.tooLargeForThisComputer.includes(item.id));
   const guide = json(home, models, "guide");
   assert.deepEqual(guide.models.fitsThisComputer, listed.fitsThisComputer);
-  assert.match(guide.steps.find(step => step.step === "choose-model").note, /models fit this computer/);
+  assert.match(guide.steps.find(step => step.step === "choose-model").note, /models meet the memory-size estimate/);
   const usage = cli(home, models, "import", "gpt-oss-20b", join(dir, "missing.gguf"));
   assert.notEqual(usage.status, 0); assert.match(usage.stderr, /--accept-licenses/);
   const missing = cli(home, models, "import", "gpt-oss-20b", join(dir, "missing.gguf"), "--accept-licenses");

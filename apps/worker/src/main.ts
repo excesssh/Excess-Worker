@@ -14,7 +14,7 @@ import { observeLocalResources, observeTemperatures } from "./telemetry.js";
 import { runLocalProbe } from "./probe.js";
 import { readWorkerOffers, writeWorkerOffer, removeWorkerOffer, setWorkerPriceBand, clearWorkerPriceBand, setWorkerAutoPrice, offerFromSymbol, assetFromSymbol } from "./offer.js";
 import { workerGuide } from "./guide.js";
-import { detectHardware, modelsByFit } from "./hardware.js";
+import { detectHardware, executionProfile, modelExecutionProfiles, modelPlanStatus, modelsByFit, modelsBySelectableFit } from "./hardware.js";
 import { workerService } from "./service.js";
 import { checkForUpdate, currentRelease, runInstaller, supervisedBySystemd, UPDATED_EXIT_CODE } from "./update.js";
 import { startLinuxController } from "./controller.js";
@@ -119,37 +119,43 @@ try {
   }
   else if (command === "heartbeat") process.stdout.write(JSON.stringify(await sendHeartbeat(path)) + "\n");
   else if (command === "models") {
-    // What this computer can run: system memory for CPU inference, NVIDIA GPU memory for full offload. Models that fit come first.
+    // Estimate RAM/VRAM size separately from implemented, selectable and verified execution profiles.
     const [policy, installed, hardware] = await Promise.all([readWorkerPolicy(stateDir), installedComponents(installDir), detectHardware()]);
     const runtimesInstalled = { "llama.cpp": installed.runtimes, "stable-diffusion.cpp": installed.sdRuntimes };
-    const rated = modelsByFit(servedModels(), hardware);
+    const catalog = servedModels(), rated = modelsByFit(catalog, hardware);
+    const memoryFitting = rated.filter(item => item.fit.fits !== "no"), selectableFitting = modelsBySelectableFit(catalog, hardware);
     print({ product: "EXCESS", hardware, active: { model: policy.model, backend: policy.backend }, runtimesInstalled,
-      fitsThisComputer: rated.filter(item => item.fit.fits !== "no").map(item => item.entry.id),
+      // Preserve the existing lists as memory-estimate aliases for callers that already consume them.
+      fitsThisComputer: memoryFitting.map(item => item.entry.id),
       tooLargeForThisComputer: rated.filter(item => item.fit.fits === "no").map(item => item.entry.id),
+      memoryFitEstimate: { fitsThisComputer: memoryFitting.map(item => item.entry.id), tooLargeForEstimate: rated.filter(item => item.fit.fits === "no").map(item => item.entry.id) },
+      selectableProfileFits: selectableFitting.map(item => item.entry.id),
       models: rated.map(({ entry, fit }) => ({ id: entry.id, kind: entry.kind, name: entry.displayName, parameters: entry.parameters, quantization: entry.quantization,
         meteringUnit: entry.meteringUnit, pricedPer: priceUnit(entry.kind).label, runtime: entry.engine, reasoning: entry.reasoning,
         downloadBytes: entry.downloadBytes, licence: entry.licence, installed: installed.models.includes(entry.id), gpuOnly: entry.gpuOnly,
-        executionEvidence: "not established by catalogue inventory", ...fit })),
+        executionEvidence: "not established by catalogue inventory", memoryFitEstimate: fit, executionProfiles: modelExecutionProfiles(entry), ...fit })),
       next: "excess-worker use <model id> [--gpu], then excess-worker install-model <model id> [--gpu] --accept-download --accept-licenses (or excess-worker import <model id> <file.gguf ...> --accept-licenses if you already have the exact file)",
-      note: "Kinds: text (streamed), embedding, transcription and image (buffered). fits is a hardware-size estimate, not execution evidence. GPU memory is read from nvidia-smi; other GPUs are not measured. Windows CUDA is verified only for Qwen3 4B on its recorded RTX 3070 Ti and driver 596.49 configuration. Linux --gpu selects CUDA for a new, unverified Worker 0.2.0 candidate: NVIDIA SM90, CUDA 12.9, driver 580 or newer, helper ABI 6 and kernel 6.12 or newer are required. The published 0.1.0 Linux archive remains CPU-only. Vulkan catalog/runtime entries remain visible, but isolated Vulkan execution is refused. gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. The worker's local check decides whether a model can be served." });
+      note: "Kinds: text (streamed), embedding, transcription and image (buffered). fitsThisComputer, tooLargeForThisComputer and the row fields fits/cpu/gpu are legacy memory-size estimates only; they do not establish a selectable or verified execution profile. Use memoryFitEstimate and executionProfiles for those separate facts. GPU memory is read from nvidia-smi; other GPUs are not measured. Windows CUDA selection is limited to Qwen3 4B with a GPU memory budget no higher than 32 GB, and is verified only on the recorded RTX 3070 Ti and driver 596.49 configuration. Linux --gpu selects implemented CUDA support in a new, unverified Worker 0.2.0 candidate: NVIDIA SM90, CUDA 12.9, driver 580 or newer, helper ABI 6 and kernel 6.12 or newer are required. The published 0.1.0 Linux archive remains CPU-only. Vulkan catalog/runtime entries remain visible, but isolated Vulkan execution is refused. gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. The worker's local check decides whether a model can be served." });
   } else if (command === "use") {
     if (positional.length !== 1) throw Error("Usage: worker use <model id> [--gpu | --cpu]");
     const current = await readWorkerPolicy(stateDir), entry = servedModel(positional[0]!);
     if (entry.gpuOnly && flags.has("--cpu")) throw Error("This model runs on a GPU only; use --gpu");
     const backend = entry.gpuOnly ? gpuBackend() : chosenBackend("cpu");
-    if (backend === "cuda" && process.platform === "win32" && entry.id !== "qwen3-4b")
+    const selectedProfile = executionProfile(entry, backend);
+    if (backend === "cuda" && !selectedProfile.selectable && process.platform === "win32")
       throw Error("GPU_PROFILE_UNVERIFIED: Windows CUDA is available only for the verified Qwen3 4B profile.");
     const budgetProblems = selectionBudgetProblems(entry, backend, current);
     if (budgetProblems.length) throw Error("MODEL_RESOURCE_BUDGET_REQUIRED: " + budgetProblems.join(" "));
     const policy = await writeWorkerPolicy(stateDir, { ...current, model: entry.id, backend });
     const linuxGpuCandidate = backend === "cuda" && process.platform === "linux";
-    print({ product: "EXCESS", policy, kind: entry.kind, executionEvidence: "not established by catalogue inventory",
+    print({ product: "EXCESS", policy, kind: entry.kind, executionEvidence: "not established by catalogue inventory", executionProfile: selectedProfile,
       ...(linuxGpuCandidate ? { candidate: "unverified Linux CUDA profile; new Worker 0.2.0 binary and actual hardware trial required; published 0.1.0 Linux archive remains CPU-only" } : {}),
       next: `excess-worker install-model ${entry.id}${backend !== "cpu" ? " --gpu" : ""} --accept-download --accept-licenses (if not installed), then excess-worker offer <SYMBOL> <price per ${priceUnit(entry.kind).label}>. Resource caps stay at their configured values.` });
   } else if (command === "model-plan") {
-    const policy = await readWorkerPolicy(stateDir), id = positional[0] ?? policy.model, backend = chosenBackend(policy.backend), text = servedModel(id).kind === "text";
+    const policy = await readWorkerPolicy(stateDir), id = positional[0] ?? policy.model, backend = chosenBackend(policy.backend), entry = servedModel(id), text = entry.kind === "text";
     const plan = text ? textInstallationPlan(installDir, id, backend) : mediaInstallationPlan(installDir, id, backend);
-    print({ ...plan, disk: await (text ? textInstallDiskCheck(installDir, id, backend) : mediaInstallDiskCheck(installDir, id, backend)).catch(() => null) });
+    const disk = await (text ? textInstallDiskCheck(installDir, id, backend) : mediaInstallDiskCheck(installDir, id, backend)).catch(() => null);
+    print({ ...plan, disk, ...modelPlanStatus(entry, backend, process.platform, plan.requiresExplicitConsent, disk?.sufficient ?? null) });
   } else if (command === "install-model") {
     if (!flags.has("--accept-download") || !flags.has("--accept-licenses") || positional.length > 1)
       throw Error("Read worker model-plan, then use install-model [model id] [--gpu] --accept-download --accept-licenses to opt in");

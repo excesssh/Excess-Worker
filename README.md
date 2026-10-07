@@ -24,7 +24,7 @@ A valid signature establishes that the release was signed by the holder of the t
 1. **Download.** Choose the archive for your platform, plus `release.json` and `release.json.minisig` from the [0.1.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0). Packages include Node; suppliers do not need npm or a source build.
 2. **Verify.** Follow [Verify your download](docs/VERIFICATION.md#verify-your-download), including establishing the trusted key. The website's file checker compares hashes; it does **not** verify a release signature.
 3. **Install.** Use the [verified offline installer commands](docs/INSTALLATION.md#install-the-verified-package) as your ordinary user. Add the installed launcher to your session's PATH, then run `excess-worker guide` and `excess-worker doctor`.
-4. **Pair.** Run `excess-worker pair https://excess.sh "my-worker"`. Sign in on the [Supply page](https://excess.sh/supply), compare the displayed code and fingerprint, approve the device, then run `excess-worker complete-pairing`. Wallet approvals happen on the website.
+4. **Pair.** Run `excess-worker pair https://excess.sh "my-worker"`. On the [Supply page](https://excess.sh/supply), sign in, choose **Add a machine**, then **Next: pair your machine**. Enter the CLI code and compare the fingerprint; approve only if they match, then return to the CLI and run `excess-worker complete-pairing`. Wallet approvals happen on the website.
 5. **Choose a model.** Run `excess-worker models`, select `excess-worker use qwen3-4b --cpu`, then review `excess-worker model-plan`. Read the listed licences and download sizes before [accepting the model/runtime installation](docs/INSTALLATION.md#choose-and-install-a-model).
 6. **Supply capacity.** Set your resource policy and supplier price, then start work: `excess-worker run` on Windows, or the bounded user service on Linux. [Exact commands and price units](docs/INSTALLATION.md#supply-capacity). Check progress and earnings on the Supply page. Availability does not guarantee demand or earnings.
 
@@ -39,7 +39,7 @@ The local catalogue has **13 text models and four media models**, with pinned fi
 | Transcription | Qwen3 ASR 0.6B. |
 | Images | SD-Turbo and FLUX.1 schnell. |
 
-**[Complete catalogue: sizes, memory, quantization, licences and installation steps](docs/MODEL-CATALOG.md)** Run `excess-worker models` to see every local entry and its estimated fit. Hosted-provider models on the website are a separate service and cannot be installed on a worker.
+**[Complete catalogue: sizes, memory, quantization, licences and installation steps](docs/MODEL-CATALOG.md)** Run `excess-worker models` to see every local entry and its estimated fit. As of 7 October 2026, the source catalogue contains 43 hosted-provider entries as a separate service; they cannot be installed on a worker. This count can change independently of the 17 pinned local models.
 
 Catalogue availability is broader than verified execution. The configuration table below records the measured 0.1.0 release scope; it does not restrict catalogue visibility or promote untested entries to verified support.
 
