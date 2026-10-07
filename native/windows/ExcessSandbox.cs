@@ -412,7 +412,7 @@ internal static class ExcessSandbox
 
             currentStage = "relay-create-suspended";
             var relayHandles = new[] { relayIn, relayOut, relayErr };
-            string[] relayArgs = new[] { "--relay", runtimePort.ToString(CultureInfo.InvariantCulture) };
+            string[] relayArgs = new[] { "--relay", runtimePort.ToString(CultureInfo.InvariantCulture), timeoutMilliseconds.ToString(CultureInfo.InvariantCulture) };
             ProcessInformation relayInfo = CreateAppContainerChild(relayExecutable, relayArgs, packageSidPtr, environment,
                 scratch, relayHandles, relayIn, relayOut, relayErr);
             relayProcess = relayInfo.hProcess; relayThread = relayInfo.hThread;
@@ -593,7 +593,7 @@ internal static class ExcessSandbox
         var match = System.Text.RegularExpressions.Regex.Match(capture.ToString(), @"offloaded\s+([0-9]{1,3})/([0-9]{1,3}) layers to GPU");
         int offloaded, total;
         if (!match.Success || !Int32.TryParse(match.Groups[1].Value, out offloaded) || !Int32.TryParse(match.Groups[2].Value, out total) ||
-            total < 1 || total > 128 || offloaded < 0 || offloaded > total) return false;
+            total < 1 || total > 128 || offloaded < 1 || offloaded != total) return false;
         TryEmitOutput("{\"type\":\"status\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) +
             ",\"peakWorkingSetBytes\":0,\"gpuOffloadedLayers\":" + offloaded.ToString(CultureInfo.InvariantCulture) +
             ",\"gpuTotalLayers\":" + total.ToString(CultureInfo.InvariantCulture) + "}");
@@ -839,8 +839,10 @@ internal static class ExcessSandbox
 
     private static int RunRelay(string[] args)
     {
-        if (args.Length != 2) return 2;
-        int port; if (!Int32.TryParse(args[1], out port) || port < 1 || port > 65535) return 2;
+        if (args.Length != 3) return 2;
+        int port, timeout;
+        if (!Int32.TryParse(args[1], out port) || port < 1 || port > 65535 ||
+            !Int32.TryParse(args[2], out timeout) || timeout < 100 || timeout > 600000) return 2;
         var serializer = new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024 };
         string input;
         try
@@ -852,7 +854,7 @@ internal static class ExcessSandbox
                 if (frame == null) return 3;
                 string type = frame.ContainsKey("type") ? frame["type"] as string : null;
                 int id = frame.ContainsKey("id") ? Convert.ToInt32(frame["id"], CultureInfo.InvariantCulture) : 0;
-                if (type == "request") { RelayRequest(frame, id, port, serializer); continue; }
+                if (type == "request") { RelayRequest(frame, id, port, timeout, serializer); continue; }
                 if (type == "next" || type == "cancel") continue; // request loop consumes pull controls.
                 return 3;
             }
@@ -861,7 +863,7 @@ internal static class ExcessSandbox
         return 0;
     }
 
-    private static void RelayRequest(Dictionary<string, object> request, int id, int port, JavaScriptSerializer serializer)
+    private static void RelayRequest(Dictionary<string, object> request, int id, int port, int timeout, JavaScriptSerializer serializer)
     {
         string method = request["method"] as string, path = request["path"] as string;
         string body = request.ContainsKey("body") ? request["body"] as string : null;
@@ -870,7 +872,7 @@ internal static class ExcessSandbox
         try
         {
             web = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture) + path);
-            web.Method = method; web.AllowAutoRedirect = false; web.Proxy = null; web.KeepAlive = false; web.Timeout = 30000; web.ReadWriteTimeout = 30000;
+            web.Method = method; web.AllowAutoRedirect = false; web.Proxy = null; web.KeepAlive = false; web.Timeout = timeout; web.ReadWriteTimeout = timeout;
             string key = Environment.GetEnvironmentVariable("LLAMA_API_KEY");
             if (!String.IsNullOrEmpty(key)) web.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
             if (method == "POST")

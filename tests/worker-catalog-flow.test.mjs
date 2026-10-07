@@ -248,16 +248,33 @@ test("the worker lists memory estimates separately from execution profiles and e
   assert.notEqual(missing.status, 0); assert.match(missing.stderr, /IMPORT_FILE_NOT_FOUND/);
 }));
 
-test("CLI refuses Windows media worker selection before changing policy and still exposes download plans", () => temporary(async dir => {
+test("Windows image CUDA selection requires explicit budgets and retains pending evidence", () => temporary(async dir => {
   const home=join(dir,"state"),models=join(dir,"models");
-  const before=jsonOnPlatform("win32",home,models,"policy");
-  for(const id of ["qwen3-embedding-0.6b","qwen3-asr-0.6b","sd-turbo"]){
-    const selected=cliOnPlatform("win32",home,models,"use",id,"--cpu");
-    assert.notEqual(selected.status,0);
-    assert.match(selected.stderr,/MODEL_EXECUTION_PROFILE_UNAVAILABLE/);
-    assert.deepEqual(jsonOnPlatform("win32",home,models,"policy"),before);
-    const plan=jsonOnPlatform("win32",home,models,"model-plan",id,"--cpu");
-    assert.equal(plan.installationAvailability.planAvailable,true);
-    assert.equal(plan.executionProfile.selectable,false);
+  const before=jsonOnPlatform("win32",home,models,"policy").policy;
+  await writeWorkerPolicy(home,{...before,maxGpuMemoryMb:2048});
+  const low=jsonOnPlatform("win32",home,models,"policy").policy;
+  const refused=cliOnPlatform("win32",home,models,"use","sd-turbo","--gpu");
+  assert.notEqual(refused.status,0);assert.match(refused.stderr,/MODEL_RESOURCE_BUDGET_REQUIRED/);
+  assert.deepEqual(jsonOnPlatform("win32",home,models,"policy").policy,low);
+  await writeWorkerPolicy(home,{...before,maxMemoryMb:8192,maxGpuMemoryMb:6144});
+  const selected=jsonOnPlatform("win32",home,models,"use","sd-turbo","--gpu");
+  assert.equal(selected.policy.backend,"cuda");assert.equal(selected.kind,"image");
+  assert.equal(selected.executionProfile.verification,"pending_hardware_evidence");
+  const plan=jsonOnPlatform("win32",home,models,"model-plan","sd-turbo","--gpu");
+  assert.equal(plan.installationAvailability.planAvailable,true);assert.equal(plan.executionProfile.selectable,true);
+}));
+
+test("Windows media CPU routes retain explicit task and resource policies", () => temporary(async dir => {
+  const home=join(dir,"state"),models=join(dir,"models");
+  const before=jsonOnPlatform("win32",home,models,"policy").policy;
+  const refused=cliOnPlatform("win32",home,models,"use","qwen3-embedding-0.6b","--cpu");
+  assert.notEqual(refused.status,0);assert.match(refused.stderr,/MODEL_RESOURCE_BUDGET_REQUIRED/);
+  assert.deepEqual(jsonOnPlatform("win32",home,models,"policy").policy,before);
+  await writeWorkerPolicy(home,{...before,maxMemoryMb:8192,runSeconds:300});
+  for(const [id,kind] of [["qwen3-embedding-0.6b","embedding"],["qwen3-asr-0.6b","transcription"],["sd-turbo","image"]]){
+    const selected=jsonOnPlatform("win32",home,models,"use",id,"--cpu");
+    assert.equal(selected.policy.model,id);assert.equal(selected.policy.backend,"cpu");assert.equal(selected.kind,kind);
+    assert.equal(selected.executionProfile.implementation,"implemented");
+    assert.equal(selected.executionProfile.verification,"not_established_by_catalogue_inventory");
   }
 }));

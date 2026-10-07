@@ -1,9 +1,15 @@
 import { open, readFile, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { catalogEntry } from '../../packages/adapters/dist/manifest.js';
+import { MODEL_CATALOG, MEDIA_CATALOG } from '../../packages/adapters/dist/manifest.js';
 import { hashFile, noLinks, downloadToCache, importModelFiles } from '../../packages/adapters/dist/install.js';
 import { assertPublicBytes, assertNoPersonalPathsOrCredentials } from './privacy.mjs';
+
+const catalogEntry = id => {
+  const entry = [...MODEL_CATALOG, ...MEDIA_CATALOG].find(item => item.id === id);
+  if (!entry) throw Error('UNKNOWN_MODEL');
+  return entry;
+};
 
 const HEADER_LIMIT = 32 * 1024 * 1024;
 const vocabularyKeys = new Set(['tokenizer.ggml.tokens', 'tokenizer.ggml.merges']);

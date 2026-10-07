@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { createWindowsControllerTransport } from "./windows-controller-transport.js";
 import { createWindowsStateClient } from "./windows-controller-state.js";
 import { createWindowsCoordinatorClient } from "./windows-controller-coordinator.js";
-import { createWindowsTextAdapterClient } from "./windows-controller-adapter.js";
+import { createWindowsTextAdapterClient, createWindowsMediaAdapterClient } from "./windows-controller-adapter.js";
+import { servedModel } from "./served.js";
 import { runWorker } from "./runtime.js";
 
 // Internal package entry only. The native helper verifies this exact file and
@@ -19,7 +20,9 @@ try {
   const rpc = transport;
   state = createWindowsStateClient((payload, signal) => rpc.call("state", payload, signal));
   const coordinator = await createWindowsCoordinatorClient((payload, signal) => rpc.call("coordinator", payload, signal));
-  const adapter = createWindowsTextAdapterClient((payload, signal) => rpc.call("adapter", payload, signal));
+  const policy = await state.reader.readPolicy(), kind = servedModel(policy.model).kind;
+  const callAdapter = (payload: Readonly<Record<string, import("./windows-controller.js").WindowsControllerJson>>, signal?: AbortSignal) => rpc.call("adapter", payload, signal);
+  const adapter = kind === "text" ? createWindowsTextAdapterClient(callAdapter) : createWindowsMediaAdapterClient(callAdapter, kind);
   const abort = new AbortController();
   process.once("SIGINT", () => abort.abort()); process.once("SIGTERM", () => abort.abort());
   // This virtual root only converts the runtime's fixed output names into typed

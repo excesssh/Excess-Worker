@@ -137,3 +137,19 @@ test("Qwen3-ASR output cleaning keeps only the transcript", () => {
   assert.equal(cleanTranscript("<think>\n\n</think>language German<asr_text> Guten Tag </asr_text>"), "Guten Tag");
   assert.equal(cleanTranscript("plain text"), "plain text");
 });
+
+
+test("embedding requests grow the bounded physical batch only after reaping the smaller runtime",async()=>temporary(async dir=>{
+  const {adapter,log}=await harness(dir,"qwen3-embedding-0.6b");
+  try {
+    const smallProbe=await adapter.probe();
+    await adapter.execute({kind:"embedding",inputs:["x".repeat(8192)]});
+    await adapter.execute({kind:"embedding",inputs:["small again"]});
+    const largeProbe=await adapter.probe();
+    const starts=(await log()).filter(item=>item.type==="start");
+    assert.equal(starts.length,2,"only growth restarts the runtime; smaller subsequent inputs reuse it");
+    assert.deepEqual(starts.map(item=>item.args[item.args.indexOf("--ubatch-size")+1]),["512","8448"]);
+    assert.notEqual(smallProbe.nativePid,largeProbe.nativePid);
+    assert.throws(()=>process.kill(smallProbe.nativePid,0),error=>error.code==="ESRCH","the old native process is reaped before replacement");
+  } finally {await adapter.stop();}
+}));

@@ -1,3 +1,4 @@
+import { WINDOWS_MEDIA_CPU_BUDGETS } from "@excess/adapters";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
@@ -73,16 +74,19 @@ async function protectState(stateDir: string): Promise<void> {
   } catch { throw Error("CONTROLLER_STATE_PRIVACY_UNAVAILABLE"); }
 }
 
-/** Admit only the pinned CUDA model with the independently tested host/GPU
- * budgets. Admission does not prove hardware: native probe validation still
- * requires monitored residency and all 37 layers before supply is advertised. */
+/** Admission checks model-specific floors and retains the recorded Qwen3 host/GPU
+ * budgets. It does not prove hardware: native validation requires full offload
+ * and monitored residency before any CUDA supply is advertised. */
 export function validateWindowsControllerModelPolicy(policy: WorkerPolicy): void {
   if (policy.backend !== "cpu") {
-    if (policy.backend !== "cuda" || policy.model !== "qwen3-4b") throw Error("CONTROLLER_GPU_PROFILE_UNVERIFIED");
-    if (!Number.isSafeInteger(policy.maxMemoryMb) || policy.maxMemoryMb < 6144 ||
-        !Number.isSafeInteger(policy.maxGpuMemoryMb) || policy.maxGpuMemoryMb < 6144 || policy.maxGpuMemoryMb > 32768) throw Error("CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED");
+    if (policy.backend !== "cuda") throw Error("CONTROLLER_GPU_PROFILE_UNVERIFIED");
+    if (!Number.isSafeInteger(policy.maxMemoryMb) || policy.maxMemoryMb < Math.max(servedModel(policy.model).minMemoryMb, policy.model === "qwen3-4b" ? 6144 : 1024) ||
+        !Number.isSafeInteger(policy.maxGpuMemoryMb) || policy.maxGpuMemoryMb < Math.max(servedModel(policy.model).minVramMb, policy.model === "qwen3-4b" ? 6144 : 1024) || policy.maxGpuMemoryMb > 32768) throw Error("CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED");
   }
-  if (servedModel(policy.model).kind !== "text") throw Error("CONTROLLER_MEDIA_PROFILE_UNVERIFIED");
+  const entry = servedModel(policy.model),floor=policy.backend==="cpu"?WINDOWS_MEDIA_CPU_BUDGETS[policy.model]:undefined;
+  if(floor&&policy.maxMemoryMb<floor.maxMemoryMb)throw Error("CONTROLLER_MEMORY_BUDGET_REQUIRED");
+  if(floor?.timeoutMs&&policy.runSeconds*1000<floor.timeoutMs)throw Error("CONTROLLER_RUN_BUDGET_REQUIRED");
+  if (entry.gpuOnly && policy.backend === "cpu") throw Error("MODEL_REQUIRES_GPU");
 }
 
 export interface WindowsWorkerOptions { readonly packageDir: string; readonly stateDir: string; readonly installDir: string; readonly signal?: AbortSignal; }
@@ -122,7 +126,7 @@ async function runWorkerWithTransport(options: WindowsWorkerOptions, fetchFactor
     if (connection.origin !== origin) throw Error("CONTROLLER_ORIGIN_MISMATCH");
     store = await createControllerStateStore({ stateDir, markShutdownUnverified: async () => { shutdownUnverified = true; await lock!.markShutdownUnverified(); } });
     state = createWindowsStateHost(reader, store);
-    const engine = createServedAdapter(options.installDir, policy); if (isMediaAdapter(engine)) throw Error("CONTROLLER_MEDIA_PROFILE_UNVERIFIED");
+    const engine = createServedAdapter(options.installDir, policy);
     adapter = createWindowsAdapterHost(engine, policy.runSeconds);
     const packagedRelease = await currentRelease();
     coordinator = createWindowsCoordinatorHost({ connection, capabilityDigest: servedModel(policy.model).capabilityDigest, fetcher, telemetry: observeLocalResources,
@@ -130,7 +134,8 @@ async function runWorkerWithTransport(options: WindowsWorkerOptions, fetchFactor
       readOffers: () => reader!.readOffers(policy.model) });
     proofStore = await createWindowsExecutionProofStore(stateDir);
     execution = await createWindowsTextExecutionHost({ coordinator, adapter, proofStore, deviceId: connection.deviceId,
-      capabilityDigest: servedModel(policy.model).capabilityDigest, runSeconds: policy.runSeconds });
+      capabilityDigest: servedModel(policy.model).capabilityDigest, runSeconds: policy.runSeconds,
+      ...(isMediaAdapter(engine) ? { media: engine } : {}) });
     const stateHost = state, executionHost = execution;
     await setWorkerControl(stateDir, "run");
     try {

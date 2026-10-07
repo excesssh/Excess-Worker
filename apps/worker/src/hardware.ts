@@ -1,4 +1,5 @@
 import os from "node:os";
+import { WINDOWS_MEDIA_CPU_BUDGETS } from "@excess/adapters";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ServedModel } from "./served.js";
@@ -26,6 +27,7 @@ export type ExecutionProfile = {
   evidenceRelease?: "0.1.0";
   verification: "verified_on_recorded_configuration" | "pending_hardware_evidence" | "not_established_by_catalogue_inventory" | "not_verified" | "not_applicable";
   minimumHostMemoryMb?: number;
+  minimumRunSeconds?: number;
   minimumGpuMemoryMb?: number;
   maximumGpuMemoryMb?: number;
   note?: string;
@@ -44,24 +46,27 @@ export function modelFit(entry: Pick<ServedModel, "minMemoryMb" | "minVramMb" | 
 export function executionProfile(entry: Pick<ServedModel, "id" | "kind" | "gpuOnly" | "minMemoryMb" | "minVramMb">,
   backend: ExecutionBackend, platform: NodeJS.Platform = process.platform): ExecutionProfile {
   if (platform !== "win32" && platform !== "linux") return { backend, selectable: false, implementation: "unsupported", verification: "not_applicable", note: "No isolated worker profile is implemented for this operating system." };
-  if (platform === "win32" && entry.kind !== "text") return { backend, selectable: false, implementation: "unsupported", verification: "not_applicable", note: "The Windows paired-worker controller refuses media tasks; adapter download plans remain available." };
   if (backend === "cpu") return entry.gpuOnly
     ? { backend, selectable: false, implementation: "unsupported", verification: "not_verified", note: "This catalogue model is GPU-only." }
     : { backend, selectable: true, implementation: "implemented", verification: "not_established_by_catalogue_inventory",
-        minimumHostMemoryMb: entry.minMemoryMb };
+        minimumHostMemoryMb: Math.max(entry.minMemoryMb,platform==="win32"?WINDOWS_MEDIA_CPU_BUDGETS[entry.id]?.maxMemoryMb??0:0),
+        ...(platform==="win32"&&WINDOWS_MEDIA_CPU_BUDGETS[entry.id]?.timeoutMs?{
+          minimumRunSeconds:WINDOWS_MEDIA_CPU_BUDGETS[entry.id]!.timeoutMs!/1000,
+          note:"Recorded Windows CPU image probe used eight threads and a 300-second limit; catalogue limits and buyer execution remain separate checks."
+        }:{}) };
   if (backend === "vulkan") return { backend, selectable: false, implementation: "unsupported", verification: "not_applicable",
     note: "Isolated Vulkan execution is refused." };
   const windows = platform === "win32", linux = platform === "linux";
-  const selectable = linux || windows && entry.id === "qwen3-4b";
+  const selectable = linux || windows && entry.minVramMb <= 32768;
   return {
     backend, selectable, implementation: selectable ? "implemented" : "unsupported",
-    verification: windows && entry.id === "qwen3-4b" ? "verified_on_recorded_configuration" : linux ? "pending_hardware_evidence" : "not_verified",
+    verification: windows && entry.id === "qwen3-4b" ? "verified_on_recorded_configuration" : "pending_hardware_evidence",
     ...(windows && entry.id === "qwen3-4b" ? { evidenceRelease: "0.1.0" as const } : {}),
-    minimumHostMemoryMb: Math.max(entry.minMemoryMb, windows ? 6144 : 0),
-    minimumGpuMemoryMb: Math.max(entry.minVramMb, windows ? 6144 : 0),
+    minimumHostMemoryMb: Math.max(entry.minMemoryMb, windows && entry.id === "qwen3-4b" ? 6144 : 0),
+    minimumGpuMemoryMb: Math.max(entry.minVramMb, windows && entry.id === "qwen3-4b" ? 6144 : 0),
     ...(windows ? { maximumGpuMemoryMb: 32768 } : linux ? { maximumGpuMemoryMb: 131072 } : {}),
-    ...(!selectable ? { note: windows ? "Windows CUDA selection is supported only for Qwen3 4B." : "No isolated CUDA execution profile is available on this operating system." } :
-      windows ? { note: "Published 0.1.0 verified only on the recorded RTX 3070 Ti and driver 596.49 configuration; the GPU memory budget is capped at 32 GB." } :
+    ...(!selectable ? { note: windows ? "The model exceeds the Windows CUDA profile maximum GPU memory budget of 32 GB." : "No isolated CUDA execution profile is available on this operating system." } :
+      windows ? { note: "Windows CUDA uses a 32 GB maximum monitored budget and requires observed model residency and complete reported llama offload. The 0.1.0 execution evidence applies only to its recorded Qwen3 4B configuration; other configurations require their own jobs." } :
       { note: "Linux CUDA selection is implemented in the Worker 0.2.0 candidate; hardware verification is pending. The published 0.1.0 Linux archive remains CPU-only." }),
   };
 }

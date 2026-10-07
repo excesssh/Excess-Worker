@@ -5,7 +5,8 @@ import { join, parse, relative, resolve, sep } from "node:path";
 import { requestDigest, TEXT_LIMITS } from "@excess/protocol";
 import { parseWindowsTextExecutionProof, type WindowsTextExecutionProof, type WindowsTextExecutionProofStore } from "./windows-controller-execution.js";
 
-const LIMIT = TEXT_LIMITS.maxOutputBytes * 4 + 16384;
+import { WINDOWS_MEDIA_PROOF_BYTES } from "./windows-media-validation.js";
+const LIMIT = WINDOWS_MEDIA_PROOF_BYTES + 16384;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const fail = (code = "CONTROLLER_EXECUTION_PROOF_INVALID"): never => { throw Error(code); };
 
@@ -33,11 +34,15 @@ function proof(value: unknown): WindowsTextExecutionProof {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail();
   const item = value as Record<string, unknown>, keys = Object.keys(item).sort().join(",");
   if (keys !== "assignment,completedAt,inputDigest,output,outputDigest" &&
-      keys !== "assignment,completedAt,inputDigest,output,outputDigest,receiptAccepted") fail();
+      keys !== "assignment,completedAt,inputDigest,output,outputDigest,receiptAccepted" &&
+      keys !== "artifacts,assignment,completedAt,inputDigest,output,outputDigest" &&
+      keys !== "artifacts,assignment,completedAt,inputDigest,output,outputDigest,receiptAccepted") fail();
   const assignment = item.assignment as Record<string, unknown> | undefined;
   if (!assignment || typeof assignment !== "object" || typeof assignment.attemptId !== "string" || !UUID.test(assignment.attemptId) ||
       (item.receiptAccepted !== undefined && item.receiptAccepted !== true)) fail();
   privacy(item);
+  const media = item.output && typeof item.output === "object" && "kind" in item.output;
+  if (Buffer.byteLength(JSON.stringify(item)) > (media ? WINDOWS_MEDIA_PROOF_BYTES : TEXT_LIMITS.maxOutputBytes * 4 + 8192)) fail("CONTROLLER_EXECUTION_PROOF_LIMIT");
   return item as unknown as WindowsTextExecutionProof;
 }
 

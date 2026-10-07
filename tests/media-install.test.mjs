@@ -35,12 +35,12 @@ test("media installation plans pick the right runtime, refuse GPU-only models on
     assert.deepEqual([plan.modelId, plan.kind, plan.runtime, plan.backend, plan.requiresExplicitConsent], [entry.id, entry.kind, entry.runtime, backend, true]);
     assert.equal(plan.downloadBytes, plan.artifacts.reduce((sum, item) => sum + item.bytes, 0));
     assert.ok(plan.artifacts.every(item => /^[a-f0-9]{64}$/.test(item.sha256) && item.url.startsWith("https://")));
-    if (entry.runtime === "stable-diffusion.cpp") assert.ok(plan.artifacts.some(item => item.url.includes("leejet/stable-diffusion.cpp/releases/download/master-869-07a85c7/")));
+    if (entry.runtime === "stable-diffusion.cpp") assert.ok(plan.artifacts.some(item => item.url.includes(platform==="win32-x64"?"excesssh/Excess-Worker/releases/download/v0.2.0/sd-07a85c7-win-x64-auth-":"leejet/stable-diffusion.cpp/releases/download/master-869-07a85c7/")));
     else assert.ok(plan.artifacts.some(item => item.url.includes("ggml-org/llama.cpp/releases/download/b10809/")));
   }
   assert.throws(() => mediaInstallationPlan(".local/media-plan", "flux1-schnell", "cpu"), /MODEL_REQUIRES_GPU/);
   assert.throws(() => mediaInstallationPlan(".local/media-plan", "qwen3-4b", "cpu"), /UNKNOWN_MODEL/);
-  assert.deepEqual(SD_RUNTIME_REDIST.map(item => item.name), [...RUNTIME_REDIST.map(item => item.name), "vcomp140.dll"]);
+  assert.deepEqual(SD_RUNTIME_REDIST.map(item => item.name), [...RUNTIME_REDIST.map(item => item.name), "msvcp140_codecvt_ids.dll", "vcomp140.dll"]);
 });
 
 test("media installer requires consent, refuses GPU-only on CPU before touching disk, and detects missing files", async () => temporary(async dir => {

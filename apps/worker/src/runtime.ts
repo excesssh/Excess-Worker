@@ -60,7 +60,7 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
   const minimumGpuMb=entry.kind==="image"?64:Math.floor(entry.downloadBytes*0.75/1048576);
   if(policy.backend==="cuda"&&((linuxGpu?(proof.gpuBoundary!=="linux-cuda-device-budget-v1"||proof.gpuMemoryScope!=="whole-device"||
     !Number.isSafeInteger(proof.gpuOffloadedLayers)||Number(proof.gpuOffloadedLayers)<(entry.kind==="image"?0:1)||Number(proof.gpuOffloadedLayers)>128):
-    (entry.id!=="qwen3-4b"||proof.gpuBoundary!=="windows-cuda-budget-v1"||proof.gpuOffloadedLayers!==37))||proof.maxGpuMemoryMb!==policy.maxGpuMemoryMb||
+    (proof.gpuBoundary!=="windows-cuda-budget-v1"||!Number.isSafeInteger(proof.gpuOffloadedLayers)||Number(proof.gpuOffloadedLayers)<(entry.kind==="image"?0:1)||Number(proof.gpuOffloadedLayers)>128))||proof.maxGpuMemoryMb!==policy.maxGpuMemoryMb||
     !Number.isSafeInteger(proof.peakGpuMemoryMb)||Number(proof.peakGpuMemoryMb)>policy.maxGpuMemoryMb||
     !Number.isSafeInteger(proof.peakDedicatedGpuMemoryMb)||Number(proof.peakDedicatedGpuMemoryMb)<minimumGpuMb||
     Number(proof.peakDedicatedGpuMemoryMb)>Number(proof.peakGpuMemoryMb)))throw Error("Invalid local GPU observation");

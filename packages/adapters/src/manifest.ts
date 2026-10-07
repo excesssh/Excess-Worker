@@ -87,7 +87,7 @@ export interface ModelEntry {
 export interface KvShape {readonly layers:number;readonly kvHeads:number;readonly headDim:number;readonly slidingLayers?:number;readonly slidingWindow?:number}
 /** Memory to serve a text model at its served context, in MiB rounded up to 512:
  *   weights    every GGUF part, resident because the runtime starts with --no-mmap;
- *   KV cache   2 (keys and values) × 2 bytes (f16) × KV heads × head dimension per layer and token, over the whole context for
+ *   KV cache   2 (keys and values) Ãƒâ€” 2 bytes (f16) Ãƒâ€” KV heads Ãƒâ€” head dimension per layer and token, over the whole context for
  *              full-attention layers and over the window plus one 512-token batch for sliding-window layers;
  *   minVramMb  = weights + KV cache + 512 MiB of compute buffers;
  *   minMemoryMb = minVramMb + 512 MiB for host-side buffers and the runtime itself.
@@ -279,10 +279,11 @@ const SD_RELEASE="https://github.com/leejet/stable-diffusion.cpp/releases/downlo
 const SD_LICENCE=artifact({ name:"licences/stable-diffusion.cpp-MIT.txt", bytes:1062, sha256:"b53fa08f515cb5a6fff7b9fd8fcd0961a4b80df29d74372d25e1f9171aa042ee", url:"https://raw.githubusercontent.com/leejet/stable-diffusion.cpp/07a85c74cb08cda3aa176f688c5d8f522615e2b9/LICENSE" });
 const SD_RUNTIMES:Readonly<Record<Platform,Partial<Record<Backend,readonly Artifact[]>>>>=Object.freeze({
   "win32-x64":Object.freeze({
-    cpu:Object.freeze([artifact({ name:"runtime.zip", bytes:17114202, sha256:"55157cc96bfa7f37c5db6e91d302a77ba956273a4dd7cc04a643495d3ac097d6", url:SD_RELEASE+"sd-master-07a85c7-bin-win-cpu-x64.zip" }),SD_LICENCE]),
+    cpu:Object.freeze([artifact({ name:"runtime.zip", bytes:14906561, sha256:"1c4fe5f5fcfc65efb34ef2a8b41f9d33ffc787ac5dd10839f8d32e09afb6a1ff", url:CUDA_RELEASE+"sd-07a85c7-win-x64-auth-cpu.zip" }),SD_LICENCE]),
     cuda:Object.freeze([
-      artifact({ name:"runtime.zip", bytes:329470677, sha256:"e83e69b6bf75d6e52bdbd524b5d5044e267b9e73a5d4f9a98a1a3a3543eb0273", url:SD_RELEASE+"sd-master-07a85c7-bin-win-cuda12-x64.zip" }),
-      artifact({ name:"cudart.zip", bytes:563452046, sha256:"fe20366827d357c00797eebb58244dddab7fd9a348d70090c3871004c320f38d", url:SD_RELEASE+"cudart-sd-bin-win-cu12-x64.zip" }),SD_LICENCE]),
+      artifact({ name:"runtime.zip", bytes:55964730, sha256:"bb72434e0c0043c46e5212eadac132400f590ca1866177a37c4a38e60acd8168", url:CUDA_RELEASE+"sd-07a85c7-win-x64-auth-cuda.zip" }),
+      artifact({ name:"cudart.zip", bytes:396589039, sha256:"b1f36812c3ba2471b95cdc47dc3b22d69820dcff4ffe70ef3ff083fa735a8d48", url:CUDA_RELEASE+"cuda-12.4-win-x64-libraries.zip" }),
+      artifact({name:"licences/NVIDIA-CUDA-12.4-EULA.txt",bytes:63021,sha256:"e2c71babfd18a8e69542dd7e9ca018f9caa438094001a58e6bc4d8c999bf0d07",url:CUDA_RELEASE+"NVIDIA-CUDA-12.4-EULA.txt"}),SD_LICENCE]),
   }),
   "linux-x64":Object.freeze({
     cuda:Object.freeze([artifact({ name:"runtime.tar.gz", bytes:40208582, sha256:"79d1a136849bebc61a2e4b6bc0fbf51dd90cac11f39c73775b3166acc96b8f11", url:CUDA_RELEASE+"sd-07a85c7-linux-x64-cuda12.9-sm90.tar.gz" }),...LINUX_CUDA_DEPENDENCIES,SD_LICENCE]),
@@ -290,11 +291,18 @@ const SD_RUNTIMES:Readonly<Record<Platform,Partial<Record<Backend,readonly Artif
     vulkan:Object.freeze([artifact({ name:"runtime.zip", bytes:38412182, sha256:"550b4b3bb0b0e98c13ba7569e39e2ec90b9f8fa9e3dd641689e835278000555f", url:SD_RELEASE+"sd-master-07a85c7-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip" }),SD_LICENCE]),
   }),
 });
+/** Conservative Windows CPU profile budgets from recorded confined adapter probes.
+ * These are distinct from catalogue RAM estimates and do not certify buyer jobs. */
+export const WINDOWS_MEDIA_CPU_BUDGETS: Readonly<Record<string, Readonly<{maxMemoryMb:number;timeoutMs?:number}>>> = Object.freeze({
+  "qwen3-embedding-0.6b": Object.freeze({maxMemoryMb:8192}),
+  "sd-turbo": Object.freeze({maxMemoryMb:8192,timeoutMs:300000}),
+});
 export type MediaRuntime="llama.cpp"|"stable-diffusion.cpp";
 export const sdServerExecutable=(platform:Platform):string=>platform==="win32-x64"?"sd-server.exe":"sd-server";
-/** stable-diffusion.cpp's Windows ggml DLLs also import the OpenMP runtime (VCOMP140.DLL) from the same Visual C++
- * 14.51.36247.0 redistributable, which a clean Windows Server lacks. Checked against the pinned CPU zip's imports. */
+/** Pinned system Visual C++ dependencies for Windows image runtimes. The authenticated CUDA build
+ * also imports the codecvt IDs DLL; installation verifies the exact system bytes before copying them. */
 export const SD_RUNTIME_REDIST:readonly RedistFile[]=Object.freeze([...RUNTIME_REDIST,
+  Object.freeze({name:"msvcp140_codecvt_ids.dll",bytes:31160,sha256:"8a65c7596ef2e6938731f5a1058e7e40145b6d97967cc649231a076b9a608d78"}),
   Object.freeze({name:"vcomp140.dll",bytes:212920,sha256:"95d4ce4a6802d1e18b5e0e1722cc30ea72ca7e033f83828f05c0b7b993fe7cbf"})]);
 /** The pinned stable-diffusion.cpp files for a backend on a platform (the current machine's by default). */
 export function sdRuntimeArtifacts(backend:Backend,platform:Platform=currentPlatform()??"win32-x64"):readonly Artifact[] {
@@ -349,13 +357,13 @@ export const MEDIA_CATALOG:readonly MediaModelEntry[]=Object.freeze([
       artifact({ name:"mmproj.gguf", bytes:214392480, sha256:"41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d", url:HF("ggml-org/Qwen3-ASR-0.6B-GGUF","928ab958557df9aa2ef1c93e0e83c7ad0933fae2","mmproj-Qwen3-ASR-0.6B-Q8_0.gguf") })],
     limits:{audioFormat:"wav-pcm16-mono-16khz",minSeconds:1,maxSeconds:300,maxTranscriptBytes:65536} }),
   media({ id:"sd-turbo", kind:"image", displayName:"SD-Turbo", parameters:"1B", quantization:"Q8_0", runtime:"stable-diffusion.cpp",
-    info:{publisher:"Stability AI",family:"Stable Diffusion",summary:"A distilled Stable Diffusion 2.1 model that draws 512×512 images in one to four steps, fast enough for CPUs.",
+    info:{publisher:"Stability AI",family:"Stable Diffusion",summary:"A distilled Stable Diffusion 2.1 model that draws 512Ãƒâ€”512 images in one to four steps, fast enough for CPUs.",
       parametersB:1.3,contextTokens:77,licence:"Stability-AI-Community",sourceUrl:"https://huggingface.co/stabilityai/sd-turbo",format:"GGUF Q8_0",modalities:["image"],reasoning:false,released:"2023-11"},
     minMemoryMb:4096, minVramMb:3072, gpuOnly:false, repository:"Green-Sky/SD-Turbo-GGUF", revision:"19a31586d02d64a73b4419bc193b3ecfaf38e1f0", licence:"Stability-AI-Community",
     artifacts:[artifact({ name:"model.gguf", bytes:2023745376, sha256:"d50be7655f0a554cf8041c145d88b210bd5f3c545423119dee62ae08cae51580", url:HF("Green-Sky/SD-Turbo-GGUF","19a31586d02d64a73b4419bc193b3ecfaf38e1f0","sd_turbo-f16-q8_0.gguf") })],
     limits:{sizes:[512],maxSteps:4,maxImages:4,maxPromptBytes:2048,cfgScale:"1.0",format:"png"} }),
   media({ id:"flux1-schnell", kind:"image", displayName:"FLUX.1 schnell", parameters:"12B", quantization:"Q4_0", runtime:"stable-diffusion.cpp",
-    info:{publisher:"Black Forest Labs",family:"FLUX.1",summary:"A 12B image model that follows detailed prompts and renders legible text, in one to eight steps at up to 1,024×1,024 on a GPU.",
+    info:{publisher:"Black Forest Labs",family:"FLUX.1",summary:"A 12B image model that follows detailed prompts and renders legible text, in one to eight steps at up to 1,024Ãƒâ€”1,024 on a GPU.",
       parametersB:12,contextTokens:256,licence:"Apache-2.0",sourceUrl:"https://huggingface.co/black-forest-labs/FLUX.1-schnell",format:"GGUF Q4_0",modalities:["image"],reasoning:false,released:"2024-08"},
     minMemoryMb:16384, minVramMb:12288, gpuOnly:true, repository:"second-state/FLUX.1-schnell-GGUF", revision:"8c45a2ba25e2d02bd34230989fb54983f39e44ec", licence:"Apache-2.0",
     artifacts:[

@@ -21,20 +21,22 @@ test("all catalogue rows keep their legacy memory estimate while execution profi
   }
 });
 
-test("Windows 48/64 GiB memory-fit estimates do not make larger CUDA models selectable", () => {
+test("Windows memory-fit estimates stay separate from the implemented CUDA route and its 32 GiB cap", () => {
   const models = servedModels();
   for (const gpuMb of [49152, 65536]) {
     const hardware = { memoryMb: 8192, gpus: [{ name: "synthetic Windows GPU", memoryMb: gpuMb }] };
     const rated = modelsByFit(models, hardware);
     const qwen8 = byId(rated, "qwen3-8b");
     assert.equal(qwen8.fit.gpu.fits, true, `VRAM estimate fits the synthetic ${gpuMb / 1024} GiB device`);
-    assert.equal(executionProfile(qwen8.entry, "cuda", "win32").selectable, false, "Windows CUDA selection remains restricted to Qwen3 4B");
+    assert.equal(executionProfile(qwen8.entry, "cuda", "win32").selectable, true);
+    assert.equal(executionProfile(qwen8.entry, "cuda", "win32").verification, "pending_hardware_evidence");
     assert.equal(executionProfile(qwen8.entry, "cuda", "win32").maximumGpuMemoryMb, 32768);
 
     const chosen = modelsBySelectableFit(models, hardware, "win32");
-    assert.equal(byId(chosen, "qwen3-8b"), undefined, "unsupported CUDA-only memory fit is excluded from guide recommendations");
+    assert.equal(byId(chosen, "qwen3-8b"), undefined, "insufficient host reserve excludes a GPU estimate that otherwise fits");
+    assert.equal(executionProfile(models.find(entry => entry.id === "gpt-oss-120b"), "cuda", "win32").selectable, false, "a 64 GiB device cannot widen the 32 GiB profile cap");
     const recommendation = largestSelectableTextModel(models, hardware, "win32");
-    assert.notEqual(recommendation?.entry.id, "qwen3-8b", "the unsupported GPU-only memory fit is never recommended");
+    assert.notEqual(recommendation?.entry.id, "qwen3-8b", "a deficient host-memory budget is never recommended");
     assert.equal(recommendation?.executionProfile.selectable, true);
     assert.ok(recommendation?.executionProfile.backend === "cpu" ? recommendation.fit.cpu.fits : recommendation.fit.gpu.fits,
       "the recommendation must have a fitting estimate for its selectable backend");
@@ -67,8 +69,9 @@ test("model-plan keeps installation availability separate from execution support
   const qwen8 = servedModels().find(entry => entry.id === "qwen3-8b");
   const status = modelPlanStatus(qwen8, "cuda", "win32", true, true);
   assert.deepEqual(status.installationAvailability, { planAvailable: true, requiresExplicitConsent: true, disk: "sufficient" });
-  assert.equal(status.executionProfile.selectable, false);
-  assert.equal(status.executionProfile.implementation, "unsupported");
+  assert.equal(status.executionProfile.selectable, true);
+  assert.equal(status.executionProfile.implementation, "implemented");
+  assert.equal(status.executionProfile.verification, "pending_hardware_evidence");
   const linux = modelPlanStatus(qwen8, "cuda", "linux", true, null);
   assert.equal(linux.installationAvailability.disk, "unknown");
   assert.equal(linux.installationAvailability.planAvailable, true);
@@ -109,16 +112,16 @@ test("a selectable GPU profile also needs its host-memory budget and operating-s
   }
 });
 
-test("Windows media catalogue and plans remain visible while paired-worker profiles are refused", () => {
+test("Windows media profiles distinguish authenticated routes from unverified execution", () => {
   const all=servedModels(),media=all.filter(entry=>entry.kind!=="text");
   assert.equal(media.length,4);
   assert.equal(modelsByFit(all,windowsHardware).length,17);
   for(const entry of media){
     for(const backend of ["cpu","cuda","vulkan"]){
       const profile=executionProfile(entry,backend,"win32");
-      assert.equal(profile.selectable,false);
-      assert.equal(profile.implementation,"unsupported");
-      assert.match(profile.note,/Windows paired-worker controller refuses media tasks/);
+      assert.equal(profile.selectable,backend!=="vulkan"&&(backend!=="cpu"||!entry.gpuOnly));
+      assert.equal(profile.implementation,profile.selectable?"implemented":"unsupported");
+      if(backend==="cuda")assert.equal(profile.verification,"pending_hardware_evidence");
       assert.equal(modelPlanStatus(entry,backend,"win32",true,true).installationAvailability.planAvailable,true);
     }
     assert.equal(executionProfile(entry,"cpu","linux").selectable,!entry.gpuOnly);

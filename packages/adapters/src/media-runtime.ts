@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { MEDIA_LIMITS,TEXT_LIMITS,embeddingRequestSchema,embeddingResultSchema,imageRequestSchema,imageResultSchema,transcriptionRequestSchema,transcriptionResultSchema,
   type ArtifactRef,type MediaKind,type MediaRequest,type MediaResult } from "@excess/protocol";
-import { AdapterError,currentPlatform,mediaCatalogEntry,type Backend } from "./manifest.js";
+import { AdapterError,currentPlatform,mediaCatalogEntry,WINDOWS_MEDIA_CPU_BUDGETS,type Backend } from "./manifest.js";
 import { verifyMediaInstallation } from "./media-install.js";
 import type { VerifiedRuntimeInputs } from "./install.js";
 import { AdapterProcessState,boundedJson,port } from "./runtime.js";
@@ -19,7 +19,7 @@ export interface MediaArtifact {ref:ArtifactRef;data:Buffer}
 export interface MediaOutput {result:MediaResult;artifacts:MediaArtifact[]}
 export interface MediaProbe {ok:true;kind:MediaKind;capabilityDigest:string;backend:Backend;modelId:string;model:string;runtime:string;threads:number;maxMemoryMb:number;
   probedAt:string;generatedTokens:0;elapsedMs:number;peakRssMb:number;nativePid?:number;guardianPid?:number;maxGpuMemoryMb?:number;peakGpuMemoryMb?:number;
-  peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"linux-cuda-device-budget-v1";gpuMemoryScope?:"whole-device"}
+  peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"linux-cuda-device-budget-v1"|"windows-cuda-budget-v1";gpuMemoryScope?:"whole-device"}
 export interface MediaAdapter {
   readonly kind:MediaKind;
   /** Validates a request against the model's own limits before a job is started. */
@@ -36,8 +36,9 @@ export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonl
 
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   maxGpuMemoryMb:z.number().int().min(1024).max(131072).optional(),modelId:z.string().min(1).max(64),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
-// One embedding input is at most 8,192 UTF-8 bytes, so at most 8,192 tokens plus special tokens; last-token pooling
-// needs the whole input in one physical batch.
+// Last-token pooling needs one complete input per physical batch. Bound its
+// allocation by the validated input byte lengths plus special-token headroom;
+// small requests must not reserve the catalogue maximum attention workspace.
 const EMBEDDING_BATCH_TOKENS=8448;
 // 300 seconds of audio plus the prompt and transcript fit this context; the transcript is capped below it.
 const TRANSCRIPTION_CONTEXT=8192,TRANSCRIPT_MAX_TOKENS=4096;
@@ -55,17 +56,24 @@ export function cleanTranscript(content:string):string {
 }
 export function createMediaAdapter(installDir:string,options:MediaAdapterOptions):MediaAdapter {
   if(mediaCatalogEntry(options.modelId).runtime!=="llama.cpp" &&
-    (currentPlatform()!=="linux-x64" || options.backend!=="cuda"))throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
+    !((currentPlatform()==="linux-x64" && options.backend==="cuda") ||
+      (currentPlatform()==="win32-x64" && ["cpu","cuda"].includes(options.backend??"cpu"))))throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
   return createMediaAdapterWith(options,{isolate:true,resolve:()=>verifyMediaInstallation(installDir,options?.modelId,options?.backend??"cpu")});
 }
 export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:MediaLaunch):MediaAdapter {
   const parsed=optionsSchema.safeParse(inputOptions);
   if(!parsed.success)throw new AdapterError("INVALID_ADAPTER_POLICY");
   const options=parsed.data,entry=mediaCatalogEntry(options.modelId),backend:Backend=options.backend??"cpu",llama=entry.runtime==="llama.cpp";
-  if(launch.isolate&&!llama&&(currentPlatform()!=="linux-x64"||backend!=="cuda"))throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
+  if(launch.isolate&&!llama&&!((currentPlatform()==="linux-x64"&&backend==="cuda")||
+    (currentPlatform()==="win32-x64"&&["cpu","cuda"].includes(backend))))throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
   if(entry.gpuOnly&&backend==="cpu")throw new AdapterError("MODEL_REQUIRES_GPU");
+  if(launch.isolate&&currentPlatform()==="win32-x64"&&backend==="cpu") {
+    const floor=WINDOWS_MEDIA_CPU_BUDGETS[entry.id];
+    if(floor&&options.maxMemoryMb<floor.maxMemoryMb)throw new AdapterError("ADAPTER_MEMORY_BELOW_PROFILE_REQUIREMENT");
+    if(floor?.timeoutMs&&options.timeoutMs<floor.timeoutMs)throw new AdapterError("ADAPTER_TIMEOUT_BELOW_PROFILE_REQUIREMENT");
+  }
   if(launch.isolate&&backend!=="cpu"){
-    if(currentPlatform()!=="linux-x64"||backend!=="cuda")throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+    if((currentPlatform()!=="linux-x64"&&currentPlatform()!=="win32-x64")||backend!=="cuda")throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
     if(options.maxGpuMemoryMb===undefined)throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
     if(options.maxGpuMemoryMb<entry.minVramMb)throw new AdapterError("GPU_MEMORY_BELOW_MODEL_REQUIREMENT");
   }
@@ -73,26 +81,27 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
   const limits=entry.capability.limits as {sizes?:number[];maxSteps?:number;maxImages?:number};
   const processes=new AdapterProcessState();
   let origin="",secret="",busy=false,stopping=new AbortController(),isolation:RuntimeIsolation|undefined;
-  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;}
+  let embeddingBatch=512,loadedEmbeddingBatch=0;
+  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;loadedEmbeddingBatch=0;}
   const headers=(json:boolean)=>({...(json?{"Content-Type":"application/json"}:{}),...(secret?{Authorization:"Bearer "+secret}:{})});
   const runtimeFetch=(path:string,init:RequestInit)=>processes.process?.request?.(path,init)??fetch(origin+path,init);
   function serverArgs(files:Readonly<Record<string,string>>,selectedPort:number):string[] {
     const file=(name:string)=>{const path=files[name];if(!path)throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");return path;};
     const threads=String(options.threads),gpuLayers=backend==="cpu"?"0":"999";
     const llamaCommon=["--host","127.0.0.1","--port",String(selectedPort),"--threads",threads,"--threads-batch",threads,"--threads-http","2","--parallel","1","--n-gpu-layers",gpuLayers,...(backend==="cuda"?["--split-mode","none","--main-gpu","0","--log-verbosity","4","--log-colors","off"]:[]),...(currentPlatform()==="linux-x64"&&backend==="cuda"?["--flash-attn","off"]:[]),"--no-mmap","--no-webui","--no-cache-prompt"];
-    if(entry.kind==="embedding")return ["--model",file("model.gguf"),...llamaCommon,"--ctx-size",String(EMBEDDING_BATCH_TOKENS),"--batch-size",String(EMBEDDING_BATCH_TOKENS),"--ubatch-size",String(EMBEDDING_BATCH_TOKENS),"--embeddings","--pooling","last"];
+    if(entry.kind==="embedding")return ["--model",file("model.gguf"),...llamaCommon,"--ctx-size",String(EMBEDDING_BATCH_TOKENS),"--batch-size",String(embeddingBatch),"--ubatch-size",String(embeddingBatch),"--embeddings","--pooling","last"];
     if(entry.kind==="transcription")return ["--model",file("model.gguf"),"--mmproj",file("mmproj.gguf"),...llamaCommon,"--ctx-size",String(TRANSCRIPTION_CONTEXT),
       "--no-context-shift","--jinja","--reasoning-format","none",...(backend==="cpu"?["--no-mmproj-offload"]:[])];
-    // sd-server has no API key option; it listens on loopback only, on a fresh random port. Generation metadata (which would
-    // copy the prompt into the PNG) is disabled.
+    // The pinned isolated SD server requires a private bearer key and admits only two routes.
+    // Generation metadata, which would copy the prompt into the PNG, is disabled.
     const sdCommon=["--listen-ip","127.0.0.1","--listen-port",String(selectedPort),"--threads",threads,"--cfg-scale","1.0","--disable-image-metadata"];
     return entry.id==="flux1-schnell"
       ?["--diffusion-model",file("diffusion.gguf"),"--t5xxl",file("t5xxl.gguf"),"--clip_l",file("clip_l.gguf"),"--vae",file("ae.gguf"),...sdCommon]
       :["--model",file("model.gguf"),...sdCommon];
   }
   async function ensure(signal:AbortSignal) {
-    if(processes.process?.alive())return;
-    await processes.stop();signal.throwIfAborted();
+    if(processes.process?.alive()&&(entry.kind!=="embedding"||loadedEmbeddingBatch>=embeddingBatch))return;
+    await processes.stop();await isolation?.cleanup();isolation=undefined;loadedEmbeddingBatch=0;signal.throwIfAborted();
     const platform=currentPlatform();
     if(!platform)throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
     const installed=await launch.resolve();signal.throwIfAborted();
@@ -108,7 +117,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
       env={PATH:"/usr/bin:/bin",LD_LIBRARY_PATH:dirname(installed.serverPath),OMP_NUM_THREADS:String(options.threads)};
       for(const key of ["HOME","TMPDIR"])if(process.env[key])env[key]=process.env[key];
     }
-    if(secret)env[llama?"LLAMA_API_KEY":"SD_API_KEY"]=secret;
+    if(secret)env[llama||platform==="win32-x64"?"LLAMA_API_KEY":"SD_API_KEY"]=secret;
     const runtimeArgs=[...(launch.prefixArgs??[]),...serverArgs(installed.files,selectedPort)];
     if(launch.isolate){
       isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
@@ -125,7 +134,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
     const readiness=llama?"/health":"/v1/models";
     for(;;) {
       signal.throwIfAborted();if(!processes.process?.alive())throw processes.process?.error()??new AdapterError("RUNTIME_EXITED");
-      try {const response=await runtimeFetch(readiness,{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error",headers:headers(false)});if(response.ok){await boundedJson(response,4096);return;}await response.body?.cancel();}
+      try {const response=await runtimeFetch(readiness,{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error",headers:headers(false)});if(response.ok){await boundedJson(response,4096);loadedEmbeddingBatch=embeddingBatch;return;}await response.body?.cancel();}
       catch(error){if(signal.aborted)throw error;}
       await delay(200,undefined,{signal});
     }
@@ -205,6 +214,10 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
     const signal=AbortSignal.any([stopping.signal,AbortSignal.timeout(options.timeoutMs),...(external?[external]:[])]);
     try {
       await processes.ready();
+      if(request.kind==="embedding") {
+        const longest=Math.max(...request.inputs.map(value=>Buffer.byteLength(value,"utf8")));
+        embeddingBatch=Math.min(EMBEDDING_BATCH_TOKENS,Math.max(512,Math.ceil((longest+256)/256)*256));
+      }
       signal.throwIfAborted();await ensure(signal);
       const output=request.kind==="embedding"?await embed(request,signal):request.kind==="transcription"?await transcribe(request,inputs,signal):await image(request,signal);
       if(launch.isolate&&backend==="cuda"){
@@ -232,7 +245,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
     execute:async(request,execution={})=>run(check(request),execution.signal,execution.inputs),
     async probe(){
       const startedAt=Date.now();
-      // Probe inputs: one short text, a generated 1.5-second tone (any transcript, even empty, passes) or one 1-step 512×512 image.
+      // Probe inputs: one short text, a generated 1.5-second tone (any transcript, even empty, passes) or one 1-step 512Ãƒâ€”512 image.
       if(entry.kind==="embedding")await run({kind:"embedding",inputs:["ready"]});
       else if(entry.kind==="transcription"){const wav=toneWav(1500);await run({kind:"transcription",audio:artifactRef(wav,"audio/wav"),durationMs:1500},undefined,new Map([[sha256(wav),wav]]));}
       else await run({kind:"image",prompt:"a red circle on a white background",width:512,height:512,steps:1,count:1,seed:42});
@@ -245,7 +258,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
         peakRssMb:Math.ceil(runtime.peakRssBytes()/MiB),nativePid,guardianPid,
         ...(launch.isolate&&backend==="cuda"?{maxGpuMemoryMb:options.maxGpuMemoryMb!,peakGpuMemoryMb:Math.ceil(runtime.peakGpuMemoryBytes()/MiB),
           peakDedicatedGpuMemoryMb:Math.ceil(runtime.peakDedicatedGpuMemoryBytes()/MiB),gpuOffloadedLayers:runtime.gpuOffloadedLayers(),
-          gpuBoundary:"linux-cuda-device-budget-v1" as const,gpuMemoryScope:"whole-device" as const}:{})};
+          ...(currentPlatform()==="linux-x64"?{gpuBoundary:"linux-cuda-device-budget-v1" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{})};
     },
   };
 }

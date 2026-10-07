@@ -26,17 +26,19 @@ const execute = promisify(execFile);
 const gigabytes = (bytes: number) => (bytes / 1073741824).toFixed(1) + " GB";
 const memoryMb = (mb: number) => (Number.isInteger(mb / 1024) ? String(mb / 1024) : (mb / 1024).toFixed(1)) + " GB";
 const diskMessage = (disk: DiskCheck) => `INSUFFICIENT_DISK_SPACE: this install needs ${gigabytes(disk.requiredBytes)} free on the model drive and ${gigabytes(disk.freeBytes ?? 0)} is free. Free space or set EXCESS_MODEL_DIR to a larger drive.`;
-function selectionBudgetProblems(entry: ReturnType<typeof servedModel>, backend: Backend, policy: { maxMemoryMb: number; maxGpuMemoryMb: number }): string[] {
+function selectionBudgetProblems(entry: ReturnType<typeof servedModel>, backend: Backend, policy: { maxMemoryMb: number; maxGpuMemoryMb: number; runSeconds:number }): string[] {
   const problems: string[] = [];
+  const profile=executionProfile(entry,backend),hostFloor=profile.minimumHostMemoryMb??entry.minMemoryMb;
   if (backend === "cpu") {
-    if (policy.maxMemoryMb < entry.minMemoryMb) problems.push(`${entry.id} needs an explicit host memory cap of at least ${memoryMb(entry.minMemoryMb)}; model selection does not raise it.`);
+    if(policy.maxMemoryMb<hostFloor)problems.push(`${entry.id} needs an explicit host memory cap of at least ${memoryMb(hostFloor)} for this execution profile; model selection does not raise it.`);
+    if(profile.minimumRunSeconds&&policy.runSeconds<profile.minimumRunSeconds)problems.push(`${entry.id} needs an explicit runSeconds of at least ${profile.minimumRunSeconds} for this CPU profile; model selection does not raise it.`);
     return problems;
   }
   if (backend !== "cuda") return ["Isolated Vulkan execution is refused; choose CPU or the supported NVIDIA CUDA profile."];
   const windows = process.platform === "win32", linux = process.platform === "linux";
   if (!windows && !linux) return ["No isolated GPU profile is available on this operating system."];
-  const minimumHostMb = Math.max(entry.minMemoryMb, windows ? 6144 : 0);
-  const minimumGpuMb = Math.max(entry.minVramMb, windows ? 6144 : 0);
+  const minimumHostMb = hostFloor;
+  const minimumGpuMb = profile.minimumGpuMemoryMb??entry.minVramMb;
   if (policy.maxMemoryMb < minimumHostMb) problems.push(`${entry.id} needs an explicit host memory cap of at least ${memoryMb(minimumHostMb)} for this CUDA profile; model selection does not raise it.`);
   if (policy.maxGpuMemoryMb < minimumGpuMb) problems.push(`${entry.id} needs an explicit GPU memory budget of at least ${memoryMb(minimumGpuMb)}; model selection does not raise it.`);
   if (windows && policy.maxGpuMemoryMb > 32768) problems.push("Windows CUDA GPU memory budget cannot exceed 32 GB.");
@@ -135,7 +137,7 @@ try {
         downloadBytes: entry.downloadBytes, licence: entry.licence, installed: installed.models.includes(entry.id), gpuOnly: entry.gpuOnly,
         executionEvidence: "not established by catalogue inventory", memoryFitEstimate: fit, executionProfiles: modelExecutionProfiles(entry), ...fit })),
       next: "excess-worker use <model id> [--gpu], then excess-worker install-model <model id> [--gpu] --accept-download --accept-licenses (or excess-worker import <model id> <file.gguf ...> --accept-licenses if you already have the exact file)",
-      note: "Kinds: text (streamed), embedding, transcription and image (buffered). fitsThisComputer, tooLargeForThisComputer and the row fields fits/cpu/gpu are legacy memory-size estimates only; they do not establish a selectable or verified execution profile. Use memoryFitEstimate and executionProfiles for those separate facts. GPU memory is read from nvidia-smi; other GPUs are not measured. Windows paired-worker media execution is refused on CPU and GPU. Windows CUDA text selection is limited to Qwen3 4B with a GPU memory budget no higher than 32 GB, and is verified only on the recorded RTX 3070 Ti and driver 596.49 configuration. Linux --gpu selects implemented CUDA support in a new, unverified Worker 0.2.0 candidate: NVIDIA SM90, CUDA 12.9, driver 580 or newer, helper ABI 6 and kernel 6.12 or newer are required. The published 0.1.0 Linux archive remains CPU-only. Vulkan catalog/runtime entries remain visible, but isolated Vulkan execution is refused. gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. The worker's local check decides whether a model can be served." });
+      note: "Kinds: text (streamed), embedding, transcription and image (buffered). fitsThisComputer, tooLargeForThisComputer and the row fields fits/cpu/gpu are legacy memory-size estimates only; they do not establish a selectable or verified execution profile. Use memoryFitEstimate and executionProfiles for those separate facts. GPU memory is read from nvidia-smi; other GPUs are not measured. Windows media CPU routes are implemented; embedding and image profiles require explicit measured host budgets. Windows image CUDA still requires a pinned authenticated GPU runtime. Windows CUDA llama-model selection has a 32 GB maximum budget and requires full observed offload. Published 0.1.0 CUDA evidence applies only to Qwen3 4B on the recorded RTX 3070 Ti and driver 596.49 configuration. Linux --gpu selects implemented CUDA support in a new, unverified Worker 0.2.0 candidate: NVIDIA SM90, CUDA 12.9, driver 580 or newer, helper ABI 6 and kernel 6.12 or newer are required. The published 0.1.0 Linux archive remains CPU-only. Vulkan catalog/runtime entries remain visible, but isolated Vulkan execution is refused. gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. The worker's local check decides whether a model can be served." });
   } else if (command === "use") {
     if (positional.length !== 1) throw Error("Usage: worker use <model id> [--gpu | --cpu]");
     const current = await readWorkerPolicy(stateDir), entry = servedModel(positional[0]!);
@@ -143,7 +145,7 @@ try {
     const backend = entry.gpuOnly ? gpuBackend() : chosenBackend("cpu");
     const selectedProfile = executionProfile(entry, backend);
     if (backend === "cuda" && !selectedProfile.selectable && process.platform === "win32")
-      throw Error("GPU_PROFILE_UNVERIFIED: Windows CUDA is available only for the verified Qwen3 4B profile.");
+      throw Error("GPU_PROFILE_UNVERIFIED: This Windows CUDA model/runtime profile is unavailable.");
     if (!selectedProfile.selectable) throw Error("MODEL_EXECUTION_PROFILE_UNAVAILABLE: " + (selectedProfile.note ?? "No isolated worker profile is implemented for this selection."));
     const budgetProblems = selectionBudgetProblems(entry, backend, current);
     if (budgetProblems.length) throw Error("MODEL_RESOURCE_BUDGET_REQUIRED: " + budgetProblems.join(" "));

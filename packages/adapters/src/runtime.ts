@@ -69,7 +69,7 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
   const options=parsed.data,entry=catalogEntry(options.modelId??DEFAULT_MODEL_ID),backend:Backend=options.backend??"cpu";
   if(launch.isolate&&backend!=="cpu"){
     const platform=currentPlatform();
-    if(backend!=="cuda"||(platform!=="linux-x64"&&(platform!=="win32-x64"||entry.id!=="qwen3-4b")))throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+    if(backend!=="cuda"||(platform!=="linux-x64"&&platform!=="win32-x64"))throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
     if(platform==="win32-x64"&&options.maxGpuMemoryMb!==undefined&&options.maxGpuMemoryMb>32768)throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
     if(options.maxGpuMemoryMb===undefined)throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
     if(options.maxGpuMemoryMb<entry.minVramMb)throw new AdapterError("GPU_MEMORY_BELOW_MODEL_REQUIREMENT");
@@ -132,7 +132,7 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       // A CUDA build can fall back to CPU. Require host-observed device residency
       // consistent with the pinned weights before accepting inference inputs.
       const minimum=Math.floor(entry.artifacts.filter(file=>file.name.endsWith(".gguf")).reduce((sum,file)=>sum+file.bytes,0)*0.75);
-      const offloaded=()=>platform==="win32-x64"?processes.process!.gpuOffloadedLayers()===37:processes.process!.gpuOffloadedLayers()>0;
+      const offloaded=()=>processes.process!.gpuOffloadedLayers()>0;
       for(let i=0;i<10&&(processes.process!.peakDedicatedGpuMemoryBytes()<minimum||!offloaded());i++)await delay(200,undefined,{signal});
       if(processes.process!.peakDedicatedGpuMemoryBytes()<minimum||!offloaded())throw new AdapterError("GPU_OFFLOAD_NOT_OBSERVED");
     }

@@ -46,7 +46,11 @@ test('the transfer route requires an exact catalog artifact and explicit consent
   const root=await mkdtemp(resolve('.cache/model-route-'));
   try {
     const path=join(root,'model.gguf');await writeFile(path,gguf([]));
-    await assert.rejects(verifyPinnedModelFile('qwen3-4b',path),/MODEL_CATALOG_HASH_MISMATCH/);
+    for(const id of ['qwen3-4b','qwen3-embedding-0.6b','qwen3-asr-0.6b','sd-turbo','flux1-schnell']) {
+      await assert.rejects(verifyPinnedModelFile(id,path),/MODEL_CATALOG_HASH_MISMATCH/);
+      await assert.rejects(modelRoute('download',id,root,[],new Set(['--accept-licenses'])),/MODEL_ROUTE_CONSENT_REQUIRED/);
+    }
+    await assert.rejects(verifyPinnedModelFile('unknown-model',path),/UNKNOWN_MODEL/);
     await assert.rejects(modelRoute('import','qwen3-4b',root,[path],new Set()),/MODEL_ROUTE_CONSENT_REQUIRED/);
     await assert.rejects(modelRoute('download','qwen3-4b',root,[],new Set(['--accept-licenses'])),/MODEL_ROUTE_CONSENT_REQUIRED/);
   } finally {await rm(root,{recursive:true,force:true});}

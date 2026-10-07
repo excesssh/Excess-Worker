@@ -1,6 +1,6 @@
 # Working on Excess Worker
 
-Use one accountable lead for integration and verification. Additional agents require explicit owner authorization. For the catalogue and GPU coverage milestone, the owner permits Luna subagents at extra-high effort when useful.
+Use one accountable lead for integration, verification and publication. The owner has authorized Luna helpers at extra-high effort for bounded preparation and verification during the catalogue and first-use milestone. The lead retains responsibility for release decisions, protected credentials, testnet spending and temporary cloud resources. Other delegation requires explicit owner permission.
 
 Read README.md, docs/PLATFORMS.md and docs/VERIFICATION.md before changing product or release claims. Work within the requested milestone; do not start expansion work automatically. Keep coordinator, custody, settlement signing, infrastructure and private operational handoffs outside this standalone repository.
 

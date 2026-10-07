@@ -10,7 +10,7 @@ export { installTextAdapter,installRuntimeRedist,verifyInstallation,textInstalla
   textInstallDiskCheck,freeDiskBytes,importModelFiles,ImportMismatchError } from "./install.js";
 export { RUNTIME_REDIST,PLATFORM_BACKENDS,GPU_BACKEND,currentPlatform,runtimeArtifacts,serverExecutable } from "./manifest.js";
 export type { RedistFile,Platform } from "./manifest.js";
-export { MEDIA_CATALOG,mediaCatalogEntry,sdRuntimeArtifacts,sdServerExecutable,SD_RUNTIME_REDIST } from "./manifest.js";
+export { MEDIA_CATALOG,mediaCatalogEntry,sdRuntimeArtifacts,sdServerExecutable,SD_RUNTIME_REDIST,WINDOWS_MEDIA_CPU_BUDGETS } from "./manifest.js";
 // A media capability may be served by suppliers (MEDIA_CATALOG) or by house supply (HOSTED_MEDIA_CATALOG).
 export { HOSTED_MEDIA_CATALOG,MEDIA_LISTINGS,hostedMediaEntry,hostedMediaEntryByDigest,isHostedMediaCapability,mediaListingById,
   mediaEntryByDigest,isMediaCapability } from "./hosted-media-catalog.js";

@@ -1,9 +1,11 @@
-import { parseTextRequest, parseTextResult, type TextRequest, type TextResult } from "@excess/adapters";
-import { requestDigest, textChunkSchema, textResultSchema, TEXT_LIMITS } from "@excess/protocol";
+import { parseTextRequest, parseTextResult, type TextRequest, type TextResult, type MediaOutput } from "@excess/adapters";
+import { requestDigest, textChunkSchema, textResultSchema, TEXT_LIMITS, MEDIA_LIMITS, mediaResultSchema, mediaResultUnits, type MediaRequest, type MediaResult } from "@excess/protocol";
 import type { WindowsControllerJson } from "./windows-controller.js";
 
 type Payload = Readonly<Record<string, WindowsControllerJson>>;
 type HostHandler = (payload: Payload, signal: AbortSignal) => Promise<WindowsControllerJson>;
+import { checkedMediaRequest, checkedMediaInputs, checkedMediaOutput, checkedMediaArtifacts, mediaRefs, mediaPart, mediaHash, WINDOWS_MEDIA_PROOF_BYTES, type WindowsMediaArtifactProof } from "./windows-media-validation.js";
+
 type Assignment = {
   jobId: string; attemptId: string; deviceId: string; fence: string; leaseExpiresAt: string;
   runDeadlineAt: string; offerId: string; capabilityDigest: string; requestDigest: string; maxUnits: string;
@@ -15,7 +17,8 @@ type Assignment = {
 export type WindowsTextExecutionProof = Readonly<{
   assignment: Assignment;
   inputDigest: string;
-  output: TextResult;
+  output: TextResult | MediaResult;
+  artifacts?: readonly WindowsMediaArtifactProof[];
   outputDigest: string;
   completedAt: string;
   /** Durable receipt marker closes the coordinator-accepted/worker-journal crash window. */
@@ -28,7 +31,8 @@ export interface WindowsTextExecutionProofStore {
 }
 export interface WindowsTextExecutionHostOptions {
   readonly coordinator: { handle: HostHandler; close(): Promise<void> };
-  readonly adapter: { handle: HostHandler; close(): Promise<void> };
+  readonly adapter: { handle: HostHandler; close(): Promise<void>; setInputs?(inputs: ReadonlyMap<string, Buffer>): void; readOutput?(): MediaOutput | undefined };
+  readonly media?: { check(request: unknown): MediaRequest };
   readonly proofStore: WindowsTextExecutionProofStore;
   readonly deviceId: string;
   readonly capabilityDigest: string;
@@ -40,7 +44,9 @@ type Attempt = {
   assignment: Assignment;
   executionEnabled?: boolean;
   phase: "assigned" | "input" | "running" | "completed";
-  input?: TextRequest;
+  input?: TextRequest | MediaRequest;
+  inputs?: Map<string, Buffer>;
+  inputParts?: Set<number>;
   deliveryMode?: "buffered" | "stream";
   inputDigest?: string;
   leaseExpiresAt?: number;
@@ -64,7 +70,9 @@ const FENCE = /^[1-9][0-9]{0,18}$/;
 const MAX_FENCE = 9223372036854775807n;
 const MAX_UNITS = /^[1-9][0-9]{0,77}$/;
 const ASSIGNMENT_KEYS = "attemptId,capabilityDigest,deviceId,fence,jobId,leaseExpiresAt,maxUnits,offerId,requestDigest,runDeadlineAt";
-const MAX_PROOF_BYTES = TEXT_LIMITS.maxOutputBytes * 4 + 8192;
+const MAX_PROOF_BYTES = WINDOWS_MEDIA_PROOF_BYTES;
+const outputUnits = (output: TextResult | MediaResult) => "kind" in output ? mediaResultUnits(output) : output.generatedTokens;
+const parseOutput = (value: unknown): TextResult | MediaResult => value && typeof value === "object" && "kind" in value ? mediaResultSchema.parse(value) : textResultSchema.parse(value);
 
 function invalid(code = "CONTROLLER_EXECUTION_INVALID"): never { throw Error(code); }
 function object(value: unknown): Record<string, unknown> {
@@ -114,26 +122,31 @@ function success(value: WindowsControllerJson): unknown | undefined {
 function digest(value: unknown): string {
   try { return requestDigest(value); } catch { return ""; }
 }
-function noOwnerMarker(result: TextResult): void {
+function noOwnerMarker(result: TextResult | MediaResult): void {
   const marker = ["aa", "ron"].join("").toLowerCase();
-  if (result.text.toLowerCase().includes(marker)) invalid("CONTROLLER_EXECUTION_OUTPUT_PRIVACY");
+  if (JSON.stringify(result).toLowerCase().includes(marker)) invalid("CONTROLLER_EXECUTION_OUTPUT_PRIVACY");
 }
 export function parseWindowsTextExecutionProof(value: unknown, deviceId: string, capabilityDigest: string, now: number): WindowsTextExecutionProof {
   const proof = object(value);
   const keys = Object.keys(proof).sort().join(",");
   if (keys !== "assignment,completedAt,inputDigest,output,outputDigest" &&
-      keys !== "assignment,completedAt,inputDigest,output,outputDigest,receiptAccepted") invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
+      keys !== "assignment,completedAt,inputDigest,output,outputDigest,receiptAccepted" &&
+      keys !== "artifacts,assignment,completedAt,inputDigest,output,outputDigest" &&
+      keys !== "artifacts,assignment,completedAt,inputDigest,output,outputDigest,receiptAccepted") invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
   if (proof.receiptAccepted !== undefined && typeof proof.receiptAccepted !== "boolean") invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
   const assignment = parseAssignment(proof.assignment, deviceId, capabilityDigest, now, true);
   if (typeof proof.inputDigest !== "string" || !DIGEST.test(proof.inputDigest) ||
       typeof proof.outputDigest !== "string" || !DIGEST.test(proof.outputDigest)) invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
-  const output = textResultSchema.parse(proof.output);
+  const output = parseOutput(proof.output);
+  const artifacts = "kind" in output ? checkedMediaArtifacts(output, proof.artifacts) : undefined;
+  if (!("kind" in output) && proof.artifacts !== undefined) invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
   noOwnerMarker(output);
-  if (digest(output) !== proof.outputDigest || BigInt(output.generatedTokens) > BigInt(assignment.maxUnits)) invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
+  if (digest(output) !== proof.outputDigest || BigInt(outputUnits(output)) > BigInt(assignment.maxUnits)) invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
   const completedAt = new Date(date(proof.completedAt)).toISOString();
   if (Date.parse(completedAt) > Date.parse(assignment.runDeadlineAt) || Date.parse(completedAt) > Date.parse(assignment.leaseExpiresAt)) invalid("CONTROLLER_EXECUTION_PROOF_INVALID");
   if (Buffer.byteLength(JSON.stringify(proof), "utf8") > MAX_PROOF_BYTES) invalid("CONTROLLER_EXECUTION_PROOF_LIMIT");
   return { assignment, inputDigest: proof.inputDigest, output, outputDigest: proof.outputDigest, completedAt,
+    ...(artifacts ? { artifacts } : {}),
     ...(proof.receiptAccepted === true ? { receiptAccepted: true } : {}) };
 }
 function live(a: Attempt, now: number, runSeconds: number): void {
@@ -211,8 +224,27 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
     const a = proof.assignment;
     const payload: Payload = { action: "command", type: "job.result", data: {
       jobId: a.jobId, attemptId: a.attemptId, fence: a.fence, outputDigest: proof.outputDigest,
-      reportedUnits: String(proof.output.generatedTokens), output: proof.output,
+      reportedUnits: String(outputUnits(proof.output)), output: proof.output,
     } };
+    if ("kind" in proof.output) {
+      for (const artifact of proof.artifacts ?? []) {
+        const bytes = mediaPart(artifact.data, artifact.ref.bytes), parts = Math.ceil(bytes.length / MEDIA_LIMITS.artifactPartBytes);
+        for (let part = 0; part < parts; part++) {
+          if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
+          const upload = await options.coordinator.handle({ action: "command", type: "job.artifact", data: {
+            jobId: a.jobId, attemptId: a.attemptId, fence: a.fence, ...artifact.ref, part, parts,
+            data: bytes.subarray(part * MEDIA_LIMITS.artifactPartBytes, (part + 1) * MEDIA_LIMITS.artifactPartBytes).toString("base64") } }, signal);
+          const got = success(upload);
+          if (got === undefined) {
+            const envelope = object(upload);
+            if (envelope.ok === false && [404, 409].includes(Number(envelope.status))) await finishProof(proof);
+            return upload;
+          }
+          const receipt = object(got);
+          if (receipt.accepted !== true && !(receipt.digest === artifact.ref.digest && receipt.part === part)) invalid("CONTROLLER_EXECUTION_ARTIFACT_RECEIPT_INVALID");
+        }
+      }
+    }
     const response = await options.coordinator.handle(payload, signal);
     if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
     const value = success(response), errorEnvelope = object(response);
@@ -232,7 +264,38 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
       const command = exact(request, "action,data,type");
       const type = command.type, data = object(command.data);
       if (typeof type !== "string") invalid();
-      if (["job.artifact", "job.artifact.read", "job.usage"].includes(type)) invalid("CONTROLLER_EXECUTION_TEXT_ONLY");
+      if (type === "job.usage" || (!options.media && ["job.artifact", "job.artifact.read"].includes(type))) invalid("CONTROLLER_EXECUTION_TEXT_ONLY");
+      if (type === "job.artifact.read") {
+        if (!current || current.phase !== "input" || !current.input || !("kind" in current.input) || current.input.kind !== "transcription") invalid("CONTROLLER_EXECUTION_INPUT_UNOBSERVED");
+        const active = current, ref = current.input.audio;
+        exact(data, "attemptId,digest,fence,jobId,part"); attemptData(data, active.assignment); live(active, now(), options.runSeconds);
+        const parts = Math.ceil(ref.bytes / MEDIA_LIMITS.artifactPartBytes);
+        if (data.digest !== ref.digest || !Number.isSafeInteger(data.part) || Number(data.part) < 0 || Number(data.part) >= parts) invalid("CONTROLLER_EXECUTION_ARTIFACT_MISMATCH");
+        const response = await options.coordinator.handle(payload, signal); assertCurrent(active); live(active, now(), options.runSeconds);
+        const value = success(response); if (value === undefined) return response;
+        const got = object(value), part = Number(data.part), size = Math.min(MEDIA_LIMITS.artifactPartBytes, ref.bytes - part * MEDIA_LIMITS.artifactPartBytes);
+        if (got.digest !== ref.digest || got.part !== part || got.parts !== parts) invalid("CONTROLLER_EXECUTION_ARTIFACT_MISMATCH");
+        const bytes = mediaPart(got.data, size);
+        active.inputs ??= new Map(); active.inputParts ??= new Set();
+        let cached = active.inputs.get(ref.digest);
+        if (!cached) { cached = Buffer.alloc(ref.bytes); active.inputs.set(ref.digest, cached); }
+        if (active.inputParts.has(part) && !cached.subarray(part * MEDIA_LIMITS.artifactPartBytes, part * MEDIA_LIMITS.artifactPartBytes + size).equals(bytes)) invalid("CONTROLLER_EXECUTION_ARTIFACT_CHANGED");
+        bytes.copy(cached, part * MEDIA_LIMITS.artifactPartBytes); active.inputParts.add(part);
+        return response;
+      }
+      if (type === "job.artifact") {
+        exact(data, "attemptId,bytes,contentType,data,digest,fence,jobId,part,parts");
+        const proof = current?.proof ?? pendingProof;
+        if (!proof || !("kind" in proof.output)) invalid("CONTROLLER_EXECUTION_RESULT_UNOBSERVED");
+        attemptData(data, proof.assignment);
+        const artifact = proof.artifacts?.find(item => item.ref.digest === data.digest);
+        if (!artifact) invalid("CONTROLLER_EXECUTION_ARTIFACT_MISMATCH");
+        const ref = artifact.ref, part = Number(data.part), parts = Math.ceil(ref.bytes / MEDIA_LIMITS.artifactPartBytes);
+        if (!Number.isSafeInteger(part) || part < 0 || part >= parts || data.parts !== parts || data.bytes !== ref.bytes || data.contentType !== ref.contentType) invalid("CONTROLLER_EXECUTION_ARTIFACT_MISMATCH");
+        const bytes = mediaPart(artifact.data, ref.bytes), expected = bytes.subarray(part * MEDIA_LIMITS.artifactPartBytes, (part + 1) * MEDIA_LIMITS.artifactPartBytes).toString("base64");
+        if (data.data !== expected) invalid("CONTROLLER_EXECUTION_ARTIFACT_MISMATCH");
+        return options.coordinator.handle(payload, signal);
+      }
       if (type === "worker.poll") {
         if (Object.keys(data).length !== 0) invalid();
         if (current && current.phase !== "completed") invalid("CONTROLLER_EXECUTION_ATTEMPT_BUSY");
@@ -266,9 +329,9 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
         const proof = currentMatch?.proof ?? (pending && pending.assignment.jobId === data.jobId && pending.assignment.attemptId === data.attemptId && pending.assignment.fence === data.fence ? pending : undefined);
         if (!proof) invalid("CONTROLLER_EXECUTION_RESULT_UNOBSERVED");
         attemptData(data, proof.assignment);
-        const output = textResultSchema.parse(data.output);
+        const output = parseOutput(data.output);
         if (digest(output) !== proof.outputDigest || data.outputDigest !== proof.outputDigest ||
-            data.reportedUnits !== String(output.generatedTokens)) invalid("CONTROLLER_EXECUTION_RESULT_MISMATCH");
+            data.reportedUnits !== String(outputUnits(output))) invalid("CONTROLLER_EXECUTION_RESULT_MISMATCH");
         if (proof.receiptAccepted) return { ok: true, value: { accepted: true } };
         const response = await options.coordinator.handle(payload, signal);
         if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
@@ -308,12 +371,20 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
           assertCurrent(active);
           const value = success(response); if (value === undefined) return response;
           const input = object(value);
-          const allowed = ["capabilityDigest", "deliveryMode", "request", "requestDigest"];
+          const allowed = ["capabilityDigest", "deliveryMode", "request", "requestDigest", ...(options.media ? ["artifacts"] : [])];
           if (Object.keys(input).some(key => !allowed.includes(key)) ||
               input.capabilityDigest !== a.capabilityDigest || input.requestDigest !== a.requestDigest ||
               (input.deliveryMode !== undefined && input.deliveryMode !== "buffered" && input.deliveryMode !== "stream")) invalid("CONTROLLER_EXECUTION_INPUT_MISMATCH");
-          const parsed = parseTextRequest(input.request);
-          if (digest(parsed) !== a.requestDigest || BigInt(parsed.maxTokens) > BigInt(a.maxUnits)) invalid("CONTROLLER_EXECUTION_INPUT_MISMATCH");
+          const parsed = options.media ? options.media.check(checkedMediaRequest(input.request, a.maxUnits)) : parseTextRequest(input.request);
+          if (options.media && input.deliveryMode !== "buffered") invalid("CONTROLLER_EXECUTION_INPUT_MISMATCH");
+          if (options.media) {
+            const refs = "kind" in parsed && parsed.kind === "transcription" ? [parsed.audio] : [];
+            const listed = input.artifacts ?? [];
+            if (!Array.isArray(listed) || listed.length !== refs.length || refs.some((ref, i) => {
+              const item = object(listed[i]); return item.digest !== ref.digest || item.bytes !== ref.bytes || item.contentType !== ref.contentType || item.parts !== Math.ceil(ref.bytes / MEDIA_LIMITS.artifactPartBytes);
+            })) invalid("CONTROLLER_EXECUTION_INPUT_MISMATCH");
+          }
+          if (digest(parsed) !== a.requestDigest || (!("kind" in parsed) && BigInt(parsed.maxTokens) > BigInt(a.maxUnits))) invalid("CONTROLLER_EXECUTION_INPUT_MISMATCH");
           active.input = parsed; active.deliveryMode = input.deliveryMode === "stream" ? "stream" : "buffered";
           active.inputDigest = digest({ request: parsed, deliveryMode: active.deliveryMode, capabilityDigest: a.capabilityDigest });
           active.phase = "input";
@@ -322,6 +393,7 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
         if (type === "job.started" || type === "job.renew") {
           if (type === "job.started" ? current.phase !== "input" || current.executionEnabled === false : current.phase !== "running") invalid("CONTROLLER_EXECUTION_STATE_INVALID");
           exact(data, "attemptId,fence,jobId");
+          if (type === "job.started" && options.media && current.input && "kind" in current.input) checkedMediaInputs(current.input, current.inputs ?? new Map());
           live(current, now(), options.runSeconds);
           const active = current;
           const response = await options.coordinator.handle(payload, signal);
@@ -403,10 +475,15 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
       if (active.executeStarting || active.sessionId || probeStarting || probeSessionId || pendingProof || stopInFlight) invalid("CONTROLLER_EXECUTION_SESSION_BUSY");
       live(active, now(), options.runSeconds);
       const data = exact(request, "action,request,streaming");
-      const parsed = parseTextRequest(data.request);
+      const parsed = options.media ? options.media.check(checkedMediaRequest(data.request, active.assignment.maxUnits)) : parseTextRequest(data.request);
       if (digest(parsed) !== digest(active.input) || data.streaming !== (active.deliveryMode === "stream")) invalid("CONTROLLER_EXECUTION_PROMPT_MISMATCH");
       active.executeStarting = true;
       try {
+        if (options.media) {
+          checkedMediaInputs(parsed as MediaRequest, active.inputs ?? new Map());
+          if (!options.adapter.setInputs) invalid("CONTROLLER_EXECUTION_MEDIA_UNAVAILABLE");
+          options.adapter.setInputs(active.inputs ?? new Map());
+        }
         const response = await options.adapter.handle(payload, signal);
         assertCurrent(active);
         if (signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
@@ -421,6 +498,14 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
       } finally {
         if (current === active) active.executeStarting = false;
       }
+    }
+    if (action === "artifact.read") {
+      const data = exact(request, "action,digest,part"), proof = current?.proof ?? pendingProof;
+      if (!options.media || !proof || !("kind" in proof.output)) invalid("CONTROLLER_EXECUTION_RESULT_UNOBSERVED");
+      const artifact = proof.artifacts?.find(item => item.ref.digest === data.digest), part = Number(data.part);
+      if (!artifact || !Number.isSafeInteger(part) || part < 0 || part >= Math.ceil(artifact.ref.bytes / MEDIA_LIMITS.artifactPartBytes)) invalid("CONTROLLER_EXECUTION_ARTIFACT_MISMATCH");
+      const bytes = mediaPart(artifact.data, artifact.ref.bytes);
+      return { digest: artifact.ref.digest, part, data: bytes.subarray(part * MEDIA_LIMITS.artifactPartBytes, (part + 1) * MEDIA_LIMITS.artifactPartBytes).toString("base64") };
     }
     if (action === "pull") {
       const probeData = object(request);
@@ -453,29 +538,42 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
           if (active.deliveryMode !== "stream" || active.outstandingChunk) invalid("CONTROLLER_EXECUTION_CHUNK_INVALID");
           const chunk = textChunkSchema.parse(value.chunk);
           if (chunk.sequence !== active.chunkSequence + 1 || chunk.chunkDigest !== digest({ sequence: chunk.sequence, delta: chunk.delta, tokenIds: chunk.tokenIds }) ||
-              Buffer.from(chunk.delta, "utf8").toString("utf8") !== chunk.delta || active.chunkTokens + chunk.tokenIds.length > active.input!.maxTokens ||
+              Buffer.from(chunk.delta, "utf8").toString("utf8") !== chunk.delta || active.chunkTokens + chunk.tokenIds.length > (active.input as TextRequest).maxTokens ||
               Buffer.byteLength(active.chunkText + chunk.delta, "utf8") > TEXT_LIMITS.maxOutputBytes) invalid("CONTROLLER_EXECUTION_CHUNK_INVALID");
           active.outstandingChunk = chunk;
         } else if (value.kind === "result") {
-          const output = parseTextResult(value.result);
-          if (output.generatedTokens > active.input!.maxTokens || BigInt(output.generatedTokens) > BigInt(active.assignment.maxUnits) ||
-              (active.deliveryMode === "stream" && (active.outstandingChunk || output.text !== active.chunkText || output.generatedTokens !== active.chunkTokens))) invalid("CONTROLLER_EXECUTION_RESULT_MISMATCH");
+          let output: TextResult | MediaResult, artifacts: WindowsMediaArtifactProof[] | undefined;
+          if (options.media) {
+            const observed = options.adapter.readOutput?.();
+            if (!observed || digest(observed.result) !== digest(value.result)) invalid("CONTROLLER_EXECUTION_RESULT_UNOBSERVED");
+            const checked = checkedMediaOutput(active.input as MediaRequest, observed, active.assignment.maxUnits);
+            output = checked.result;
+            artifacts = checked.artifacts.map(item => ({ ref: item.ref, data: item.data.toString("base64") }));
+            value.result = output;
+          } else {
+            output = parseTextResult(value.result);
+            if (output.generatedTokens > (active.input as TextRequest).maxTokens || BigInt(output.generatedTokens) > BigInt(active.assignment.maxUnits) ||
+                (active.deliveryMode === "stream" && (active.outstandingChunk || output.text !== active.chunkText || output.generatedTokens !== active.chunkTokens))) invalid("CONTROLLER_EXECUTION_RESULT_MISMATCH");
+          }
           noOwnerMarker(output);
           const completedAt = now();
           if (completedAt > Date.parse(active.assignment.runDeadlineAt) || completedAt > (active.startedAt ?? completedAt) + options.runSeconds * 1000) invalid("CONTROLLER_EXECUTION_LEASE_EXPIRED");
           const proof: WindowsTextExecutionProof = { assignment: active.assignment, inputDigest: active.inputDigest!, output,
-            outputDigest: digest(output), completedAt: new Date(completedAt).toISOString() };
+            outputDigest: digest(output), completedAt: new Date(completedAt).toISOString(), ...(artifacts ? { artifacts } : {}) };
           if (!proof.outputDigest || Buffer.byteLength(JSON.stringify(proof), "utf8") > MAX_PROOF_BYTES) invalid("CONTROLLER_EXECUTION_PROOF_LIMIT");
           if (pendingProof && pendingProof.assignment.attemptId !== active.assignment.attemptId) invalid("CONTROLLER_EXECUTION_RECEIPT_PENDING");
           await options.proofStore.save(proof);
           assertCurrent(active);
           if (signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");
           active.proof = proof; active.phase = "completed"; delete active.sessionId;
-          pendingProof = proof;
+          pendingProof = proof; active.inputs?.clear(); delete active.inputParts;
         } else if (value.kind === "error") {
           active.adapterError = true; delete active.sessionId;
         } else if (value.kind !== "pending") invalid("CONTROLLER_EXECUTION_ADAPTER_EVENT_INVALID");
         return response;
+      } catch (error) {
+        if (options.media && current === active) active.adapterError = true;
+        throw error;
       } finally { if (current === active) active.pulling = false; }
     }
     if (action === "stop") {
