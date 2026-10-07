@@ -4,7 +4,7 @@
 
 This repository contains the public source for Excess Worker, including the published 0.1.0 release. Keep changes within the worker, adapter, protocol and their focused tests unless maintainers explicitly expand the scope.
 
-Agent-assisted work uses **one lead agent only**. Do not delegate implementation or review to subagents. The lead owns the changes and verification; see [AGENTS.md](AGENTS.md).
+Agent-assisted work has **one accountable lead** for integration and verification. Additional agents need explicit owner authorization; see [AGENTS.md](AGENTS.md).
 
 ## Development setup
 

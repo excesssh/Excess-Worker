@@ -1,0 +1,676 @@
+{
+  "format": 1,
+  "source": "packages/adapters/src/manifest.ts",
+  "models": [
+    {
+      "id": "qwen3-4b",
+      "name": "Qwen3 4B",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 2497291800,
+      "modelBytes": 2497280256,
+      "ramMiB": 4096,
+      "vramMiB": 4096,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "73c3817b8f2f3c784f3485d84288b0aae1c8e5359d1579d76593cc845976eb84",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 2497280256,
+          "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+          "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Qwen3-Apache-2.0.txt",
+          "bytes": 11544,
+          "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd",
+          "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/raw/bc640142c66e1fdd12af0bd68f40445458f3869b/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "phi-4-mini",
+      "name": "Phi-4 mini 3.8B",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 2491875356,
+      "modelBytes": 2491874272,
+      "ramMiB": 4608,
+      "vramMiB": 4096,
+      "gpuOnly": false,
+      "licence": "MIT",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "87228209345b91d752a738c03c9b1b72ae0e9149136d50f2a8c60410b711d05a",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 2491874272,
+          "sha256": "88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a",
+          "url": "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/78eb92a46fc37e6b524df991ed9aca9bc6aa7b80/Phi-4-mini-instruct-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Phi-4-mini-MIT.txt",
+          "bytes": 1084,
+          "sha256": "fa8235e5b48faca34e3ca98cf4f694ef08bd216d28b58071a1f85b1d50cb814d",
+          "url": "https://huggingface.co/microsoft/Phi-4-mini-instruct/raw/cfbefacb99257ffa30c83adab238a50856ac3083/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-8b",
+      "name": "Qwen3 8B",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 5027795032,
+      "modelBytes": 5027783488,
+      "ramMiB": 7168,
+      "vramMiB": 6656,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "bd95d1b913e2d322832950cd643c54984b3db80e7dccf897a0a551bae4ed4e0b",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 5027783488,
+          "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+          "url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Qwen3-Apache-2.0.txt",
+          "bytes": 11544,
+          "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd",
+          "url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/raw/7c41481f57cb95916b40956ab2f0b139b296d974/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "llama-3.1-8b",
+      "name": "Llama 3.1 8B Instruct",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 4920751553,
+      "modelBytes": 4920739200,
+      "ramMiB": 7168,
+      "vramMiB": 6656,
+      "gpuOnly": false,
+      "licence": "Llama 3.1 Community",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "0035faf35c5b1815139123f27b97aa9e38d2c26aede152314fa49ef6d176bb43",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 4920739200,
+          "sha256": "b3bdbf23b47d7e6bb791c99b206deb169cd5a96362a9e3399028df2faacdc506",
+          "url": "https://huggingface.co/unsloth/Llama-3.1-8B-Instruct-GGUF/resolve/600b0020115fd6b17f0752848fe7b5a1be686bcd/Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Llama-3.1-Community-License.txt",
+          "bytes": 7680,
+          "sha256": "bf2eac60b81e5c5f779fc3b4849d3bfacfd63f97f3eb68b44e9c6868c5801712",
+          "url": "https://raw.githubusercontent.com/meta-llama/llama-models/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_1/LICENSE"
+        },
+        {
+          "name": "licences/Llama-3.1-Acceptable-Use-Policy.md",
+          "bytes": 4673,
+          "sha256": "f456a3f5b15ab588c84d06cf095a245bfee0bbc1620b48ed00af2cca4a711735",
+          "url": "https://raw.githubusercontent.com/meta-llama/llama-models/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_1/USE_POLICY.md"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-14b",
+      "name": "Qwen3 14B",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 9001764504,
+      "modelBytes": 9001752960,
+      "ramMiB": 11264,
+      "vramMiB": 10752,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "798e0d4f7dd81a20a9506a4866444b15985fa53add471655f74940b061d1d14f",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 9001752960,
+          "sha256": "500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0",
+          "url": "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/530227a7d994db8eca5ab5ced2fb692b614357fd/Qwen3-14B-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Qwen3-Apache-2.0.txt",
+          "bytes": 11544,
+          "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd",
+          "url": "https://huggingface.co/Qwen/Qwen3-14B-GGUF/raw/530227a7d994db8eca5ab5ced2fb692b614357fd/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "phi-4",
+      "name": "Phi-4 14B",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 9053115665,
+      "modelBytes": 9053114560,
+      "ramMiB": 11264,
+      "vramMiB": 10752,
+      "gpuOnly": false,
+      "licence": "MIT",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "766961217add49011d8f5e4930506093974fd773944b9c50204b745986e13b12",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 9053114560,
+          "sha256": "5652b9be0ea4ae2842130d04fe31bc869fcb99a2b7106c53b4e754a343fd688f",
+          "url": "https://huggingface.co/microsoft/phi-4-gguf/resolve/6edc2ef6664b739a8e11e62f2672ff6afe0c15ac/phi-4-Q4_K.gguf"
+        },
+        {
+          "name": "licences/Phi-4-MIT.txt",
+          "bytes": 1105,
+          "sha256": "c49419617a6070bcb197cfe272f7007fdec3e790dbb529cb995473bd69c0bd51",
+          "url": "https://huggingface.co/microsoft/phi-4-gguf/raw/6edc2ef6664b739a8e11e62f2672ff6afe0c15ac/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "gpt-oss-20b",
+      "name": "gpt-oss 20B (reasoning)",
+      "task": "text",
+      "quantization": "MXFP4",
+      "downloadBytes": 12109578181,
+      "modelBytes": 12109566624,
+      "ramMiB": 12800,
+      "vramMiB": 12288,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "fe3c3b373dffa5f8c57158fae1a3ed92881e3319e4317d7bb2ecb8d8e5dece6d",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 12109566624,
+          "sha256": "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901",
+          "url": "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/ef9b12f2ff56c69cf32153a02784e7a3c88bf524/gpt-oss-20b-MXFP4.gguf"
+        },
+        {
+          "name": "licences/gpt-oss-Apache-2.0.txt",
+          "bytes": 11357,
+          "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+          "url": "https://huggingface.co/openai/gpt-oss-20b/raw/6cee5e81ee83917806bbde320786a8fb61efebee/LICENSE"
+        },
+        {
+          "name": "licences/gpt-oss-USAGE_POLICY.txt",
+          "bytes": 200,
+          "sha256": "d6387ef7985019c45db8d9801e6ac5fd9f98f02b9f1c56f8c5af80c3e8f385d0",
+          "url": "https://huggingface.co/openai/gpt-oss-20b/raw/6cee5e81ee83917806bbde320786a8fb61efebee/USAGE_POLICY"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-coder-30b-a3b",
+      "name": "Qwen3 Coder 30B-A3B",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 18556700911,
+      "modelBytes": 18556689568,
+      "ramMiB": 19968,
+      "vramMiB": 19456,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "9cac897418a58f0a28345a98f668a4aa8107bd9486f132b688c3f4150b011935",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 18556689568,
+          "sha256": "fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad",
+          "url": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/b17cb02dd882d5b6ab62fc777ad2995f19668350/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Qwen3-Coder-Apache-2.0.txt",
+          "bytes": 11343,
+          "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+          "url": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct/raw/b2cff646eb4bb1d68355c01b18ae02e7cf42d120/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-30b-a3b-instruct-2507",
+      "name": "Qwen3 30B-A3B Instruct 2507",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 18556698095,
+      "modelBytes": 18556686752,
+      "ramMiB": 19968,
+      "vramMiB": 19456,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "1bad8bd3028eb651858f0f7d2519899889e710e39eb93d10b5f251249cfd2610",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 18556686752,
+          "sha256": "6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0",
+          "url": "https://huggingface.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF/resolve/eea7b2be5805a5f151f8847ede8e5f9a9284bf77/Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Qwen3-2507-Apache-2.0.txt",
+          "bytes": 11343,
+          "sha256": "05cab46843576551502bfdf712f84e93e6e9590d9997306ed4f6635ef82811d9",
+          "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507/raw/0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-30b-a3b",
+      "name": "Qwen3 30B-A3B (fast mixture-of-experts)",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 18556697368,
+      "modelBytes": 18556685824,
+      "ramMiB": 20480,
+      "vramMiB": 19968,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "a8d03112b92fbb0c743f2be422163da639146c5397c09f60f4894a1407a3bb4d",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 18556685824,
+          "sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5",
+          "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF/resolve/e4d4bafdfb96a411a163846265362aceb0b9c63a/Qwen3-30B-A3B-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Qwen3-Apache-2.0.txt",
+          "bytes": 11544,
+          "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd",
+          "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF/raw/e4d4bafdfb96a411a163846265362aceb0b9c63a/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-32b",
+      "name": "Qwen3 32B",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 19762160568,
+      "modelBytes": 19762149024,
+      "ramMiB": 22016,
+      "vramMiB": 21504,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "5c8504a827df6defbdc1a428fa0c76b0c043fcfbb4c757a4aac365382ca9025b",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 19762149024,
+          "sha256": "efd971561896866f0e910cce52761ca77b1b138090c7f15fe284676d57d1f689",
+          "url": "https://huggingface.co/Qwen/Qwen3-32B-GGUF/resolve/938a7432affaec9157f883a87164e2646ae17555/Qwen3-32B-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Qwen3-Apache-2.0.txt",
+          "bytes": 11544,
+          "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd",
+          "url": "https://huggingface.co/Qwen/Qwen3-32B-GGUF/raw/938a7432affaec9157f883a87164e2646ae17555/LICENSE"
+        }
+      ]
+    },
+    {
+      "id": "llama-3.3-70b",
+      "name": "Llama 3.3 70B Instruct",
+      "task": "text",
+      "quantization": "Q4_K_M",
+      "downloadBytes": 42520412361,
+      "modelBytes": 42520398432,
+      "ramMiB": 44544,
+      "vramMiB": 44032,
+      "gpuOnly": false,
+      "licence": "Llama 3.3 Community",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "1fc89c7721a021598ba58cfe9ef95e5170ae09fd38c92ca927b5b1b4be02ca3b",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 42520398432,
+          "sha256": "d7f4f209208f984fe95af82d014171f9d05427029746b1ae08297f102a6ddee4",
+          "url": "https://huggingface.co/unsloth/Llama-3.3-70B-Instruct-GGUF/resolve/8f14c5c5d06fca109ff16f94496147a8479711de/Llama-3.3-70B-Instruct-Q4_K_M.gguf"
+        },
+        {
+          "name": "licences/Llama-3.3-Community-License.txt",
+          "bytes": 7909,
+          "sha256": "fb58d9a630ccc1dc0d08f8c00232de56bc73309020f59c8181d0c12ef28d9f8c",
+          "url": "https://raw.githubusercontent.com/meta-llama/llama-models/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_3/LICENSE"
+        },
+        {
+          "name": "licences/Llama-3.3-Acceptable-Use-Policy.md",
+          "bytes": 6020,
+          "sha256": "fac148bfbd9f515b3a7a9885d5d324187cd2ef9e2dcc9cdde49ef248695f3e07",
+          "url": "https://raw.githubusercontent.com/meta-llama/llama-models/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_3/USE_POLICY.md"
+        }
+      ]
+    },
+    {
+      "id": "gpt-oss-120b",
+      "name": "gpt-oss 120B (reasoning)",
+      "task": "text",
+      "quantization": "MXFP4",
+      "downloadBytes": 63387357766,
+      "modelBytes": 63387346208,
+      "ramMiB": 61952,
+      "vramMiB": 61440,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "741882e473c2b3487ab5d14b7c74dce64825bb3dc183401ecf41717ffea06c6a",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 63387346208,
+          "sha256": "582bd40f6886200101f4c4ed9f25f3fe80cc14c86e9e2b37746cd8904a0c622d",
+          "url": "https://huggingface.co/ggml-org/gpt-oss-120b-GGUF/resolve/238abdd290bb874b90a5da1b4549881b7d05c091/gpt-oss-120b-MXFP4.gguf"
+        },
+        {
+          "name": "licences/gpt-oss-Apache-2.0.txt",
+          "bytes": 11357,
+          "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+          "url": "https://huggingface.co/openai/gpt-oss-120b/raw/b5c939de8f754692c1647ca79fbf85e8c1e70f8a/LICENSE"
+        },
+        {
+          "name": "licences/gpt-oss-USAGE_POLICY.txt",
+          "bytes": 201,
+          "sha256": "fc48d386a7a7ff8b066f743cfe62df683ab16892450f5bb7357bb4de261cd037",
+          "url": "https://huggingface.co/openai/gpt-oss-120b/raw/b5c939de8f754692c1647ca79fbf85e8c1e70f8a/USAGE_POLICY"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-embedding-0.6b",
+      "name": "Qwen3 Embedding 0.6B",
+      "task": "embedding",
+      "quantization": "Q8_0",
+      "downloadBytes": 639150592,
+      "modelBytes": 639150592,
+      "ramMiB": 1536,
+      "vramMiB": 1024,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "bc661c023539b4797186faee857e66d6a4cc43894dacf9abe162ce4d14505605",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 639150592,
+          "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+          "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-asr-0.6b",
+      "name": "Qwen3 ASR 0.6B",
+      "task": "transcription",
+      "quantization": "Q8_0",
+      "downloadBytes": 1019141728,
+      "modelBytes": 1019141728,
+      "ramMiB": 2048,
+      "vramMiB": 1536,
+      "gpuOnly": false,
+      "licence": "Apache-2.0",
+      "runtime": "llama.cpp-b10809",
+      "capabilityDigest": "47cf218e5e77fc4780905df10dc74f3d26d20c7a21b753eb7a5ea256bf90e852",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 804749248,
+          "sha256": "bca259818b50ca7c4c05e9bdb35a5dc04fa039653a6d6f3f0f331f96f6aa1971",
+          "url": "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/928ab958557df9aa2ef1c93e0e83c7ad0933fae2/Qwen3-ASR-0.6B-Q8_0.gguf"
+        },
+        {
+          "name": "mmproj.gguf",
+          "bytes": 214392480,
+          "sha256": "41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d",
+          "url": "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/928ab958557df9aa2ef1c93e0e83c7ad0933fae2/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"
+        }
+      ]
+    },
+    {
+      "id": "sd-turbo",
+      "name": "SD-Turbo",
+      "task": "image",
+      "quantization": "Q8_0",
+      "downloadBytes": 2023745376,
+      "modelBytes": 2023745376,
+      "ramMiB": 4096,
+      "vramMiB": 3072,
+      "gpuOnly": false,
+      "licence": "Stability-AI-Community",
+      "runtime": "stable-diffusion.cpp-master-869",
+      "capabilityDigest": "ed74f6f8391d63dc41a44c77b8596a4bc45c215ba3cfd6857388a86de837170d",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "model.gguf",
+          "bytes": 2023745376,
+          "sha256": "d50be7655f0a554cf8041c145d88b210bd5f3c545423119dee62ae08cae51580",
+          "url": "https://huggingface.co/Green-Sky/SD-Turbo-GGUF/resolve/19a31586d02d64a73b4419bc193b3ecfaf38e1f0/sd_turbo-f16-q8_0.gguf"
+        }
+      ]
+    },
+    {
+      "id": "flux1-schnell",
+      "name": "FLUX.1 schnell",
+      "task": "image",
+      "quantization": "Q4_0",
+      "downloadBytes": 9740113152,
+      "modelBytes": 9740113152,
+      "ramMiB": 16384,
+      "vramMiB": 12288,
+      "gpuOnly": true,
+      "licence": "Apache-2.0",
+      "runtime": "stable-diffusion.cpp-master-869",
+      "capabilityDigest": "57d70b6db688c3fb1687d58ba8c45b99aaa469bfd20f968730b6f03b2dc5ae43",
+      "backends": {
+        "win32-x64": [
+          "cpu",
+          "cuda"
+        ],
+        "linux-x64": [
+          "cpu",
+          "vulkan"
+        ]
+      },
+      "artifacts": [
+        {
+          "name": "diffusion.gguf",
+          "bytes": 6688845536,
+          "sha256": "b338a7ab5c81600a54be46c4cf950edb3761a52ae163e419beafd250976fb566",
+          "url": "https://huggingface.co/second-state/FLUX.1-schnell-GGUF/resolve/8c45a2ba25e2d02bd34230989fb54983f39e44ec/flux1-schnell-Q4_0.gguf"
+        },
+        {
+          "name": "t5xxl.gguf",
+          "bytes": 2752841312,
+          "sha256": "098daa07ac5a926ebf2814a8e02ef1221eee53b8268db0d965ecb608603682de",
+          "url": "https://huggingface.co/second-state/FLUX.1-schnell-GGUF/resolve/8c45a2ba25e2d02bd34230989fb54983f39e44ec/t5xxl-Q4_0.gguf"
+        },
+        {
+          "name": "clip_l.gguf",
+          "bytes": 130769600,
+          "sha256": "59cbe002c3e75d2b89d38787e81d12fb4e512fd76176884c470737ad87a1d309",
+          "url": "https://huggingface.co/second-state/FLUX.1-schnell-GGUF/resolve/8c45a2ba25e2d02bd34230989fb54983f39e44ec/clip_l-Q8_0.gguf"
+        },
+        {
+          "name": "ae.gguf",
+          "bytes": 167656704,
+          "sha256": "1bed7b05318709e46a8cb9accc211168fc7f0b61ab594661860bbfe4d785cc46",
+          "url": "https://huggingface.co/second-state/FLUX.1-schnell-GGUF/resolve/8c45a2ba25e2d02bd34230989fb54983f39e44ec/ae-f16.gguf"
+        }
+      ]
+    }
+  ]
+}

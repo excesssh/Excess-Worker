@@ -6,7 +6,7 @@ export type ServedKind = "text" | MediaKind;
 export type ServedModel = {
   id: string; kind: ServedKind; displayName: string; parameters: string; quantization: string; capabilityDigest: string;
   model: string; runtime: string; engine: "llama.cpp" | "stable-diffusion.cpp"; meteringUnit: string;
-  minMemoryMb: number; minVramMb: number; gpuOnly: boolean; downloadBytes: number;
+  minMemoryMb: number; minVramMb: number; gpuOnly: boolean; downloadBytes: number; licence: string;
   /** Most tokens a successful local probe may generate: reasoning models need room to reach their answer. */
   probeMaxTokens: number; reasoning: boolean;
 };
@@ -16,12 +16,12 @@ export function servedModel(id: string): ServedModel {
   if (text) return { id: text.id, kind: "text", displayName: text.displayName, parameters: text.parameters, quantization: text.quantization, capabilityDigest: text.capabilityDigest,
     model: text.capability.model, runtime: text.capability.runtime, engine: "llama.cpp", meteringUnit: "output_token",
     minMemoryMb: text.minMemoryMb, minVramMb: text.minVramMb, gpuOnly: false, downloadBytes: text.artifacts.reduce((sum, item) => sum + item.bytes, 0),
-    probeMaxTokens: textProbeTokens(text), reasoning: text.info.reasoning };
+    probeMaxTokens: textProbeTokens(text), reasoning: text.info.reasoning, licence: text.info.licence };
   const media = MEDIA_CATALOG.find(entry => entry.id === id);
   if (media) return { id: media.id, kind: media.kind, displayName: media.displayName, parameters: media.parameters, quantization: media.quantization, capabilityDigest: media.capabilityDigest,
     model: media.capability.model, runtime: media.capability.runtime, engine: media.runtime, meteringUnit: media.capability.meteringUnit,
     minMemoryMb: media.minMemoryMb, minVramMb: media.minVramMb, gpuOnly: media.gpuOnly, downloadBytes: media.artifacts.reduce((sum, item) => sum + item.bytes, 0),
-    probeMaxTokens: 0, reasoning: false };
+    probeMaxTokens: 0, reasoning: false, licence: media.info.licence };
   throw new AdapterError("UNKNOWN_MODEL");
 }
 export const servedModels = (): ServedModel[] => [...MODEL_CATALOG, ...MEDIA_CATALOG].map(entry => servedModel(entry.id));

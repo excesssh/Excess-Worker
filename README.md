@@ -28,6 +28,21 @@ A valid signature establishes that the release was signed by the holder of the t
 5. **Choose a model.** Run `excess-worker models`, select `excess-worker use qwen3-4b --cpu`, then review `excess-worker model-plan`. Read the listed licences and download sizes before [accepting the model/runtime installation](docs/INSTALLATION.md#choose-and-install-a-model).
 6. **Supply capacity.** Set your resource policy and supplier price, then start work: `excess-worker run` on Windows, or the bounded user service on Linux. [Exact commands and price units](docs/INSTALLATION.md#supply-capacity). Check progress and earnings on the Supply page. Availability does not guarantee demand or earnings.
 
+## Models you can choose
+
+The local catalogue has **13 text models and four media models**, with pinned files and licences.
+
+| Task | Available catalogue entries |
+| --- | --- |
+| Text | Qwen3 4B, 8B, 14B, 30B-A3B, 32B, Coder 30B-A3B and Instruct 2507; Phi-4 mini and Phi-4; Llama 3.1 8B and Llama 3.3 70B; gpt-oss 20B and 120B. |
+| Embeddings | Qwen3 Embedding 0.6B. |
+| Transcription | Qwen3 ASR 0.6B. |
+| Images | SD-Turbo and FLUX.1 schnell. |
+
+**[Complete catalogue: sizes, memory, quantization, licences and installation steps](docs/MODEL-CATALOG.md)** Run `excess-worker models` to see every local entry and its estimated fit. Hosted-provider models on the website are a separate service and cannot be installed on a worker.
+
+Catalogue availability is broader than verified execution. The configuration table below records the measured 0.1.0 release scope; it does not restrict catalogue visibility or promote untested entries to verified support.
+
 ## Your machine, your controls
 
 Choose the model, price, CPU threads, memory budget and operating schedule. Battery pauses and temperature limits depend on available telemetry. Windows CUDA has a separate sampled GPU memory watchdog; it is not a hard VRAM reservation or hardware partition. Use `excess-worker drain` to finish the current attempt without taking new work, or `excess-worker stop-now` to request immediate shutdown. Revoke a device on the Supply page to remove its coordinator access. [Controls, stopping and revocation](docs/OPERATIONS.md).

@@ -36,7 +36,7 @@ export async function diagnostics() {
   const runtimeLibraries: { backend: string; missing: string[] }[] = [];
   if (os.platform() === "linux") {
     const root = process.env.EXCESS_MODEL_DIR ?? resolve(os.homedir(), ".local/share/excess/ai");
-    for (const backend of ["cpu", "gpu"]) {
+    for (const backend of ["cpu", "cuda", "vulkan"]) {
       const server = resolve(root, "runtimes", backend, "runtime", "llama-server");
       try { await access(server); } catch { continue; }
       try {
@@ -106,7 +106,8 @@ try {
       tooLargeForThisComputer: rated.filter(item => item.fit.fits === "no").map(item => item.entry.id),
       models: rated.map(({ entry, fit }) => ({ id: entry.id, kind: entry.kind, name: entry.displayName, parameters: entry.parameters, quantization: entry.quantization,
         meteringUnit: entry.meteringUnit, pricedPer: priceUnit(entry.kind).label, runtime: entry.engine, reasoning: entry.reasoning,
-        downloadBytes: entry.downloadBytes, installed: installed.models.includes(entry.id), gpuOnly: entry.gpuOnly, ...fit })),
+        downloadBytes: entry.downloadBytes, licence: entry.licence, installed: installed.models.includes(entry.id), gpuOnly: entry.gpuOnly,
+        executionEvidence: "not established by catalogue inventory", ...fit })),
       next: "excess-worker use <model id> [--gpu], then excess-worker install-model <model id> [--gpu] --accept-download --accept-licenses (or excess-worker import <model id> <file.gguf ...> --accept-licenses if you already have the exact file)",
       note: "Kinds: text (streamed), embedding, transcription and image (buffered). fits says where a model fits: gpu, cpu, gpu or cpu, or no. GPU memory is read from nvidia-smi; other GPUs are not measured. GPU mode needs an NVIDIA GPU with a current driver on Windows or a Vulkan driver on Linux; gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. Fit estimates are guidance; the worker's local check decides." });
   } else if (command === "use") {

@@ -1,6 +1,6 @@
 # Working on Excess Worker
 
-Use one lead agent only. Do not spawn subagents for implementation, convenience, parallelism or review. The lead owns implementation and verification.
+Use one accountable lead for integration and verification. Additional agents require explicit owner authorization. For the catalogue and GPU coverage milestone, the owner permits Luna subagents at extra-high effort when useful.
 
 Read README.md, docs/PLATFORMS.md and docs/VERIFICATION.md before changing product or release claims. Work within the requested milestone; do not start expansion work automatically. Keep coordinator, custody, settlement signing, infrastructure and private operational handoffs outside this standalone repository.
 
