@@ -23,6 +23,8 @@ The published 0.1.0 service generator caps memory at 75% of detected RAM, at mos
 
 Buyers submit bounded inference inputs: prompt, maximum tokens and seed. They do not submit executable code, kernels, models or runtime arguments. Suppliers choose trusted, hash-pinned runtimes and licensed models.
 
+In the current development source, Windows paired-worker admission is text-only on both CPU and CUDA; all non-text tasks are refused before execution. The [model catalogue](MODEL-CATALOG.md) explains why non-text entries and pinned download plans remain visible.
+
 Windows CUDA retains read-only file grants, private scratch, credential/environment filtering, network-denied AppContainers, authenticated relay, process limits, deadlines and cleanup. CPU memory commitment uses a hard Job Object limit. GPU control is separate: a 250 ms watchdog sums dedicated and shared WDDM process usage and stops on overshoot or failed monitoring. GPU scheduling priority is idle. Before accepting inference input, the host requires full layer-offload evidence and sufficient dedicated residency; CPU fallback is refused.
 
 This profile trusts the shared OS, GPU and driver. It provides no hard VRAM reservation, dedicated slice, throughput guarantee or hardware fault partition. [WDDM process GPU address spaces](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/gpu-virtual-memory-in-wddm-2-0) describe the OS/driver boundary. [MIG](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/introduction.html) provides different hardware separation for supported devices; it is not implemented here. CUDA availability alone is not isolation evidence.
