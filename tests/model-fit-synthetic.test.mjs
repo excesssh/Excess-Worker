@@ -108,3 +108,20 @@ test("a selectable GPU profile also needs its host-memory budget and operating-s
     assert.equal(profile.verification, "not_applicable");
   }
 });
+
+test("Windows media catalogue and plans remain visible while paired-worker profiles are refused", () => {
+  const all=servedModels(),media=all.filter(entry=>entry.kind!=="text");
+  assert.equal(media.length,4);
+  assert.equal(modelsByFit(all,windowsHardware).length,17);
+  for(const entry of media){
+    for(const backend of ["cpu","cuda","vulkan"]){
+      const profile=executionProfile(entry,backend,"win32");
+      assert.equal(profile.selectable,false);
+      assert.equal(profile.implementation,"unsupported");
+      assert.match(profile.note,/Windows paired-worker controller refuses media tasks/);
+      assert.equal(modelPlanStatus(entry,backend,"win32",true,true).installationAvailability.planAvailable,true);
+    }
+    assert.equal(executionProfile(entry,"cpu","linux").selectable,!entry.gpuOnly);
+    assert.equal(executionProfile(entry,"cuda","linux").verification,"pending_hardware_evidence");
+  }
+});

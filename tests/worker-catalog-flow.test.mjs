@@ -247,3 +247,17 @@ test("the worker lists memory estimates separately from execution profiles and e
   const missing = cli(home, models, "import", "gpt-oss-20b", join(dir, "missing.gguf"), "--accept-licenses");
   assert.notEqual(missing.status, 0); assert.match(missing.stderr, /IMPORT_FILE_NOT_FOUND/);
 }));
+
+test("CLI refuses Windows media worker selection before changing policy and still exposes download plans", () => temporary(async dir => {
+  const home=join(dir,"state"),models=join(dir,"models");
+  const before=jsonOnPlatform("win32",home,models,"policy");
+  for(const id of ["qwen3-embedding-0.6b","qwen3-asr-0.6b","sd-turbo"]){
+    const selected=cliOnPlatform("win32",home,models,"use",id,"--cpu");
+    assert.notEqual(selected.status,0);
+    assert.match(selected.stderr,/MODEL_EXECUTION_PROFILE_UNAVAILABLE/);
+    assert.deepEqual(jsonOnPlatform("win32",home,models,"policy"),before);
+    const plan=jsonOnPlatform("win32",home,models,"model-plan",id,"--cpu");
+    assert.equal(plan.installationAvailability.planAvailable,true);
+    assert.equal(plan.executionProfile.selectable,false);
+  }
+}));

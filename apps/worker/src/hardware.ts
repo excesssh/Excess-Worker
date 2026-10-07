@@ -41,9 +41,10 @@ export function modelFit(entry: Pick<ServedModel, "minMemoryMb" | "minVramMb" | 
     cpu: { needsMemoryMb: entry.minMemoryMb, fits: cpu }, gpu: { needsGpuMemoryMb: entry.minVramMb, fits: gpu } };
 }
 /** Capability of one execution profile. This is separate from the estimated RAM/VRAM fit and from installation availability. */
-export function executionProfile(entry: Pick<ServedModel, "id" | "gpuOnly" | "minMemoryMb" | "minVramMb">,
+export function executionProfile(entry: Pick<ServedModel, "id" | "kind" | "gpuOnly" | "minMemoryMb" | "minVramMb">,
   backend: ExecutionBackend, platform: NodeJS.Platform = process.platform): ExecutionProfile {
   if (platform !== "win32" && platform !== "linux") return { backend, selectable: false, implementation: "unsupported", verification: "not_applicable", note: "No isolated worker profile is implemented for this operating system." };
+  if (platform === "win32" && entry.kind !== "text") return { backend, selectable: false, implementation: "unsupported", verification: "not_applicable", note: "The Windows paired-worker controller refuses media tasks; adapter download plans remain available." };
   if (backend === "cpu") return entry.gpuOnly
     ? { backend, selectable: false, implementation: "unsupported", verification: "not_verified", note: "This catalogue model is GPU-only." }
     : { backend, selectable: true, implementation: "implemented", verification: "not_established_by_catalogue_inventory",
@@ -64,7 +65,7 @@ export function executionProfile(entry: Pick<ServedModel, "id" | "gpuOnly" | "mi
       { note: "Linux CUDA selection is implemented in the Worker 0.2.0 candidate; hardware verification is pending. The published 0.1.0 Linux archive remains CPU-only." }),
   };
 }
-export function modelExecutionProfiles(entry: Pick<ServedModel, "id" | "gpuOnly" | "minMemoryMb" | "minVramMb">,
+export function modelExecutionProfiles(entry: Pick<ServedModel, "id" | "kind" | "gpuOnly" | "minMemoryMb" | "minVramMb">,
   platform: NodeJS.Platform = process.platform): ModelExecutionProfiles {
   return { cpu: executionProfile(entry, "cpu", platform), cuda: executionProfile(entry, "cuda", platform), vulkan: executionProfile(entry, "vulkan", platform) };
 }
@@ -97,7 +98,7 @@ export function largestSelectableTextModel<T extends Pick<ServedModel, "id" | "k
     .reduce<SelectableFit<T> | undefined>((best, item) => !best || item.entry.minMemoryMb > best.entry.minMemoryMb ? item : best, undefined);
 }
 /** Add explicit installation-plan availability and execution-profile state without conflating either with memory fit. */
-export function modelPlanStatus(entry: Pick<ServedModel, "id" | "gpuOnly" | "minMemoryMb" | "minVramMb">,
+export function modelPlanStatus(entry: Pick<ServedModel, "id" | "kind" | "gpuOnly" | "minMemoryMb" | "minVramMb">,
   backend: ExecutionBackend, platform: NodeJS.Platform, requiresExplicitConsent: boolean, diskSufficient: boolean | null) {
   return {
     installationAvailability: { planAvailable: true, requiresExplicitConsent,
