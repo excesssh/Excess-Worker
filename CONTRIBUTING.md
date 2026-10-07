@@ -1,12 +1,16 @@
+<img src="docs/assets/excess-mark.png" alt="Excess logo" width="48" />
+
 # Contributing
 
-This repository is a standalone worker source candidate. Keep changes within the worker, adapter, protocol, and their focused tests unless the maintainers explicitly expand the scope.
+This repository contains the public source for Excess Worker, including the published 0.1.0 release. Keep changes within the worker, adapter, protocol and their focused tests unless maintainers explicitly expand the scope.
+
+Agent-assisted work uses **one lead agent only**. Do not delegate implementation or review to subagents. The lead owns the changes and verification; see [AGENTS.md](AGENTS.md).
 
 ## Development setup
 
-The workspace pins its runtime and package-manager ranges in package.json. Use a compatible Node release and npm 11, and keep package-lock.json in sync with workspace manifests.
+Use the pinned Node 24.11.1, npm 11.7.0 and committed lockfile. Use `npm.cmd` in Windows PowerShell.
 
-    npm ci
+    npm ci --ignore-scripts
     npm run build
 
 Run the focused test file for the boundary you changed, then run:
@@ -25,3 +29,5 @@ Do not report a fixture result as a real job, a local probe as production execut
 - Update the relevant documentation when commands, platform blockers, or data handling change.
 
 Before opening a change, check the actual files and Git identity for private paths, credentials, and other private project traces.
+
+Report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/excesssh/Excess-Worker/security/advisories/new), following [the security policy](SECURITY.md#reporting). Use public issues for non-sensitive bugs and feature discussions, and pull requests for proposed source changes.

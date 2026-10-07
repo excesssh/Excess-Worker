@@ -1,32 +1,53 @@
-# Platform status
+# Supported configurations
 
-Current evidence as of 7 October 2026. [Release 0.1.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) publishes exact source77 signed sequence 18. Older reports under `docs/verification/` are historical evidence for their own exact sources and fixtures; they do not override this status.
+Current evidence for the [published Excess Worker 0.1.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0), as of 7 October 2026. Packages are Windows x64 and Linux x64; execution support is scoped to the measured configurations below. Older reports under `docs/verification/` do not override this status.
 
-| Configuration | Verified configuration and result | Remaining limits |
+| Configuration | Measured setup | Verified result and limits |
 | --- | --- | --- |
-| Windows x64 CPU | Exact source77 signed release18; pinned Qwen3-4B, two threads, 4GiB Job Object limit. Fresh application install, pairing, funded27-token buyer job, verified device signature, accounting, running drain, fresh restart, buyer cancellation, revoke and cleanup pass. | Public production/testnet signed feeds, exact package execution and recovery pass. Other Windows configurations remain unverified. |
-| Windows x64 CUDA | Windows11Pro10.0.22631 x64, RTX3070Ti8192MiB, driver596.49 WDDM; pinned Qwen3-4B/llama.cppb10809, two threads, separate6GiB host and6GiB combined GPU budgets. Exact signed release18 completes the same funded buyer journey, live cancellation and cleanup.37/37layers, peak4184MiB combined/3780MiB dedicated. | Other models, GPU/driver combinations and hardware partitioning are unverified. Published signed release execution, update and recovery checks pass. |
-| Linux x64 CPU on WSL | Exact source77 signed release18; pinned Qwen3-4B, two threads, dedicated8GiB cgroupv2 user service, swap0,64tasks,CPU200%. Fresh application install, funded27-token signed buyer receipt/accounting, drain, fresh restart and revoke pass. | This workstation/WSL proof is not a fresh OS or general Linux-host compatibility claim. Published signed release execution, update and recovery checks pass. |
-| Linux/WSL GPU | CUDA driver discovery succeeds on the same RTX3070Ti; current CPU sandbox denies /dev/dxg (errno13, CUDA init304). | Pinned Linux CUDA runtime/device/ioctl confinement profile is missing; GPU remains refused. Missing Vulkan does not imply missing CUDA hardware. |
-| Native boundaries | Windows AppContainer and Linux namespace/Landlock/cgroup fixtures pass. Filesystem, credentials, broker, network, process, memory and cleanup protections remain. | Fixtures do not attest inference honesty or every platform/driver combination. |
-| Installation and recovery | Actual signed offline installation and previous-signed-package manual recovery passed. Candidate15 fresh installers preserve high-water15; older recovery preserves its recorded high-water. | Positive controlled HTTPS signed16-to17update, tamper/downgrade refusal and high-water-preserving byte rollback/roll-forward pass. Previous signed17 and current18isolated inference retain exact18high-water bytes; public production17-to18updates and all GitHub/feed downloads pass. |
+| Windows x64 CPU | Windows 11 Pro 10.0.22631; pinned Qwen3-4B; two threads; 4 GiB Job Object limit. | Fresh application install, pairing, actual funded testnet buyer job, correct 27-token answer, device signature/accounting, drain, restart, live cancellation, revoke and cleanup. Other Windows configurations remain unverified. |
+| Windows x64 NVIDIA CUDA | Same workstation; RTX 3070 Ti 8 GiB, driver 596.49 WDDM; pinned Qwen3-4B/llama.cpp b10809; two threads; separate 6 GiB host and 6 GiB combined GPU budgets. | Same actual buyer journey and cancellation/cleanup. 37/37 layers offloaded; observed peak 4,184 MiB combined and 3,780 MiB dedicated GPU usage. Other models, GPUs/drivers and hardware partitioning are unverified. |
+| Linux x64 CPU on WSL2 | Linux 6.18.40.1; pinned Qwen3-4B; two threads; dedicated 8 GiB cgroup v2 user service, zero swap, 64 tasks and CPU 200%. | Fresh application install, funded 27-token buyer answer, device signature/accounting, drain, restart, revoke and cleanup. This is not a fresh OS or general Linux distribution compatibility claim. |
+| Linux/WSL GPU | CUDA discovery succeeds on the same GPU; the current CPU sandbox denies `/dev/dxg`. | A pinned Linux CUDA route and justified device/ioctl confinement profile are missing. GPU execution remains unsupported and refused. |
 
-[Published exact signed-package report](verification/published-source77.json) | [Signature and installation checks](VERIFICATION.md)
+[Exact published-package evidence](verification/published-source77.json) · [installation](INSTALLATION.md) · [release verification](VERIFICATION.md). Fresh default installation, signed HTTPS updates, tamper/downgrade refusal and actual previous-package recovery passed on Windows and Linux. These reports use real project-funded testnet work on the recorded workstation, not independent suppliers or organic demand.
+
+## Linux requirements
+
+Run as an ordinary non-root x64 user with systemd and a usable user service session. The boundary requires user and network namespaces, Landlock ABI 6 or newer, seccomp and cgroup v2. The dedicated `excess-worker.service` must have finite memory, zero swap, task-count and CPU limits. Missing kernel features, helper hashes, namespace identity or cgroup bounds refuse execution. [Service commands](INSTALLATION.md#supply-capacity) · [native build requirements](BUILD.md#linux-native-helpers).
+
+The worker's service generator caps memory at 75% of detected RAM, at most 12 GiB, with zero swap, 128 tasks and CPU 200%. The recorded release test used an explicit 8 GiB/64-task override. Linux model runtimes may need system shared libraries; `doctor` names missing prerequisites. Inventory and catalog fit estimates do not prove execution.
 
 ## Supplier-machine boundary
 
-Buyers submit bounded inference inputs: prompt, maxTokens and seed. They do not submit executable code, kernels, model files or runtime arguments. The supplier selects a trusted, hash-pinned runtime and licensed model.
+Buyers submit bounded inference inputs: prompt, maximum tokens and seed. They do not submit executable code, kernels, models or runtime arguments. Suppliers choose trusted, hash-pinned runtimes and licensed models.
 
-Windows CUDA retains the existing read-only file grants, private scratch, credential/environment filtering, network-denied AppContainer, authenticated relay, process limit, deadline and cleanup. CPU commitment uses a hard Job Object limit. GPU control is separate: a 250 ms watchdog sums WDDM local/dedicated and nonlocal/shared process usage and stops on excess or failed monitoring. GPU scheduling priority is idle. Before inference input is accepted, the host requires 37/37 offloaded layers and sufficient dedicated GPU usage; CPU fallback is refused.
+Windows CUDA retains read-only file grants, private scratch, credential/environment filtering, network-denied AppContainers, authenticated relay, process limits, deadlines and cleanup. CPU memory commitment uses a hard Job Object limit. GPU control is separate: a 250 ms watchdog sums dedicated and shared WDDM process usage and stops on overshoot or failed monitoring. GPU scheduling priority is idle. Before accepting inference input, the host requires full layer-offload evidence and sufficient dedicated residency; CPU fallback is refused.
 
-[MIG](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/introduction.html) provides hardware memory/compute/fault partitioning for mutually untrusted tenants. It is not an inherent requirement for this fixed trusted inference workload. This Windows profile relies on the shared trusted OS, GPU and driver. It provides no hard VRAM reservation, dedicated GPU slice, throughput guarantee or hardware fault isolation. [WDDM process GPU virtual address spaces](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/gpu-virtual-memory-in-wddm-2-0) provide the OS/driver boundary. CUDA availability alone is not isolation evidence.
+This profile trusts the shared OS, GPU and driver. It provides no hard VRAM reservation, dedicated slice, throughput guarantee or hardware fault partition. [WDDM process GPU address spaces](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/gpu-virtual-memory-in-wddm-2-0) describe the OS/driver boundary. [MIG](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/introduction.html) provides different hardware separation for supported devices; it is not implemented here. CUDA availability alone is not isolation evidence.
 
-For the measured Windows CUDA configuration, load a policy file containing:
+## Windows CUDA policy
+
+For the measured CUDA workload, save this policy as `policy.json` and review the budgets before applying it:
 
 ```json
 {"model":"qwen3-4b","backend":"cuda","threads":2,"maxMemoryMb":6144,"maxGpuMemoryMb":6144,"runSeconds":180}
 ```
 
-Apply it with `excess-worker policy policy.json` and use the pinned model route in [MODELS.md](MODELS.md). No public binary is published yet. The4 GiB default GPU budget was insufficient for the measured workload and correctly refused it. Do not raise limits without supplier consent or advertise an unverified model/backend.
+```sh
+excess-worker policy policy.json
+excess-worker model-plan qwen3-4b --gpu
+```
 
-Release signing is anonymous Minisign. Windows executables have no trusted Authenticode publisher signature; paid certificates and identity verification are outside scope. Signed metadata authenticates source/artifact hashes, not honest inference or hardware.
+After accepting the displayed model/runtime plan and licences:
+
+```sh
+excess-worker install-model qwen3-4b --gpu --accept-download --accept-licenses
+```
+
+The 4 GiB default GPU budget correctly refused the measured workload as insufficient. Do not raise limits without supplier consent or advertise an unverified backend/model. See [model pins](MODELS.md) and [controls](OPERATIONS.md).
+
+## Evidence interpretation
+
+Windows AppContainer and Linux namespace/Landlock/cgroup fixtures cover named filesystem, credential, broker, network, process, memory and cleanup cases. Fixtures do not attest inference honesty or every host/driver combination. Actual signed-package jobs supply separate execution evidence. Source identifiers, release sequences and historical fixtures are documented in [technical verification](VERIFICATION.md#technical-release-evidence).
+
+Release signing uses anonymous Minisign. Windows executables have no trusted Authenticode publisher signature. Signed metadata authenticates release contents, not honest inference or hardware identity.

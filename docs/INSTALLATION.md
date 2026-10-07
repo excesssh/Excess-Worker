@@ -1,51 +1,141 @@
-# Installation and packaging
+# Install Excess Worker 0.1.0
 
-Download the [signed 0.1.0release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0): your platform archive, release.json and release.json.minisig. Establish releases/minisign.pub from a trusted checkout, verify the signature and authenticated archive hash, then use the offline installer in scripts/worker-install from the v0.1.0source tag. Models/runtimes require separate licence/download consent. See [verified configurations](PLATFORMS.md). Build from source or create a local package for development. Locally generated packages are not published releases, even when their signatures have been checked locally.
+The [published release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) contains signed Windows x64 and Linux x64 archives with Node included. You do not need npm to install them. Models and inference runtimes are separate downloads. Check [supported configurations](PLATFORMS.md) first.
 
-## Build from source
+## Download and verify first
 
-The root manifest pins Node 24.11.1 and npm 11.7.0. In Windows PowerShell use npm.cmd.
+Save your platform archive, `release.json` and `release.json.minisig` together in a new directory. Follow [Verify your download](VERIFICATION.md#verify-your-download) **before extracting or executing the package**. You will establish the project public key, authenticate the manifest and check the archive's exact name, byte count and SHA-256.
 
-    npm ci
-    npm run build
-    npm test
+Install [Minisign from its official project](https://jedisct1.github.io/minisign/) and put it on PATH. Linux installation also needs Python 3. Windows uses Windows PowerShell 5.1. Download and inspect the appropriate offline installer from the trusted tagged source:
 
-Run the CLI from the repository root:
+- Windows: [install.ps1 at v0.1.0](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.1.0/scripts/worker-install/install.ps1), saved as `install.ps1`.
+- Linux: [install.sh at v0.1.0](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.1.0/scripts/worker-install/install.sh), saved as `install.sh`.
 
-    node apps/worker/dist/main.js guide
-    node apps/worker/dist/main.js doctor
+These scripts are obtained through the trusted source repository; they are not separately Minisign-signed release assets. Inspect them before running. They embed the same project key and repeat signature, archive integrity, safe extraction, source identity and downgrade checks. They read local release files and do not fetch or execute a remote installation script.
 
-The EXCESS_WORKER_HOME environment variable selects worker state, and EXCESS_MODEL_DIR selects model and runtime storage. Without them, source runs use .local/worker and .local/ai relative to the current directory. Packaged launchers set defaults under the current user's local data directory.
+## Install the verified package
 
-## Package locally
+Run from the directory holding the four downloaded files, as the installing user. The installers refuse Administrator/root execution.
 
-After a successful build, the package script can create a Windows x64 package on Windows x64 or a Linux x64 package. It verifies pinned official Node archives in memory and persists only the selected runtime binary and required licence. Linux packages also require the compiled sandbox helper; see BUILD.md.
+### Windows x64
 
-    node scripts/package-worker.mjs --platform win32-x64
-    node scripts/package-worker.mjs --platform linux-x64
+```powershell
+powershell.exe -NoProfile -File .\install.ps1 .\release.json .\release.json.minisig .\excess-worker-0.1.0-2980a6ec2e58-win-x64.zip
+$env:PATH = (Join-Path $env:LOCALAPPDATA 'EXCESS\bin') + ';' + $env:PATH
+excess-worker guide
+excess-worker doctor
+```
 
-Use the platform you intend to review. The script writes a directory and archive below .cache/package by default; --out "<directory>" selects another output directory. The pinned Node licence is included automatically. Default builds keep publicDistributionReady false. Exact source74 signed candidate15 passes fresh application installation and funded Windows CUDA/CPU and WSL Linux CPU buyer journeys. Optional --release-ready requires committed payload-bound execution evidence; controlled signed HTTPS updates and downgrade protection now pass; the final source77 signed18package execution, real recovery inference and public feed/download checks now pass. See VERIFICATION.md for current evidence and historical reports. The manifest's codeSigned field describes operating-system code signing; it does not report Minisign status. The project Minisign public key is in releases/minisign.pub. Candidate signing and verification are performed locally after builds; the exact source77 sequence 18release and production signed update feed are published.
+The default installation is under `%LOCALAPPDATA%\EXCESS`; the managed launcher is `bin\excess-worker.cmd`. The PATH command affects this PowerShell session. You can add that bin directory to your **user** PATH for future sessions.
 
-Inspect manifest.json, ONBOARDING.txt, licenses/, and SHA256SUMS.txt in the generated directory. Verify hashes with sha256sum -c SHA256SUMS.txt on Linux, or compare each entry with Get-FileHash -Algorithm SHA256 on Windows PowerShell. A matching checksum is an integrity check; it is not a publisher signature. The scripts in scripts/worker-install verify the project Minisign signature, pinned key, archive size and hash, source binding, safe extraction and monotonic release sequence. Default installation refuses closed candidates. The explicit verification-candidate mode used by the recorded signed-package journeys permits testing those exact signed candidates without opening public distribution. Windows has no trusted Authenticode publisher signature; anonymous project Minisign authenticates the release. See VERIFICATION.md for the exact installation evidence and commands.
+If PowerShell blocks the downloaded script, verify it came from the tagged project source and inspect its contents. After that review, `Unblock-File -LiteralPath .\install.ps1` removes its downloaded-file marker. If an organisation policy still blocks it, use your organisation's approved process. Do not change the machine execution policy or disable security controls.
 
-The package intentionally excludes Windows redistributable binaries. The model installer verifies the pinned system Visual C++ Redistributable prerequisite before installing the native runtime.
+### Linux x64
 
-## First run
+```sh
+mkdir -p "${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/excess}"
+sh ./install.sh ./release.json ./release.json.minisig ./excess-worker-0.1.0-2980a6ec2e58-linux-x64.tar.gz
+export PATH="${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/excess}/bin:$PATH"
+excess-worker guide
+excess-worker doctor
+```
 
-A coordinator deployment is external to this repository. Pairing requires its reachable origin and matching interface:
+The default installation is under `${XDG_DATA_HOME:-$HOME/.local/share}/excess`. An explicit `--prefix` must be an absolute directory writable by your user; set `EXCESS_INSTALL_ROOT` to that same prefix before later launcher/service commands. Do not use `sudo` for the worker installer.
 
-    excess-worker pair "<coordinator-origin>" "workstation"
+Execution requires systemd with a usable user session, cgroup v2 limits, user/network namespaces, Landlock ABI 6 or newer and seccomp. Missing protections refuse execution. The existing real execution evidence is WSL2 CPU, not every Linux distribution. See [Linux requirements](PLATFORMS.md#linux-requirements).
 
-If no origin is supplied, the CLI tries http://127.0.0.1:4310. That default is only useful when a coordinator is running locally. Approve the displayed code and fingerprint in the matching interface, then run excess-worker complete-pairing.
+`doctor` reports inventory and prerequisites; it does not execute a model or establish that capacity is live.
 
-Review the catalog and local hardware report before choosing a model:
+## Windows publisher warnings
 
-    excess-worker models
-    excess-worker use "<model-id>" [--gpu]
-    excess-worker model-plan
+Excess uses an anonymous project Minisign key. The Windows executables have **no trusted Authenticode publisher signature**. Windows may show an unknown-publisher or SmartScreen reputation warning even when the project signature verifies. Minisign does not remove that warning or establish a Windows-trusted publisher identity.
 
-Installing downloads requires explicit consent:
+Before deciding to run, confirm the repository and key, the valid manifest signature and the matching archive checks. Inspect the named file in the warning. You may choose to proceed only if you trust the source and your policy allows it; cancel if you are unsure. Do not disable SmartScreen, Defender or organisation controls, and treat a malware detection as a reason to stop and investigate. [Microsoft's SmartScreen guidance](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/) explains the reputation check.
 
-    excess-worker install-model --accept-download --accept-licenses
+## Pair your machine
 
-The model catalog can change with source history. Check the model's current license and expected disk use before installation. A successful install does not prove that a model can execute under every filesystem or isolation profile.
+```sh
+excess-worker pair https://excess.sh "my-worker"
+```
+
+Open [Excess Supply](https://excess.sh/supply), sign in with your wallet, and compare both the code and device fingerprint with the CLI before approving. Then:
+
+```sh
+excess-worker complete-pairing
+```
+
+The label is your choice; avoid putting a personal name in it. Pairing creates a revocable worker credential. It cannot approve wallet spending or withdrawals. Testnet users must pair with `https://testnet.excess.sh` and approve in that same environment. [Credential details](../SECURITY.md#sensitive-local-data).
+
+## Choose and install a model
+
+Start with the verified CPU workload:
+
+```sh
+excess-worker models
+excess-worker use qwen3-4b --cpu
+excess-worker model-plan
+```
+
+Review the displayed model/runtime plan, licences, disk space and hardware requirements. Only after accepting both downloads and licences, run:
+
+```sh
+excess-worker install-model qwen3-4b --accept-download --accept-licenses
+```
+
+The model/runtime installer uses pinned files and verifies size and hashes. Qwen3-4B's model alone is about 2.5 GB; budget additional room for runtime files and staging. On Windows the native runtime requires the pinned system Visual C++ Redistributable prerequisite checked by the model installer; it is not bundled with the worker. See [model pins and import](MODELS.md) and [the measured Windows CUDA policy](PLATFORMS.md#windows-cuda-policy) before choosing GPU execution. Catalog fit estimates do not establish execution support.
+
+## Supply capacity
+
+Review `excess-worker policy` and apply your chosen resource policy before starting. For the measured Windows CPU configuration, save this as `policy.json`:
+
+```json
+{"model":"qwen3-4b","backend":"cpu","threads":2,"maxMemoryMb":4096,"runSeconds":180}
+```
+
+```sh
+excess-worker policy policy.json
+excess-worker offer
+```
+
+Set a price in an asset listed by your paired exchange:
+
+```text
+excess-worker offer <SYMBOL> <your-price>
+```
+
+Replace the placeholders. For text models, a symbol price is your **net amount per million output tokens**, before the exchange adds its buyer fee. For example, `excess-worker offer USDG 1` sets 1 USDG per million output tokens where USDG is available. An asset UUID instead takes base units per metering unit; do not confuse these formats. Check the saved offer with `excess-worker offer`. [Price controls](OPERATIONS.md#pairing-and-offers).
+
+On Windows, run in the foreground:
+
+```sh
+excess-worker run
+```
+
+On Linux, execution must run in the dedicated bounded systemd user service. For the measured 8 GiB/64-task configuration, create a service override **before** installing/starting it:
+
+```sh
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/excess-worker.service.d"
+cat > "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/excess-worker.service.d/resources.conf" <<'EOF'
+[Service]
+MemoryMax=8G
+MemorySwapMax=0
+TasksMax=64
+CPUQuota=200%
+EOF
+excess-worker service install
+excess-worker service status
+```
+
+Use this budget only if your machine has sufficient free memory; the recorded test used it alongside a two-thread CPU policy. Review `systemctl --user cat excess-worker.service` to see the effective unit. `service install` enables and starts the service immediately. It does not enable lingering automatically. Check `journalctl --user -u excess-worker.service` locally, keeping state paths and credentials private. Do not run a second foreground worker beside the service or remove required limits to bypass a refusal.
+
+Use `excess-worker status` and the Supply page to inspect activity. Local offers become eligible through successful runtime probes and coordinator checks; they do not guarantee buyer demand or earnings.
+
+## Stop, revoke and update
+
+`excess-worker drain` stops accepting new work and lets the current attempt finish. `excess-worker stop-now` requests immediate shutdown. On Linux, `systemctl --user restart excess-worker.service` resumes the service; `excess-worker service remove` stops and removes its service configuration. On Windows, restart with `excess-worker run` after it exits.
+
+Revoke the device on the Supply page to remove coordinator access. After outstanding work is handled, `excess-worker unpair` retires the local identity. Keep the state directory private and never include it in an issue or vulnerability report.
+
+Use `excess-worker update --check` to inspect signed update availability. Drain and wait for exit before a manual `excess-worker update`, then restart. Windows automatic installation is disabled. Linux automatic updates are optional through `excess-worker update --auto on` in the supervised service. [Update authentication and recovery](VERIFICATION.md#updates-and-recovery).
+
+For source builds, local packaging and candidate verification, use [BUILD.md](BUILD.md) and [VERIFICATION.md](VERIFICATION.md#technical-release-evidence); these are developer workflows.

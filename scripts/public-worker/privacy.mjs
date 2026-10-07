@@ -64,7 +64,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   try {
     if (process.argv.includes('--history')) console.log(JSON.stringify(scanHistory()));
     else {
-      const git = args => execFileSync('git', ['-c', 'safe.directory=' + process.cwd().replaceAll('\\', '/'), ...args]);
+      const git = args => execFileSync('git', ['-c', 'safe.directory=' + process.cwd().replaceAll('\\', '/'), ...args], { maxBuffer: 256 * 1024 * 1024 });
       if (process.argv.includes('--identity')) for (const who of ['GIT_AUTHOR_IDENT','GIT_COMMITTER_IDENT']) {
         const identity = git(['var',who]).toString(); assertPublicBytes(Buffer.from(identity));
         if (!identity.startsWith('Excess <329266024+excesssh@users.noreply.github.com> ')) throw Error('CONTRIBUTOR_IDENTITY_BLOCKED');
