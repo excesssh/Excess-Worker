@@ -8,16 +8,20 @@ import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { requiresLinuxGpuSandbox } from "../scripts/public-worker/linux-gpu-package.mjs";
 
 const packageDir = process.env.EXCESS_LINUX_CONTROLLER_PACKAGE_DIR;
 const archivePath = process.env.EXCESS_LINUX_CONTROLLER_PACKAGE_ARCHIVE;
-const folder = "excess-worker-0.1.0-linux-x64";
+const version = JSON.parse(await readFile(new URL("../apps/worker/package.json", import.meta.url), "utf8")).version;
+const folder = `excess-worker-${version}-linux-x64`;
 const nativeRel = "app/node_modules/@excess/adapters/native/";
 const nativeFiles = [
   ["excess-sandbox", "integrity.json", "linux-landlock-v1"],
   ["excess-controller", "integrity-controller.json", "linux-controller-namespaces-v1"],
   ["excess-egress-peer", "integrity-egress-peer.json", "linux-af-unix-peercred-v1"],
+  ...(requiresLinuxGpuSandbox(version) ? [["excess-gpu-sandbox", "integrity-gpu.json", "linux-cuda-device-budget-v1"]] : []),
 ];
+const executableFiles = ["excess-worker", "node/bin/node", ...nativeFiles.map(([helper]) => nativeRel + helper)];
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 
 async function listFiles(root, directory = root) {
@@ -72,7 +76,7 @@ test("Linux controller package pins complete helpers, rejects tampering, and sta
   for (const [path, digest] of expected) assert.equal(sha256(await readFile(join(packageDir, ...path.split("/")))), digest, `hash: ${path}`);
 
   const nativeNames = (await readdir(join(packageDir, nativeRel))).sort();
-  assert.deepEqual(nativeNames, nativeFiles.flatMap(([helper, pin]) => [helper, pin]).sort(), "only the three named Linux helpers and pins are packaged");
+  assert.deepEqual(nativeNames, nativeFiles.flatMap(([helper, pin]) => [helper, pin]).sort(), "only the version's required Linux helpers and pins are packaged");
   const manifestControllerFiles = packageManifest.controller.files;
   assert.deepEqual(manifestControllerFiles.map(file => file.file).sort(), [nativeRel + "excess-controller", nativeRel + "excess-egress-peer"].sort());
   for (const [helper, pinFile, profile] of nativeFiles) {
@@ -81,7 +85,14 @@ test("Linux controller package pins complete helpers, rejects tampering, and sta
     assert.deepEqual(Object.keys(pin).sort(), ["profile", "sha256"]);
     assert.equal(pin.profile, profile);
     assert.equal(pin.sha256, sha256(bytes));
-    if (helper !== "excess-sandbox") {
+    if (helper === "excess-gpu-sandbox") {
+      assert.equal(packageManifest.gpu.profile, profile);
+      assert.equal(packageManifest.gpu.file, nativeRel + helper);
+      assert.equal(packageManifest.gpu.integrityFile, nativeRel + pinFile);
+      assert.equal(packageManifest.gpu.sha256, pin.sha256);
+      assert.equal(packageManifest.gpu.status, "candidate-unverified");
+      assert.equal(packageManifest.execution.gpuVerified, false);
+    } else if (helper !== "excess-sandbox") {
       const manifestRecord = manifestControllerFiles.find(file => file.file === nativeRel + helper);
       assert.ok(manifestRecord);
       assert.equal(manifestRecord.profile, profile);
@@ -125,7 +136,7 @@ test("Linux controller package pins complete helpers, rejects tampering, and sta
     assert.ok(Number.isSafeInteger(size) && size >= 0);
     offset += 512 + Math.ceil(size / 512) * 512;
   }
-  for (const path of ["excess-worker", "node/bin/node", nativeRel + "excess-sandbox", nativeRel + "excess-controller", nativeRel + "excess-egress-peer"])
+  for (const path of executableFiles)
     assert.equal(archiveModes.get(`${folder}/${path}`) & 0o777, 0o755, `${path} has executable archive mode`);
   const extracted = join(temp, "installer-mode-fixture");
   await mkdir(extracted, { mode: 0o700 });
@@ -136,7 +147,7 @@ test("Linux controller package pins complete helpers, rejects tampering, and sta
     if (entry.isDirectory()) await chmod(join(extractedRoot, entry.name), 0o700);
   }
   // Match the installer's explicit executable allowlist for package files.
-  for (const path of ["excess-worker", "node/bin/node", nativeRel + "excess-sandbox", nativeRel + "excess-controller", nativeRel + "excess-egress-peer"]) {
+  for (const path of executableFiles) {
     const file = join(extractedRoot, ...path.split("/"));
     await chmod(file, 0o700);
     await access(file, constants.X_OK);
