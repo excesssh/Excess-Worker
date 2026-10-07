@@ -1,0 +1,160 @@
+{
+  "date": "2026-10-07",
+  "release": "v0.1.0",
+  "sourceCommit": "2980a6ec2e580251208b3b31d81d3fec6e4b4567",
+  "sequence": 18,
+  "releaseUrl": "https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0",
+  "productionSignedFeed": "https://excess.sh/downloads/release.json",
+  "testnetSignedFeed": "https://testnet.excess.sh/downloads/release.json",
+  "anonymousProjectMinisign": true,
+  "trustedProjectWindowsPublisher": false,
+  "freshOperatingSystem": false,
+  "fixtureEngineOrLedger": false,
+  "traffic": "existing operator-funded testnet accounts, actual credited custody balances and real coordinator; no new deposit, withdrawal, mainnet job, independent supplier or organic demand",
+  "journeys": {
+    "windowsCuda": {
+      "passed": true,
+      "sourceCommit": "2980a6ec2e580251208b3b31d81d3fec6e4b4567",
+      "privateReportSha256": "80e28055e839b08dc89bbcc1575716d3728cc351dfb75d3c774246c4453fbf0f",
+      "configuration": {
+        "backend": "cuda",
+        "threads": 2,
+        "maxMemoryMb": 6144,
+        "maxGpuMemoryMb": 6144,
+        "gpuOffloadedLayers": 37,
+        "peakGpuMemoryMb": 4184,
+        "peakDedicatedGpuMemoryMb": 3780,
+        "gpuBoundary": "windows-cuda-budget-v1"
+      },
+      "buyerTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "signatureVerified": true,
+      "accounted": true,
+      "drainRestartRevokeCleanup": true,
+      "liveBuyerCancellation": true
+    },
+    "windowsCpu": {
+      "passed": true,
+      "sourceCommit": "2980a6ec2e580251208b3b31d81d3fec6e4b4567",
+      "privateReportSha256": "194a979d3ffc665ef275c81b73664ea821b553c27d35d4b78e2b70ab532bab5b",
+      "configuration": {
+        "backend": "cpu",
+        "threads": 2,
+        "maxMemoryMb": 4096
+      },
+      "buyerTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "signatureVerified": true,
+      "accounted": true,
+      "drainRestartRevokeCleanup": true,
+      "liveBuyerCancellation": true
+    },
+    "linuxCpu": {
+      "passed": true,
+      "sourceCommit": "2980a6ec2e580251208b3b31d81d3fec6e4b4567",
+      "privateReportSha256": "f72f567c09f7624db6e81faea1260ea78470e7ba2ffdc447c443f3bd46d17c18",
+      "configuration": {
+        "backend": "cpu",
+        "threads": 2,
+        "maxMemoryMb": 8192
+      },
+      "buyerTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "signatureVerified": true,
+      "accounted": true,
+      "drainRestartRevokeCleanup": true,
+      "liveBuyerCancellation": false
+    }
+  },
+  "publicUpdates": {
+    "windows": {
+      "result": "passed",
+      "platform": "win32-x64",
+      "origin": "https://excess.sh",
+      "fromSequence": 17,
+      "toSequence": 18,
+      "sourceCommit": "2980a6ec2e580251208b3b31d81d3fec6e4b4567",
+      "productionUpdaterExports": true,
+      "defaultFetchAndPinnedKey": true,
+      "defaultTLS": true,
+      "extraCA": false,
+      "positivePublicDownloadAndInstall": true,
+      "completeFiles": 339,
+      "executableModes": false,
+      "authenticatedCurrentProductionAndTestnetFeed": true
+    },
+    "linux": {
+      "result": "passed",
+      "platform": "linux-x64",
+      "origin": "https://excess.sh",
+      "fromSequence": 17,
+      "toSequence": 18,
+      "sourceCommit": "2980a6ec2e580251208b3b31d81d3fec6e4b4567",
+      "productionUpdaterExports": true,
+      "defaultFetchAndPinnedKey": true,
+      "defaultTLS": true,
+      "extraCA": false,
+      "positivePublicDownloadAndInstall": true,
+      "completeFiles": 340,
+      "executableModes": true,
+      "authenticatedCurrentProductionAndTestnetFeed": true
+    }
+  },
+  "recovery": {
+    "windows": {
+      "passed": true,
+      "previousSequence": 17,
+      "currentSequence": 18,
+      "completeHighWaterBytesRetained": true,
+      "realPreviousAndCurrentIsolatedInference": true,
+      "privateReportSha256": "c8b03adb6f8b5f8da929a16c98ec5569d52a80a1e2750bde5bfbc4fecf5e45c8"
+    },
+    "linux": {
+      "passed": true,
+      "previousSequence": 17,
+      "currentSequence": 18,
+      "completeHighWaterBytesRetained": true,
+      "realPreviousAndCurrentIsolatedInference": true,
+      "privateReportSha256": "609ce4f7f4d34c0ca0ddbc948727db3927942ae5b1975de454bfe58cf2a7f287"
+    }
+  },
+  "publicDownloads": [
+    {
+      "file": "excess-worker-0.1.0-2980a6ec2e58-linux-x64.tar.gz",
+      "bytes": 44518304,
+      "sha256": "e89e1c4093262f3ad41db87d9e6cdfc5babd4f997ca909dc3e84189cd48513ca",
+      "publicDownloadVerified": true
+    },
+    {
+      "file": "excess-worker-0.1.0-2980a6ec2e58-win-x64.zip",
+      "bytes": 35576866,
+      "sha256": "2f33f191776b2b8bd2c161af93d3219cb17b563e12e94d5c1fb6177e1f908776",
+      "publicDownloadVerified": true
+    },
+    {
+      "file": "minisign.pub",
+      "bytes": 110,
+      "sha256": "c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6",
+      "publicDownloadVerified": true
+    },
+    {
+      "file": "release.json",
+      "bytes": 2043,
+      "sha256": "760cf690dee13e11c9ad4b73cb8ecd7fc0c8f12cd9704920dc705859568b6a8f",
+      "publicDownloadVerified": true
+    },
+    {
+      "file": "release.json.minisig",
+      "bytes": 301,
+      "sha256": "f6d665db403ee3e8d9086fa43572ca1bf014af6d7d559fcee8d75e9b87c72dae",
+      "publicDownloadVerified": true
+    },
+    {
+      "file": "reproducibility.json",
+      "bytes": 669,
+      "sha256": "e7f5159fd06f4289daded20917c1f7c886dae8591e4c5a71ceeade4835760a01",
+      "publicDownloadVerified": true
+    }
+  ],
+  "reproducibility": "complete Windows/Linux assembled archives byte-equal across independent A/B builds; external official Node/model/runtime binaries and OS/driver/toolchain inputs not independently rebuilt"
+}
