@@ -4,7 +4,7 @@
 
 Run selected models on your computer and supply inference capacity through [Excess](https://excess.sh). The worker pairs with a separately operated coordinator, applies your local policy, and signs device results. Wallet approvals stay in the website.
 
-**Source preview.** No downloadable binary release is published. Exact source74 project-Minisign-signed packages passed fresh application installation, pairing and funded testnet buyer inference on Windows CPU, Windows CUDA and WSL Linux CPU, with drain, restart, revocation and cleanup. Windows CUDA additionally passed live buyer cancellation on the measured RTX 3070 Ti configuration. Controlled HTTPS updates, rollback protection and final public downloads are being verified. See the [current evidence and limits](docs/PLATFORMS.md).
+**Source preview.** No downloadable binary release is published. Exact source74 project-Minisign-signed packages passed fresh application installation, pairing and funded testnet buyer inference on Windows CPU, Windows CUDA and WSL Linux CPU, with drain, restart, revocation and cleanup. Windows CUDA additionally passed live buyer cancellation on the measured RTX 3070 Ti configuration. Controlled signed HTTPS updates, tamper refusal and downgrade protection pass on both platforms. Final eligible-package execution, recovery inference and public downloads are being verified. See the [current evidence and limits](docs/PLATFORMS.md).
 
 [Installation](docs/INSTALLATION.md) | [Release verification](docs/VERIFICATION.md) | [Releases](https://github.com/excesssh/Excess-Worker/releases) | [MIT licence](LICENSE)
 

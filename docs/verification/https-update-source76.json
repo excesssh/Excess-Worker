@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-07",
+  "fromSource": "23fada7737258b2942c2f12edaeec7c2f8457e0b",
+  "toSource": "4f70656c024843c7dabeba705b20ea3ce1e1d750",
+  "fromSequence": 16,
+  "toSequence": 17,
+  "actualProjectMinisign": true,
+  "productionUpdaterExports": true,
+  "defaultFetchAndPinnedKey": true,
+  "controlledHTTPS": true,
+  "tlsGlobalTrustUnchanged": true,
+  "tlsWithoutProcessCARefused": true,
+  "platforms": {
+    "windows": {
+      "passed": true,
+      "checks": [
+        "fresh-default-signed-install",
+        "bad-signature-rejected-state-unchanged",
+        "bad-manifest-rejected-state-unchanged",
+        "bad-archive-rejected-state-unchanged",
+        "authenticated-https-update-available",
+        "positive-network-install",
+        "authentic-downgrade-rejected-high-water-preserved",
+        "verified-manual-rollback-high-water-retained",
+        "rollback-does-not-lower-update-floor",
+        "authenticated-roll-forward-existing-inventory"
+      ],
+      "completeFiles": 339,
+      "privateReportSha256": "6a5c8f798161ebed496c2800704da3512aa27e986fe4543b0b2cfe837e3c4ac3"
+    },
+    "linux": {
+      "passed": true,
+      "checks": [
+        "fresh-default-signed-install",
+        "bad-signature-rejected-state-unchanged",
+        "bad-manifest-rejected-state-unchanged",
+        "bad-archive-rejected-state-unchanged",
+        "authenticated-https-update-available",
+        "positive-network-install",
+        "authentic-downgrade-rejected-high-water-preserved",
+        "verified-manual-rollback-high-water-retained",
+        "rollback-does-not-lower-update-floor",
+        "authenticated-roll-forward-existing-inventory"
+      ],
+      "completeFiles": 340,
+      "privateReportSha256": "32a012a1391cb2d7d1fd339d5c2c958af91b323163376c5f17816f7a4e9c3f26"
+    }
+  },
+  "manualRecoveryInference": "pending separate real execution",
+  "publicFeedPublication": false
+}

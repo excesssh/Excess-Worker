@@ -14,7 +14,7 @@ For source builds, prefix each command below with node apps/worker/dist/main.js.
 | probe | Run the local installed-model execution check. |
 | policy [file] | Read or replace local worker policy. |
 
-Fit estimates are guidance. The worker's local checks decide whether it will attempt a model. GPU execution remains unverified in this candidate.
+Fit estimates are guidance. The worker's local checks decide whether it will attempt a model. Windows CUDA Qwen3-4B has exact signed-package execution evidence on the measured RTX3070Ti configuration with explicit6GiB host/6GiB combined GPU budgets; Linux GPU remains refused. See [current platform evidence](PLATFORMS.md).
 
 ## Pairing and offers
 
