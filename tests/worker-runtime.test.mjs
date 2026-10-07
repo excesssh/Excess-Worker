@@ -1,8 +1,8 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile, access, unlink, readdir, chmod } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { readFile, writeFile, access, unlink, readdir, chmod } from "node:fs/promises";
+import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { runWorker, unpairDevice } from "../apps/worker/dist/runtime.js";
@@ -14,6 +14,7 @@ import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/ind
 import { requestDigest } from "../packages/protocol/dist/index.js";
 import { createControllerStateStore } from "../apps/worker/dist/controller-state.js";
 import { createWindowsExecutionProofStore } from "../apps/worker/dist/windows-execution-proof-store.js";
+import { createFixtureScratch } from "./helpers/fixture-scratch.mjs";
 
 const policy = { threads: 1, maxMemoryMb: 1024, maxGpuMemoryMb: 4096, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 };
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
@@ -27,16 +28,16 @@ afterEach(async () => {
   for (const f of fixtures) f.shutdown.abort();
   await Promise.allSettled(fixtures.map(f => setWorkerControl(f.dir, "stop")));
   await Promise.allSettled(fixtures.flatMap(f => [...f.operations]));
+  for (const f of fixtures) await f.scratch.cleanup();
 });
 const waitFor = async (check, message = "condition") => {
   const until = Date.now() + 5000;
   while (!await check()) { if (Date.now() > until) throw Error("Timed out: " + message); await new Promise(r => setTimeout(r, 10)); }
 };
 async function fixture() {
-  await mkdir(".cache", { recursive: true });
-  const dir = await mkdtemp(resolve(".cache/worker-runtime-fixture-"));
+  const scratch = await createFixtureScratch("worker-runtime-fixture-"), dir = scratch.path;
   const shutdown = new AbortController(), operations = new Set();
-  liveFixtures.add({ dir, shutdown, operations });
+  liveFixtures.add({ dir, shutdown, operations, scratch });
   const request = { prompt: "TEST FIXTURE INPUT", maxTokens: 8, seed: 42 };
   const deviceId = randomUUID();
   const a = { jobId: randomUUID(), attemptId: randomUUID(), deviceId, fence: "1",
@@ -104,8 +105,40 @@ async function fixture() {
     return operation;
   };
   const journal = async () => (await readFile(join(dir, "attempts.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-  return { dir, a, state, connection, adapter, calls, heartbeats, counts, probes, start, journal, complete: result => complete(result) };
+  return { dir, a, state, connection, adapter, calls, heartbeats, counts, probes, start, journal, scratch, complete: result => complete(result) };
 }
+
+test("controller runtime completes a fixture job using typed state only and never creates its virtual filesystem", async () => {
+  const f = await fixture(), stateDir = join(f.dir, "never-created-controller-state"), files = new Map(), reads = [];
+  const stateWriter = {
+    replace: async (name, bytes) => { files.set(name, Buffer.from(bytes)); },
+    appendJournal: async bytes => { files.set("attempts.jsonl", Buffer.concat([files.get("attempts.jsonl") ?? Buffer.alloc(0), bytes])); },
+    removeOutput: async name => { files.delete(name); }, markShutdownUnverified: async () => { throw Error("UNEXPECTED_FIXTURE_SHUTDOWN_FAILURE"); },
+  };
+  const stateReader = {
+    readPolicy: async () => { reads.push("policy"); return policy; },
+    readControl: async () => { reads.push("control"); return f.state.acceptedResult ? "stop" : "run"; },
+    readOffers: async () => { reads.push("offers"); return []; }, readAutoPrices: async () => new Map(),
+    readJournalOwner: async () => files.get("journal-owner.json") ?? null,
+    readJournal: async () => files.get("attempts.jsonl") ?? null,
+    readResult: async id => { reads.push("result"); return files.get(id + ".result.json"); },
+    readArtifact: async () => { throw Error("UNEXPECTED_FIXTURE_ARTIFACT"); },
+    listOutputs: async id => [...files.keys()].filter(name => name.startsWith(id + ".")),
+    openSnapshot: async () => { throw Error("UNUSED_FIXTURE_SNAPSHOT"); }, readSnapshot: async () => { throw Error("UNUSED_FIXTURE_SNAPSHOT"); },
+    closeSnapshot: async () => {}, close: async () => {},
+  };
+  const worker = f.start({ stateDir, policy: undefined, stateReader, stateWriter });
+  await waitFor(() => f.counts.executions === 1); f.complete(output);
+  assert.equal((await worker).state, "stopped");
+  assert.equal(f.state.acceptedResult, true);
+  assert.deepEqual(new Set(reads), new Set(["policy", "control", "offers", "result"]));
+  const journal = files.get("attempts.jsonl").toString("utf8").trim().split("\n").map(JSON.parse);
+  assert.equal(journal.at(-1).state, "finished");
+  assert.equal(files.has(f.a.attemptId + ".result.json"), false);
+  assert.equal(f.heartbeats.at(-1).availableSlots, 0);
+  await assert.rejects(access(stateDir), error => error.code === "ENOENT");
+  await assert.rejects(runWorker({ stateDir, identityPath: "unused", installDir: "unused", stateReader }), /CONTROLLER_DEPENDENCIES_REQUIRED/);
+});
 
 test("worker policy and controls fail closed and fence concurrent foreground runtimes", async () => {
   // Idle-only is the default on Windows desktops; a Linux supplier is usually a headless server with no idle signal.
@@ -495,12 +528,12 @@ test("fixture malformed probe observations never become retained evidence or adv
   }
 });
 
-test("fixture worker reports a newer published version, installs it only when idle, and returns updated for its supervisor", async () => {
+test("fixture worker reports a newer published version, installs it only when idle, and returns updated for its supervisor", { timeout: 30_000 }, async t => {
   const newer = { current: "0.1.0-aaaaaaaaaaaa", latest: "0.1.0-bbbbbbbbbbbb", available: true, checkedAt: new Date().toISOString() };
   // Report only: without auto-install the check is shown in status and nothing is installed.
   const quiet = await fixture(); quiet.state.assigned = false;
   let installs = 0;
-  const reporting = quiet.start({ update: { origin: "https://exchange.example", current: newer.current, autoInstall: false, firstCheckMs: 10, intervalMs: 50,
+  const reporting = quiet.start({ signal: t.signal, update: { origin: "https://exchange.example", current: newer.current, autoInstall: false, firstCheckMs: 10, intervalMs: 50,
     check: async () => newer, install: async () => { installs++; return 0; } } });
   await waitFor(async () => (await readWorkerStatus(quiet.dir)).update?.available === true, "update reported");
   await setWorkerControl(quiet.dir, "stop");
@@ -510,7 +543,7 @@ test("fixture worker reports a newer published version, installs it only when id
   // Auto-install waits for the running job to finish and its result to be accepted, then installs once.
   const busy = await fixture();
   let checks = 0;
-  const running = busy.start({ update: { origin: "https://exchange.example", current: newer.current, autoInstall: true, firstCheckMs: 300, intervalMs: 50,
+  const running = busy.start({ signal: t.signal, update: { origin: "https://exchange.example", current: newer.current, autoInstall: true, firstCheckMs: 300, intervalMs: 50,
     check: async () => { checks++; return newer; }, install: async () => { installs++; return 0; } } });
   await waitFor(() => busy.counts.executions === 1, "job running");
   // The first check comes while the job runs; later checks keep finding it busy.

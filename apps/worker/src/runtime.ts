@@ -56,9 +56,13 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
       !Number.isFinite(probedAt) || probedAt < startedAt || probedAt > Date.now() ||
       !Number.isSafeInteger(proof.generatedTokens) || Number(proof.generatedTokens) < 0 || Number(proof.generatedTokens) > Math.max(8, entry.probeMaxTokens) ||
       !Number.isSafeInteger(proof.peakRssMb) || Number(proof.peakRssMb) < 0) throw Error("Invalid local probe observation");
-  if(policy.backend==="cuda"&&(entry.id!=="qwen3-4b"||proof.gpuBoundary!=="windows-cuda-budget-v1"||proof.gpuOffloadedLayers!==37||proof.maxGpuMemoryMb!==policy.maxGpuMemoryMb||
+  const linuxGpu=policy.backend==="cuda"&&process.platform==="linux";
+  const minimumGpuMb=entry.kind==="image"?64:Math.floor(entry.downloadBytes*0.75/1048576);
+  if(policy.backend==="cuda"&&((linuxGpu?(proof.gpuBoundary!=="linux-cuda-device-budget-v1"||proof.gpuMemoryScope!=="whole-device"||
+    !Number.isSafeInteger(proof.gpuOffloadedLayers)||Number(proof.gpuOffloadedLayers)<(entry.kind==="image"?0:1)||Number(proof.gpuOffloadedLayers)>128):
+    (entry.id!=="qwen3-4b"||proof.gpuBoundary!=="windows-cuda-budget-v1"||proof.gpuOffloadedLayers!==37))||proof.maxGpuMemoryMb!==policy.maxGpuMemoryMb||
     !Number.isSafeInteger(proof.peakGpuMemoryMb)||Number(proof.peakGpuMemoryMb)>policy.maxGpuMemoryMb||
-    !Number.isSafeInteger(proof.peakDedicatedGpuMemoryMb)||Number(proof.peakDedicatedGpuMemoryMb)<Math.floor(entry.downloadBytes*0.75/1048576)||
+    !Number.isSafeInteger(proof.peakDedicatedGpuMemoryMb)||Number(proof.peakDedicatedGpuMemoryMb)<minimumGpuMb||
     Number(proof.peakDedicatedGpuMemoryMb)>Number(proof.peakGpuMemoryMb)))throw Error("Invalid local GPU observation");
   for (const name of ["nativePid", "guardianPid"]) {
     if (proof[name] !== undefined && (!Number.isSafeInteger(proof[name]) || Number(proof[name]) < 1)) throw Error("Invalid local probe process identity");
@@ -70,7 +74,8 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
     ...(proof.nativePid === undefined ? {} : { nativePid: Number(proof.nativePid) }),
     ...(proof.guardianPid === undefined ? {} : { guardianPid: Number(proof.guardianPid) }),
     ...(policy.backend==="cuda"?{maxGpuMemoryMb:policy.maxGpuMemoryMb,peakGpuMemoryMb:Number(proof.peakGpuMemoryMb),
-      peakDedicatedGpuMemoryMb:Number(proof.peakDedicatedGpuMemoryMb),gpuOffloadedLayers:37,gpuBoundary:"windows-cuda-budget-v1" as const}:{}),
+      peakDedicatedGpuMemoryMb:Number(proof.peakDedicatedGpuMemoryMb),gpuOffloadedLayers:Number(proof.gpuOffloadedLayers),
+      ...(linuxGpu?{gpuBoundary:"linux-cuda-device-budget-v1" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{}),
     policy: { ...policy },
   };
 }

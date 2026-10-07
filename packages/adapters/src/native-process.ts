@@ -17,13 +17,14 @@ export async function processRss(pid:number):Promise<number> {
   const match=(await readFile(`/proc/${pid}/status`,"utf8")).match(/^VmRSS:\s+(\d+)\s+kB$/m);
   if(!match)throw new AdapterError("PROCESS_MONITOR_FAILED");return Number(match[1])*1024;
 }
-export interface RuntimeSupervision {protocol:"windows-appcontainer-v1";input:string}
+export interface RuntimeSupervision {protocol:"windows-appcontainer-v1"|"linux-cuda-device-budget-v1";input:string}
 export interface ManagedProcess {child:ChildProcess;closed:Promise<void>;alive():boolean;error():AdapterError|null;peakRssBytes():number;peakGpuMemoryBytes():number;peakDedicatedGpuMemoryBytes():number;gpuOffloadedLayers():number;nativePid():number|undefined;stop():Promise<void>;
   sendRuntime(message:RuntimeRequest|RuntimeControl):void;onRuntimeFrame(listener:(frame:RuntimeResponse)=>void):void}
 // Internal process boundary. The exported adapter supplies only verified fixed paths/args.
 export function startNativeProcess(executable:string,args:readonly string[],options:{cwd:string;env:NodeJS.ProcessEnv;maxMemoryBytes:number;supervision?:RuntimeSupervision|undefined}):ManagedProcess {
   const supervised=options.supervision!==undefined;
-  if(supervised&&(options.supervision!.protocol!=="windows-appcontainer-v1"||Buffer.byteLength(options.supervision!.input)>65536||/[\r\n]/.test(options.supervision!.input)))throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
+  if(supervised&&(!["windows-appcontainer-v1","linux-cuda-device-budget-v1"].includes(options.supervision!.protocol)||Buffer.byteLength(options.supervision!.input)>65536||/[\r\n]/.test(options.supervision!.input)))throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
+  if(options.supervision?.protocol==="linux-cuda-device-budget-v1"&&process.platform!=="linux")throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
   const child=spawn(executable,[...args],{cwd:options.cwd,env:options.env,windowsHide:true,stdio:[supervised?"pipe":"ignore","pipe","pipe"]});
   let ended=false,fault:AdapterError|null=null,peak=0,sampling=false,monitorFailures=0,stopping:Promise<void>|undefined,monitorTask:Promise<void>|undefined;
   let nativePid=supervised?undefined:child.pid,cleanupOk=false,statusPending="",gpuPeak=0,gpuLocalPeak=0,gpuLayers=0;
@@ -128,7 +129,7 @@ export function startNativeProcess(executable:string,args:readonly string[],opti
       .catch(()=>{if(++monitorFailures>=3)monitorFailed();}).finally(()=>{sampling=false;});
   },500);
   const sendRuntime=(message:RuntimeRequest|RuntimeControl)=>{
-    if(!supervised||ended||stopping||!child.stdin?.writable)throw new AdapterError("RUNTIME_CONTROL_FAILED");
+    if(options.supervision?.protocol!=="windows-appcontainer-v1"||ended||stopping||!child.stdin?.writable)throw new AdapterError("RUNTIME_CONTROL_FAILED");
     if(message.type==="request"&&Buffer.byteLength(message.body??"")>MAX_RUNTIME_BODY_BYTES)throw new AdapterError("RUNTIME_REQUEST_TOO_LARGE");
     const frame=JSON.stringify(message)+"\n";
     if(Buffer.byteLength(frame)>32*1024*1024)throw new AdapterError("RUNTIME_REQUEST_TOO_LARGE");

@@ -11,11 +11,11 @@ const RELEASE="https://github.com/ggml-org/llama.cpp/releases/download/b10809/";
 const RUNTIME_LICENCE=artifact({ name:"licences/llama.cpp-MIT.txt", bytes:1078, sha256:"94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d", url:"https://raw.githubusercontent.com/ggml-org/llama.cpp/5266f24da75dc449bd56cbed7addb9c8e4a6a73e/LICENSE" });
 
 /** Pinned llama.cpp b10809 builds. Every platform and backend runs the same release, so a model's capability is
- * platform- and backend-independent. Windows GPUs use CUDA; Linux GPUs use Vulkan (llama.cpp publishes no Linux CUDA build). */
+ * platform- and backend-independent. CUDA routes are pinned separately; Linux SM90 builds use CUDA 12.9 with FlashAttention disabled. */
 export type Platform="win32-x64"|"linux-x64";
 export type Backend="cpu"|"cuda"|"vulkan";
-export const PLATFORM_BACKENDS:Readonly<Record<Platform,readonly Backend[]>>=Object.freeze({"win32-x64":Object.freeze(["cpu","cuda"] as Backend[]),"linux-x64":Object.freeze(["cpu","vulkan"] as Backend[])});
-export const GPU_BACKEND:Readonly<Record<Platform,Backend>>=Object.freeze({"win32-x64":"cuda","linux-x64":"vulkan"});
+export const PLATFORM_BACKENDS:Readonly<Record<Platform,readonly Backend[]>>=Object.freeze({"win32-x64":Object.freeze(["cpu","cuda"] as Backend[]),"linux-x64":Object.freeze(["cpu","cuda","vulkan"] as Backend[])});
+export const GPU_BACKEND:Readonly<Record<Platform,Backend>>=Object.freeze({"win32-x64":"cuda","linux-x64":"cuda"});
 export function currentPlatform():Platform|null {
   if(process.arch!=="x64")return null;
   return process.platform==="win32"?"win32-x64":process.platform==="linux"?"linux-x64":null;
@@ -41,8 +41,18 @@ export const RUNTIME_ARTIFACTS:Readonly<Record<"cpu"|"cuda",readonly Artifact[]>
     artifact({ name:"cudart.zip", bytes:391443627, sha256:"8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6", url:RELEASE+"cudart-llama-bin-win-cuda-12.4-x64.zip" }),
     RUNTIME_LICENCE]),
 });
+// Excess-built CUDA 12.9.86 SM90 runtimes: pinned source commits, baseline CPU,
+// FlashAttention disabled; no prebuilt UI or driver bundle. SD tokenizer storage is compressed; all eight
+// decoded tables match upstream byte hashes. NVIDIA redistributable EULAs apply.
+const CUDA_RELEASE="https://github.com/excesssh/Excess-Worker/releases/download/v0.2.0/";
+const LINUX_CUDA_DEPENDENCIES=Object.freeze([
+  artifact({ name:"cudart.tar.gz", bytes:581207461, sha256:"01d9d8140dc4cad4a03407c446e75d3956ea5a0918fd7b6e6813406976d8129f", url:CUDA_RELEASE+"cuda-12.9-linux-x64-libraries.tar.gz" }),
+  artifact({ name:"licences/NVIDIA-CUDA-EULA.txt", bytes:63522, sha256:"213f2f1cc4bfecd53eb1579edc89d6e3a024ddd2f77413b69b40e2bf3c114d84", url:CUDA_RELEASE+"NVIDIA-CUDA-EULA.txt" }),
+  artifact({ name:"licences/NVIDIA-cuBLAS-EULA.txt", bytes:67876, sha256:"72c22161fc1ebf242443d45158a7dd382d68597b00eeb7a7f539be5c6114be33", url:CUDA_RELEASE+"NVIDIA-cuBLAS-EULA.txt" }),
+]);
 /** Ubuntu x64 builds of the same release, checked on 15 September 2026. Their archives hold one top-level folder. */
 const LINUX_RUNTIME_ARTIFACTS:Readonly<Partial<Record<Backend,readonly Artifact[]>>>=Object.freeze({
+  cuda:Object.freeze([artifact({ name:"runtime.tar.gz", bytes:97277324, sha256:"e9e3b7e7a2c19ef7b9d5fb42d8aa348abfd8725af1ff354a0f12ca4788fdd9f1", url:CUDA_RELEASE+"llama-b10809-linux-x64-cuda12.9-sm90.tar.gz" }),...LINUX_CUDA_DEPENDENCIES,RUNTIME_LICENCE]),
   cpu:Object.freeze([
     artifact({ name:"runtime.tar.gz", bytes:16734586, sha256:"5e34434ddc6d03cd1584f403201aff0d4bd1a5793a72ff7e286532dfd1e4b941", url:RELEASE+"llama-b10809-bin-ubuntu-x64.tar.gz" }),
     RUNTIME_LICENCE]),
@@ -275,6 +285,7 @@ const SD_RUNTIMES:Readonly<Record<Platform,Partial<Record<Backend,readonly Artif
       artifact({ name:"cudart.zip", bytes:563452046, sha256:"fe20366827d357c00797eebb58244dddab7fd9a348d70090c3871004c320f38d", url:SD_RELEASE+"cudart-sd-bin-win-cu12-x64.zip" }),SD_LICENCE]),
   }),
   "linux-x64":Object.freeze({
+    cuda:Object.freeze([artifact({ name:"runtime.tar.gz", bytes:40208582, sha256:"79d1a136849bebc61a2e4b6bc0fbf51dd90cac11f39c73775b3166acc96b8f11", url:CUDA_RELEASE+"sd-07a85c7-linux-x64-cuda12.9-sm90.tar.gz" }),...LINUX_CUDA_DEPENDENCIES,SD_LICENCE]),
     cpu:Object.freeze([artifact({ name:"runtime.zip", bytes:25288890, sha256:"38dfa88068f0beef416763c96154fc3f24ad8284fa1864fe3118280ef28093ce", url:SD_RELEASE+"sd-master-07a85c7-bin-Linux-Ubuntu-24.04-x86_64.zip" }),SD_LICENCE]),
     vulkan:Object.freeze([artifact({ name:"runtime.zip", bytes:38412182, sha256:"550b4b3bb0b0e98c13ba7569e39e2ec90b9f8fa9e3dd641689e835278000555f", url:SD_RELEASE+"sd-master-07a85c7-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip" }),SD_LICENCE]),
   }),

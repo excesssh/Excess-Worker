@@ -121,5 +121,5 @@ export function startSupervisedProcess(executable:string,args:readonly string[],
     if(options.supervision)throw new AdapterError("RUNTIME_STOP_TIMEOUT");
   })();
   return {child,closed,alive:()=>!ended&&child.exitCode===null&&child.signalCode===null,error:()=>fault,peakRssBytes:()=>peak,peakGpuMemoryBytes:()=>gpuPeak,peakDedicatedGpuMemoryBytes:()=>gpuLocalPeak,gpuOffloadedLayers:()=>gpuLayers,nativePid:()=>pid,stop,
-    ...(options.supervision?{request}:{})};
+    ...(options.supervision?.protocol==="windows-appcontainer-v1"?{request}:{})};
 }

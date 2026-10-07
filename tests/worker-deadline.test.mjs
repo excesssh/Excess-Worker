@@ -1,13 +1,14 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { runWorker } from "../apps/worker/dist/runtime.js";
 import { setWorkerControl } from "../apps/worker/dist/control.js";
 import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
+import { createFixtureScratch } from "./helpers/fixture-scratch.mjs";
 
 // Synthetic executor and receipts. Blocking the test event loop deliberately
 // delays JS timers; no model, native process or hardware claim is involved.
@@ -16,6 +17,7 @@ afterEach(async () => {
   const fixtures = [...live]; live.clear();
   for (const f of fixtures) f.shutdown.abort();
   await Promise.allSettled(fixtures.flatMap(f => [...f.operations]));
+  for (const f of fixtures) await f.scratch.cleanup();
 });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const waitFor = async predicate => {
@@ -23,9 +25,8 @@ const waitFor = async predicate => {
   while (!await predicate()) { if (Date.now() > until) throw Error("Synthetic deadline fixture timed out"); await pause(10); }
 };
 async function fixture(deliveryMode, late = true) {
-  await mkdir(".cache", { recursive: true });
-  const dir = await mkdtemp(resolve(".cache/worker-deadline-fixture-"));
-  const shutdown = new AbortController(), operations = new Set(); live.add({ shutdown, operations });
+  const scratch = await createFixtureScratch("worker-deadline-fixture-"), dir = scratch.path;
+  const shutdown = new AbortController(), operations = new Set(); live.add({ shutdown, operations, scratch });
   const request = { prompt: "SYNTHETIC DEADLINE INPUT", maxTokens: 1, seed: 42 };
   const output = { text: "FIXTURE", generatedTokens: 1, finishReason: "stop" };
   const chunk = { sequence: 1, delta: output.text, tokenIds: [1] }; chunk.chunkDigest = requestDigest(chunk);
@@ -71,7 +72,7 @@ async function fixture(deliveryMode, late = true) {
     operations.add(operation); operation.then(() => operations.delete(operation), () => operations.delete(operation)); return operation;
   };
   const journal = async () => (await readFile(join(dir, "attempts.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-  return { dir, a, calls, state, start, journal };
+  return { dir, a, calls, state, start, journal, scratch };
 }
 
 for (const deliveryMode of ["buffered", "stream"]) test(`synthetic ${deliveryMode} output cannot publish past a local deadline when timers are delayed`, async () => {

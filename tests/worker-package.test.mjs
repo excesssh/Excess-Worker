@@ -2,17 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {spawn,spawnSync} from "node:child_process";
-import {mkdir,mkdtemp,readFile,readdir,writeFile} from "node:fs/promises";
-import {join,resolve,relative,sep,isAbsolute} from "node:path";
+import {mkdir,readFile,readdir,writeFile} from "node:fs/promises";
+import {join,relative,sep,isAbsolute} from "node:path";
 import {once} from "node:events";
 import {createServer} from "node:http";
+import {createFixtureScratch} from "./helpers/fixture-scratch.mjs";
 
 async function files(dir){const result=[];for(const entry of await readdir(dir,{withFileTypes:true})){const path=join(dir,entry.name);
   if(entry.isDirectory())result.push(...await files(path));else result.push(path);}return result;}
 
 test("the packaged Windows worker runs from its own folder with the bundled runtime and guides onboarding",{skip:process.platform!=="win32"},async t=>{
-  await mkdir(".cache",{recursive:true});
-  const out=await mkdtemp(resolve(".cache/package-test-")),home=await mkdtemp(resolve(".cache/package-home-"));
+  const scratchParent=process.env.EXCESS_TEST_FIXTURE_CACHE??process.env.EXCESS_TEST_ROOT??".cache";
+  const outScratch=await createFixtureScratch("package-test-",scratchParent);
+  t.after(()=>outScratch.cleanup());
+  const homeScratch=await createFixtureScratch("package-home-",scratchParent);
+  t.after(()=>homeScratch.cleanup());
+  const out=outScratch.path,home=homeScratch.path;
   // Inert native bytes check delivery and integrity only; this is no execution proof.
   const native=join(out,"native-fixture"),helper=Buffer.from("INERT NATIVE PACKAGING FIXTURE");await mkdir(native);
   const nativeHash=createHash("sha256").update(helper).digest("hex");
@@ -91,8 +96,10 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   assert.equal(JSON.parse(run("guide").stdout).kind,"image");
   assert.deepEqual(models.active,{model:"qwen3-4b",backend:"cpu"});
   const chosen=run("use","qwen3-8b","--gpu");
-  assert.equal(chosen.status,0,chosen.stderr);assert.deepEqual([JSON.parse(chosen.stdout).policy.model,JSON.parse(chosen.stdout).policy.backend],["qwen3-8b","cuda"]);
-  assert.equal(JSON.parse(run("model-plan").stdout).backend,"cuda","the plan follows the chosen model and backend");
+  assert.notEqual(chosen.status,0,"the packaged Windows profile does not admit unverified Qwen3 8B CUDA execution");
+  assert.match(chosen.stderr,/Windows CUDA is available only for the verified Qwen3 4B profile/);
+  assert.deepEqual(JSON.parse(run("models").stdout).active,{model:"sd-turbo",backend:"cpu"},"refused GPU selection leaves the configured model unchanged");
+  assert.equal(JSON.parse(run("model-plan").stdout).backend,"cpu","the plan follows the unchanged CPU policy");
   assert.notEqual(run("use","not-a-model").status,0);
   assert.equal(run("use","qwen3-4b").status,0);
   assert.match(guide.disclosure,/see their prompts and outputs/);
@@ -115,8 +122,15 @@ test("the packaged Windows worker runs from its own folder with the bundled runt
   const runAsync=(...commandArgs)=>new Promise((resolve,reject)=>{
     const child=spawn(join(systemRoot,"System32","cmd.exe"),["/d","/s","/c",`"${join(dir,"excess-worker.cmd")}" ${commandArgs.join(" ")}`],{env,windowsVerbatimArguments:true});
     let stdout="",stderr="";child.stdout.on("data",d=>{stdout+=d;});child.stderr.on("data",d=>{stderr+=d;});
-    const timer=setTimeout(()=>{child.kill();reject(Error("worker command timed out"));},60000);
-    child.on("error",reject);child.on("close",status=>{clearTimeout(timer);resolve({status,stdout,stderr});});
+    let timedOut=false,spawnError;
+    const timer=setTimeout(()=>{timedOut=true;child.kill();},60000);
+    child.on("error",error=>{spawnError=error;});
+    child.on("close",status=>{
+      clearTimeout(timer);
+      if(timedOut)reject(Error("worker command timed out"));
+      else if(spawnError)reject(spawnError);
+      else resolve({status,stdout,stderr});
+    });
   });
   const priced=await runAsync("offer","TEST","3");
   assert.equal(priced.status,0,priced.stderr);

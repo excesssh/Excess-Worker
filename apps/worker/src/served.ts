@@ -34,6 +34,7 @@ export function priceUnit(kind: ServedKind): { perUnits: bigint; label: string; 
 }
 export const isMediaAdapter = (adapter: ServedAdapter): adapter is MediaAdapter => typeof (adapter as MediaAdapter).check === "function";
 export function createServedAdapter(installDir: string, policy: { threads: number; maxMemoryMb: number; maxGpuMemoryMb?: number; runSeconds: number; model: string; backend: Backend }): ServedAdapter {
-  const options = { threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, timeoutMs: policy.runSeconds * 1000, modelId: policy.model, backend: policy.backend };
-  return servedModel(policy.model).kind === "text" ? createTextAdapter(installDir, { ...options, ...(policy.maxGpuMemoryMb===undefined?{}:{maxGpuMemoryMb:policy.maxGpuMemoryMb}) }) : createMediaAdapter(installDir, options);
+  const options = { threads: policy.threads, maxMemoryMb: policy.maxMemoryMb, timeoutMs: policy.runSeconds * 1000, modelId: policy.model, backend: policy.backend,
+    ...(policy.maxGpuMemoryMb===undefined?{}:{maxGpuMemoryMb:policy.maxGpuMemoryMb}) };
+  return servedModel(policy.model).kind === "text" ? createTextAdapter(installDir, options) : createMediaAdapter(installDir, options);
 }

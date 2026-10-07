@@ -203,7 +203,9 @@ static void parent_liveness(int fd, int child) {
 int main(int argc, char **argv) {
     /* helper <empty-root> <app> <ai> <state> <scratch> <broker-socket> <state-socket> -- <inside-command> [args...] */
     phase = 1;
-    if (argc < 10 || strcmp(argv[8], "--") || getuid() == 0 || geteuid() == 0 ||
+    int gpu = argc > 8 && !strcmp(argv[8], "--cuda-device");
+    int command = gpu ? 10 : 9;
+    if (argc <= command || strcmp(argv[command-1], "--") || getuid() == 0 || geteuid() == 0 ||
         getuid() != geteuid() || getgid() != getegid() || fcntl(3, F_GETFD) < 0) fail();
     uid_t uid = getuid(); gid_t gid = getgid(); pid_t parent = getppid();
     int socket_type = 0; socklen_t size = sizeof(socket_type);
@@ -293,12 +295,28 @@ int main(int argc, char **argv) {
     phase = 38; make_dir(mount_root, "/sys", target); make_dir(mount_root, "/sys/devices", target); make_dir(mount_root, "/sys/devices/system", target);
     bind_system(mount_root, "/sys/devices/system/cpu", "/sys/devices/system/cpu", 1, ro | MOUNT_ATTR_NOEXEC);
     phase = 39; make_dir(mount_root, "/dev", target);
-    /* Only these host devices are visible; no GPU or terminal devices. */
+    /* CPU has no GPU or terminal devices. The trusted CUDA bootstrap adds only
+       the single selected NVIDIA ordinal, its control device and UVM. */
     const char *devices[] = { "/dev/null", "/dev/urandom" };
     for (size_t n = 0; n < sizeof(devices) / sizeof(devices[0]); n++) {
         int device = anchor(devices[n], S_IFCHR);
         if (snprintf(target, PATH_MAX, "%s%s", mount_root, devices[n]) >= PATH_MAX) fail();
         bind_fd(device, target, 0, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NOEXEC | (n ? MOUNT_ATTR_RDONLY : 0)); close(device);
+    }
+    if (gpu) {
+        const char *nvidia[] = { "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm" };
+        for (size_t n = 0; n < sizeof(nvidia)/sizeof(nvidia[0]); n++) {
+            int device = anchor(nvidia[n], S_IFCHR);
+            if (snprintf(target, PATH_MAX, "%s%s", mount_root, nvidia[n]) >= PATH_MAX) fail();
+            bind_fd(device, target, 0, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NOEXEC); close(device);
+        }
+        char membership[1024], cgroup[PATH_MAX];
+        FILE *group = fopen("/proc/self/cgroup", "r");
+        if (!group || !fgets(membership, sizeof(membership), group) || fclose(group) || strncmp(membership, "0::/", 4)) fail();
+        membership[strcspn(membership, "\n")] = 0;
+        if (strstr(membership, "..") || !strstr(membership, "/excess-worker") ||
+            snprintf(cgroup, sizeof(cgroup), "/sys/fs/cgroup%s", membership+3) >= (int)sizeof(cgroup)) fail();
+        bind_system(mount_root, cgroup, "/gpu-budget", 1, ro | MOUNT_ATTR_NOEXEC);
     }
     make_dir(mount_root, "/proc", target);
     attributes(mount_root, 0, ro | MOUNT_ATTR_NOEXEC);
@@ -335,5 +353,5 @@ int main(int argc, char **argv) {
         setenv("PATH", "/app/node/bin", 1)) fail();
     drop_capabilities(); restrict_syscalls();
     phase = 6;
-    execv(argv[9], &argv[9]); fail();
+    execv(argv[command], &argv[command]); fail();
 }

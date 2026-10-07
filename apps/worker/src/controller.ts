@@ -15,10 +15,23 @@ import { acquireRuntimeLock, setWorkerControl, stopWorkerControlAfterReap, type 
 import { createControllerStateStore, createLinuxControllerStateBroker, type ControllerStateStore } from "./controller-state.js";
 import { createHeartbeatSequenceReserve } from "./identity.js";
 import type { UpdateCheck } from "./update.js";
+import { readWorkerPolicy, type WorkerPolicy } from "./policy.js";
+import { servedModel } from "./served.js";
 
 const PROFILE = "linux-controller-namespaces-v1";
 const NODE_VERSION = "v24.11.1";
 const SAFE_DECIMAL = /^(?:0|[1-9][0-9]{0,19})$/;
+
+/** Admission is distinct from execution verification. The CUDA helper still
+ * requires its exact pin, kernel cgroup files, one NVIDIA device and NVML. */
+export function validateLinuxControllerModelPolicy(policy: WorkerPolicy): void {
+  if (policy.backend === "cpu") return;
+  if (policy.backend !== "cuda") throw Error("CONTROLLER_GPU_PROFILE_UNVERIFIED");
+  const model = servedModel(policy.model);
+  if (policy.maxGpuMemoryMb < model.minVramMb || policy.maxGpuMemoryMb > 131072 ||
+      policy.maxMemoryMb < model.minMemoryMb || policy.maxMemoryMb > 129024)
+    throw Error("CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED");
+}
 
 export interface LinuxControllerOptions {
   /** Installed, authenticated immutable package root, including bundled Node. */
@@ -127,7 +140,11 @@ async function startController(options: LinuxControllerOptions,
   brokerFactory: (options: EgressBrokerOptions) => Promise<EgressBroker>): Promise<LinuxControllerRun> {
   if (process.platform !== "linux" || process.arch !== "x64" || process.version !== NODE_VERSION || !process.getuid?.()) throw Error("CONTROLLER_ISOLATION_UNAVAILABLE");
   if (options.signal?.aborted) throw Error("CONTROLLER_CANCELLED");
-  await requireControllerBudget();
+  const policy = await readWorkerPolicy(options.stateDir);
+  validateLinuxControllerModelPolicy(policy);
+  const gpu = policy.backend === "cuda";
+  await requireControllerBudget(gpu ? { maximumMemoryBytes: 128n*1024n**3n,
+    minimumMemoryBytes: BigInt(policy.maxMemoryMb+2048)*1048576n } : undefined);
   const origin = parseCoordinatorOrigin(options.origin).origin;
   const packageDir = resolve(options.packageDir), installDir = resolve(options.installDir), stateDir = resolve(options.stateDir);
   if ([packageDir, installDir, stateDir].some(path => path === "/") || overlaps(stateDir, packageDir) || overlaps(packageDir, stateDir) ||
@@ -199,7 +216,7 @@ async function startController(options: LinuxControllerOptions,
         return sequenceReserve.then(reserve => reserve(signal));
       } });
     child = spawn("/proc/self/fd/4", [join(base, "root"), packageDir, installDir, stateDir, join(base, "scratch"), socketPath, stateSocket,
-      "--", "/app/node/bin/node", "/app/app/worker/dist/controller-entry.js", origin, options.updates ? "updates" : "no-updates"],
+      ...(gpu ? ["--cuda-device"] : []), "--", "/app/node/bin/node", "/app/app/worker/dist/controller-entry.js", origin, options.updates ? "updates" : "no-updates"],
     { env: {}, cwd: "/", stdio: ["ignore", "pipe", "pipe", "pipe", helper.fd] });
     closed = waitClose(child);
     // Runtime output remains stream-oriented. Diagnostics are not persisted,

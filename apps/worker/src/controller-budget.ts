@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 
 const MAX_MEMORY = 12n * 1024n * 1024n * 1024n;
-export function validateControllerBudget(memory: string, swap: string, tasks: string, cpu: string): void {
+export function validateControllerBudget(memory: string, swap: string, tasks: string, cpu: string,
+  limits: { maximumMemoryBytes: bigint; minimumMemoryBytes: bigint } = { maximumMemoryBytes: MAX_MEMORY, minimumMemoryBytes: 0n }): void {
   const positive = (value: string) => /^[1-9][0-9]{0,19}$/.test(value.trim());
-  if (!positive(memory) || BigInt(memory.trim()) > MAX_MEMORY || swap.trim() !== "0" ||
+  if (limits.maximumMemoryBytes > 128n*1024n**3n || limits.minimumMemoryBytes < 0n ||
+      !positive(memory) || BigInt(memory.trim()) > limits.maximumMemoryBytes || BigInt(memory.trim()) < limits.minimumMemoryBytes || swap.trim() !== "0" ||
       !positive(tasks) || BigInt(tasks.trim()) > 128n) throw Error("CONTROLLER_RESOURCE_BOUNDARY_REQUIRED");
   const match = /^([1-9][0-9]{0,19}) ([1-9][0-9]{0,19})$/.exec(cpu.trim());
   if (!match || BigInt(match[1]!) > 2n * BigInt(match[2]!)) throw Error("CONTROLLER_RESOURCE_BOUNDARY_REQUIRED");
@@ -11,7 +13,7 @@ export function validateControllerBudget(memory: string, swap: string, tasks: st
 
 /** Aggregate process/memory/CPU limits belong to a dedicated outside service
  * cgroup, rather than an ineffective RSS rlimit or UID-wide process counter. */
-export async function requireControllerBudget(): Promise<void> {
+export async function requireControllerBudget(limits?: { maximumMemoryBytes: bigint; minimumMemoryBytes: bigint }): Promise<void> {
   try {
     const membership = (await readFile("/proc/self/cgroup", "utf8")).trim();
     const match = /^0::(\/[A-Za-z0-9_./@:-]+\/excess-worker(?:-verification-[a-f0-9]+)?\.service)$/.exec(membership);
@@ -21,6 +23,6 @@ export async function requireControllerBudget(): Promise<void> {
       readFile(root + "/memory.max", "utf8"), readFile(root + "/memory.swap.max", "utf8"),
       readFile(root + "/pids.max", "utf8"), readFile(root + "/cpu.max", "utf8"),
     ]);
-    validateControllerBudget(memory, swap, tasks, cpu);
+    validateControllerBudget(memory, swap, tasks, cpu, limits);
   } catch { throw Error("CONTROLLER_RESOURCE_BOUNDARY_REQUIRED"); }
 }

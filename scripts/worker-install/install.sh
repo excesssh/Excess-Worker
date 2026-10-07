@@ -112,6 +112,31 @@ def strict_digest(path):
     with open(path, 'rb') as stream:
         for block in iter(lambda: stream.read(1024*1024), b''): h.update(block)
     return h.hexdigest()
+def validate_gpu_package(package, stage, seen, platform):
+    version = package.get('version')
+    core, _ = version_key(version) if isinstance(version, str) else ((0,0,0), None)
+    required = platform == 'linux-x64' and (core[0] > 0 or (core[0] == 0 and core[1] >= 2))
+    gpu = package.get('gpu')
+    if platform != 'linux-x64':
+        if gpu is None: return
+        stop('Linux GPU metadata is not valid for this platform')
+    if platform == 'linux-x64' and gpu is None and not required: return
+    if not isinstance(gpu, dict) or set(gpu) != {'file','integrityFile','profile','sha256','status'}:
+        stop('Linux GPU helper integrity metadata is missing or invalid')
+    helper_rel = 'app/node_modules/@excess/adapters/native/excess-gpu-sandbox'
+    pin_rel = 'app/node_modules/@excess/adapters/native/integrity-gpu.json'
+    if gpu.get('profile') != 'linux-cuda-device-budget-v1' or gpu.get('file') != helper_rel or gpu.get('integrityFile') != pin_rel or not re.fullmatch('[0-9a-f]{64}', str(gpu.get('sha256',''))):
+        stop('Linux GPU helper integrity metadata is invalid')
+    execution = package.get('execution')
+    if not isinstance(execution,dict) or not isinstance(execution.get('gpuVerified'),bool): stop('Linux GPU package evidence status is missing')
+    gpu_verified = isinstance(execution, dict) and execution.get('gpuVerified') is True
+    if (gpu.get('status') == 'verified-configuration-only' and (not gpu_verified or package.get('publicDistributionReady') is not True)) or (gpu.get('status') == 'candidate-unverified' and gpu_verified) or gpu.get('status') not in ('candidate-unverified','verified-configuration-only'):
+        stop('Linux GPU claim does not match its recorded evidence')
+    if helper_rel not in seen or pin_rel not in seen: stop('Linux GPU helper or integrity pin is missing')
+    if strict_digest(stage.joinpath(*helper_rel.split('/'))) != gpu['sha256']: stop('Linux GPU helper bytes do not match package metadata')
+    _, pin = json_bytes(stage.joinpath(*pin_rel.split('/')),4096)
+    if not isinstance(pin,dict) or set(pin) != {'profile','sha256'} or pin.get('profile') != gpu['profile'] or pin.get('sha256') != gpu['sha256']:
+        stop('Linux GPU helper does not match its integrity pin')
 def path_name(name):
     if not isinstance(name, str) or not name or len(name) > 240 or '\\' in name or name.startswith('/'):
         stop('archive path is invalid')
@@ -225,6 +250,7 @@ try:
             hashes[rel] = write_stream(stream,target,member.size,hasher,total)
             executables = ('excess-worker', 'node/bin/node',
                 'app/node_modules/@excess/adapters/native/excess-sandbox',
+                'app/node_modules/@excess/adapters/native/excess-gpu-sandbox',
                 'app/node_modules/@excess/adapters/native/excess-controller',
                 'app/node_modules/@excess/adapters/native/excess-egress-peer')
             os.chmod(target, 0o755 if rel in executables else 0o600)
@@ -243,6 +269,7 @@ try:
         if not verification_candidate or package.get('publicDistributionReady') is not False or package.get('releaseGate') != 'isolated-hardware-execution-pending' or package.get('licensesIncluded') is not True: stop('worker package distribution gate is closed')
         print('Installing a local signed verification candidate. Public release readiness remains closed.')
     if package.get('version') != version or package.get('releaseSequence') != sequence or package.get('sourceCommit') != commit or package.get('platform') != platform: stop('worker package source or platform identity mismatch')
+    validate_gpu_package(package,stage,seen,platform)
     for path in stage.rglob('*'):
         if path.is_symlink() or (not path.is_file() and not path.is_dir()): stop('staged package contains a link or special entry')
     # Re-read every staged file after writing, before the commit point.

@@ -1,0 +1,40 @@
+{
+  "format": 1,
+  "independentBuilds": 2,
+  "archiveEquality": "passed",
+  "strictPrivacy": "passed",
+  "configuration": {
+    "cuda": "12.9",
+    "nvcc": "12.9.86",
+    "architecture": "SM90",
+    "cpuNative": false,
+    "flashAttention": false,
+    "driverBundled": false,
+    "executionEvidence": false,
+    "sourceDateEpoch": 1726185600
+  },
+  "pins": {
+    "cuda-12.9-linux-x64-libraries.tar.gz": {
+      "bytes": 581207461,
+      "sha256": "01d9d8140dc4cad4a03407c446e75d3956ea5a0918fd7b6e6813406976d8129f"
+    },
+    "llama-b10809-linux-x64-cuda12.9-sm90.tar.gz": {
+      "bytes": 97277324,
+      "sha256": "e9e3b7e7a2c19ef7b9d5fb42d8aa348abfd8725af1ff354a0f12ca4788fdd9f1"
+    },
+    "sd-07a85c7-linux-x64-cuda12.9-sm90.tar.gz": {
+      "bytes": 40208582,
+      "sha256": "79d1a136849bebc61a2e4b6bc0fbf51dd90cac11f39c73775b3166acc96b8f11"
+    },
+    "NVIDIA-CUDA-EULA.txt": {
+      "bytes": 63522,
+      "sha256": "213f2f1cc4bfecd53eb1579edc89d6e3a024ddd2f77413b69b40e2bf3c114d84"
+    },
+    "NVIDIA-cuBLAS-EULA.txt": {
+      "bytes": 67876,
+      "sha256": "72c22161fc1ebf242443d45158a7dd382d68597b00eeb7a7f539be5c6114be33"
+    }
+  },
+  "gpuExecutionEvidence": false,
+  "oldPublishedRelease": "preserved"
+}

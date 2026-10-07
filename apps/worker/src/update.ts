@@ -38,6 +38,50 @@ function validatePackageState(value: unknown): ReleaseState | null {
   return { sequence: item.releaseSequence as number, version: item.version, sourceCommit: item.sourceCommit };
 }
 
+function requiresLinuxGpuSandbox(version: string): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!match) return false;
+  const major = Number(match[1]), minor = Number(match[2]);
+  return major > 0 || (major === 0 && minor >= 2);
+}
+
+function verifyGpuPackage(files: ReadonlyMap<string, Buffer>, details: Record<string, unknown>, platform: ReleasePlatform): void {
+  const gpu = details.gpu;
+  const version = typeof details.version === "string" ? details.version : "";
+  if (platform !== "linux-x64") {
+    if (gpu !== undefined) throw Error("Linux GPU package metadata is not valid for this platform");
+    return;
+  }
+  if (platform === "linux-x64" && gpu === undefined && !requiresLinuxGpuSandbox(version)) return;
+  if (!gpu || typeof gpu !== "object" || Array.isArray(gpu)) throw Error("Linux GPU package integrity metadata is missing");
+  const metadata = gpu as Record<string, unknown>;
+  const expectedKeys = ["file", "integrityFile", "profile", "sha256", "status"];
+  if (Object.keys(metadata).sort().join(",") !== expectedKeys.join(",") ||
+      metadata.profile !== "linux-cuda-device-budget-v1" ||
+      metadata.file !== "app/node_modules/@excess/adapters/native/excess-gpu-sandbox" ||
+      metadata.integrityFile !== "app/node_modules/@excess/adapters/native/integrity-gpu.json" ||
+      typeof metadata.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(metadata.sha256)) {
+    throw Error("Linux GPU package integrity metadata is invalid");
+  }
+  const execution = details.execution;
+  if (!execution || typeof execution !== "object" || Array.isArray(execution) || typeof (execution as Record<string, unknown>).gpuVerified !== "boolean")
+    throw Error("Linux GPU package evidence status is missing");
+  const gpuVerified = (execution as Record<string, unknown>).gpuVerified === true;
+  if ((metadata.status === "verified-configuration-only" && (!gpuVerified || details.publicDistributionReady !== true)) ||
+      (metadata.status === "candidate-unverified" && gpuVerified) ||
+      !["candidate-unverified", "verified-configuration-only"].includes(String(metadata.status))) {
+    throw Error("Linux GPU package claim does not match its recorded evidence");
+  }
+  const helper = files.get(metadata.file as string), pinBytes = files.get(metadata.integrityFile as string);
+  if (!helper || !pinBytes || digest(helper) !== metadata.sha256) throw Error("Linux GPU helper bytes do not match their integrity metadata");
+  let pin: unknown;
+  try { pin = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(pinBytes)); } catch { throw Error("Linux GPU integrity pin is invalid"); }
+  if (!pin || typeof pin !== "object" || Array.isArray(pin)) throw Error("Linux GPU integrity pin is invalid");
+  const value = pin as Record<string, unknown>;
+  if (Object.keys(value).sort().join(",") !== "profile,sha256" || value.profile !== metadata.profile || value.sha256 !== metadata.sha256)
+    throw Error("Linux GPU helper does not match its integrity pin");
+}
+
 /** Current signed-package identity, or null for ordinary source builds (which never self-update). */
 export async function currentReleaseState(entry: string = process.argv[1] ?? ""): Promise<ReleaseState | null> {
   if (!entry) return null;
@@ -244,6 +288,7 @@ async function extractRelease(archive: Buffer, manifest: ReleaseManifest, platfo
   try { packageManifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(packageBytes)); } catch { throw Error("Packaged worker manifest is invalid"); }
   const state = validatePackageState(packageManifest), details = packageManifest as Record<string, unknown>;
   if (!state || state.version !== manifest.version || state.sequence !== manifest.sequence || state.sourceCommit !== manifest.sourceCommit || details.platform !== platform) throw Error("Packaged worker identity does not match the signed release");
+  verifyGpuPackage(files, details, platform);
   const appName = manifest.version + "-" + manifest.sourceCommit.slice(0, 12), appsRoot = resolve(appsDir), target = join(appsRoot, appName);
   const stage = join(appsRoot, appName + ".new-" + randomUUID());
   await assertNoSymlinkComponents(appsDir);
@@ -258,7 +303,7 @@ async function extractRelease(archive: Buffer, manifest: ReleaseManifest, platfo
     if (platform === "linux-x64") {
       await chmod(inside(stage, "excess-worker"), 0o755);
       await chmod(inside(stage, "node/bin/node"), 0o755);
-      for (const name of ["excess-sandbox", "excess-controller", "excess-egress-peer"]) {
+      for (const name of ["excess-sandbox", "excess-gpu-sandbox", "excess-controller", "excess-egress-peer"]) {
         const helper = "app/node_modules/@excess/adapters/native/" + name;
         if (files.has(helper)) await chmod(inside(stage, helper), 0o755);
       }

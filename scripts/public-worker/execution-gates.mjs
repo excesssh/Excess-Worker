@@ -16,11 +16,34 @@ const platform = z.strictObject({
   configuration: z.string().min(1).max(512),
   reports: z.array(z.strictObject({ name: z.string().regex(/^[A-Za-z0-9_.-]+$/), sha256: digest })).min(1).max(16),
 });
-const schema = z.strictObject({
+const schemaV1 = z.strictObject({
   format: z.literal(1), testedSourceCommit: z.string().regex(/^[0-9a-f]{40}$/),
   signedCandidateSequence: z.number().int().positive(), signedManifestSha256: digest,
   platforms: z.strictObject({ 'win32-x64': platform, 'linux-x64': platform }),
 });
+const gpuScope = z.strictObject({
+  profile: z.literal('linux-cuda-device-budget-v1'), backend: z.literal('cuda'),
+  gpuCount: z.literal(1), device: z.literal(0),
+  gpu: z.string().regex(/(?:H100|H200)/).max(256),
+  driver: z.string().regex(/^[0-9.]+$/), cuda: z.literal('12.9'),
+  kernel: z.string().min(1).max(128), landlockAbi: z.number().int().min(6),
+  memoryMonitoring: z.literal('whole-device-nvml'),
+  hardVramPartition: z.literal(false),
+  checks: z.strictObject({ cancellation: z.literal(true), resourceLimitRefusal: z.literal(true),
+    drain: z.literal(true), restart: z.literal(true), revocation: z.literal(true), cleanup: z.literal(true) }),
+  verifiedModels: z.array(z.strictObject({
+    model: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/).max(128),
+    task: z.enum(['text', 'embedding', 'transcription', 'image']),
+    capabilityDigest: digest, reportSha256: digest,
+    maxMemoryMb: z.number().int().min(1024).max(129024),
+    maxGpuMemoryMb: z.number().int().min(1024).max(131072),
+  })).min(1).max(64),
+});
+const platformV2 = platform.extend({ gpuScope: gpuScope.optional() });
+const schemaV2 = schemaV1.extend({ format: z.literal(2),
+  platforms: z.strictObject({ 'win32-x64': platformV2, 'linux-x64': platformV2 }),
+});
+const schema = z.discriminatedUnion('format', [schemaV1, schemaV2]);
 
 // Manifest/readme changes cannot confer execution evidence. Bind every executable,
 // dependency, pin, launcher and licence byte; exclude only release metadata and onboarding.
@@ -61,9 +84,16 @@ export function verifyExecutionEvidence(bytes, selectedPlatform, payloadSha256, 
   const selected = value.platforms[selectedPlatform];
   if (!selected || selected.payloadSha256 !== payloadSha256 || sequence <= value.signedCandidateSequence)
     throw Error('EXECUTION_EVIDENCE_BINDING_MISMATCH');
-  if (selectedPlatform === 'win32-x64' && (!selected.gpuInference || !selected.gpuCancellation) ||
-      selectedPlatform === 'linux-x64' && (selected.gpuInference || selected.gpuCancellation))
+  const linuxGpu = selectedPlatform === 'linux-x64' && selected.gpuInference;
+  if (selectedPlatform === 'win32-x64' && (!selected.gpuInference || !selected.gpuCancellation || selected.gpuScope) ||
+      selectedPlatform === 'linux-x64' && (
+        value.format === 1 && (selected.gpuInference || selected.gpuCancellation) ||
+        value.format === 2 && (selected.gpuInference !== selected.gpuCancellation ||
+          linuxGpu !== Boolean(selected.gpuScope))))
+    throw Error('EXECUTION_EVIDENCE_GPU_SCOPE_INVALID');
+  if (selected.gpuScope && new Set(selected.gpuScope.verifiedModels.map(row => row.model)).size !== selected.gpuScope.verifiedModels.length)
     throw Error('EXECUTION_EVIDENCE_GPU_SCOPE_INVALID');
   return { testedSourceCommit: value.testedSourceCommit, payloadSha256,
-    evidenceSha256: hash(bytes), gpuVerified: selected.gpuInference, configuration: selected.configuration };
+    evidenceSha256: hash(bytes), gpuVerified: selected.gpuInference, configuration: selected.configuration,
+    ...(selected.gpuScope ? { gpuScope: selected.gpuScope } : {}) };
 }

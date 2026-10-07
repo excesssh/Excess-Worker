@@ -72,7 +72,7 @@ export function parseWorkerPolicy(input: unknown): WorkerPolicy {
   const whole = (key: "threads" | "maxMemoryMb" | "maxGpuMemoryMb" | "runSeconds" | "idleSeconds", minimum: number, maximum: number) => {
     if (!Number.isInteger(policy[key]) || policy[key] < minimum || policy[key] > maximum) invalid(`${key} must be a whole number from ${minimum} to ${maximum}`);
   };
-  whole("threads", 1, 64); whole("maxMemoryMb", 1024, 262144); whole("maxGpuMemoryMb", 1024, 32768); whole("runSeconds", 1, TEXT_LIMITS.maxRunSeconds); whole("idleSeconds", 1, 3600);
+  whole("threads", 1, 64); whole("maxMemoryMb", 1024, 262144); whole("maxGpuMemoryMb", 1024, 131072); whole("runSeconds", 1, TEXT_LIMITS.maxRunSeconds); whole("idleSeconds", 1, 3600);
   if (typeof policy.idleOnly !== "boolean") invalid("idleOnly must be true or false");
   if (typeof policy.pauseOnBattery !== "boolean") invalid("pauseOnBattery must be true or false");
   if (typeof policy.autoUpdate !== "boolean") invalid("autoUpdate must be true or false");

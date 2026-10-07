@@ -1,13 +1,14 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { readFile, writeFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { runWorker } from "../apps/worker/dist/runtime.js";
 import { setWorkerControl } from "../apps/worker/dist/control.js";
 import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { MEDIA_CATALOG, toneWav } from "../packages/adapters/dist/index.js";
 import { requestDigest, MEDIA_LIMITS } from "../packages/protocol/dist/index.js";
+import { createFixtureScratch } from "./helpers/fixture-scratch.mjs";
 
 // A fake coordinator and a fake media adapter exercise the buffered job path. Nothing here is model or hardware evidence.
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
@@ -21,6 +22,7 @@ afterEach(async () => {
   for (const f of fixtures) f.shutdown.abort();
   await Promise.allSettled(fixtures.map(f => setWorkerControl(f.dir, "stop")));
   await Promise.allSettled(fixtures.flatMap(f => [...f.operations]));
+  for (const f of fixtures) await f.scratch.cleanup();
 });
 const waitFor = async (check, message = "condition") => {
   const until = Date.now() + 8000;
@@ -28,9 +30,9 @@ const waitFor = async (check, message = "condition") => {
 };
 
 async function fixture(modelId, request, { maxUnits, output }) {
-  await mkdir(".cache", { recursive: true });
-  const dir = await mkdtemp(resolve(".cache/worker-media-fixture-")), shutdown = new AbortController(), operations = new Set();
-  live.add({ dir, shutdown, operations });
+  const scratch = await createFixtureScratch("worker-media-fixture-"), dir = scratch.path;
+  const shutdown = new AbortController(), operations = new Set();
+  live.add({ dir, shutdown, operations, scratch });
   const entry = MEDIA_CATALOG.find(item => item.id === modelId);
   const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 5, idleOnly: false, idleSeconds: 60, model: modelId, backend: entry.gpuOnly ? "cuda" : "cpu" };
   const deviceId = randomUUID();
@@ -98,7 +100,7 @@ async function fixture(modelId, request, { maxUnits, output }) {
   };
   const journal = async () => { try { return (await readFile(join(dir, "attempts.jsonl"), "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse); } catch { return []; } };
   const stop = async running => { await setWorkerControl(dir, "stop"); return running; };
-  return { dir, a, state, inputs, uploads, calls, counts, received, start, journal, stop };
+  return { dir, a, state, inputs, uploads, calls, counts, received, start, journal, stop, scratch };
 }
 const imageOutput = () => {
   const first = Buffer.alloc(600000, 1), second = Buffer.alloc(300000, 2);

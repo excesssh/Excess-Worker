@@ -4,7 +4,7 @@ import { runtimeRequestSchema,runtimeControlSchema } from "./runtime-rpc.js";
 
 const startSchema=z.strictObject({type:z.literal("start"),executable:z.string().min(1).max(4096),args:z.array(z.string().max(8192)).max(64),
   options:z.strictObject({cwd:z.string().min(1).max(4096),env:z.record(z.string(),z.string().optional()),maxMemoryBytes:z.number().int().positive(),
-    supervision:z.strictObject({protocol:z.literal("windows-appcontainer-v1"),input:z.string().min(1).max(65536)}).optional()})});
+    supervision:z.strictObject({protocol:z.enum(["windows-appcontainer-v1","linux-cuda-device-budget-v1"]),input:z.string().min(1).max(65536)}).optional()})});
 let native:ManagedProcess|undefined,started=false,closing=false,reporter:NodeJS.Timeout|undefined;
 function report(){if(process.connected&&native)process.send?.({type:"status",pid:native.nativePid(),peakRssBytes:native.peakRssBytes(),peakGpuMemoryBytes:native.peakGpuMemoryBytes(),peakDedicatedGpuMemoryBytes:native.peakDedicatedGpuMemoryBytes(),gpuOffloadedLayers:native.gpuOffloadedLayers(),error:native.error()?.code},undefined,undefined,()=>{});}
 async function shutdown() {

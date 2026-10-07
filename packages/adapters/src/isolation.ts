@@ -23,14 +23,17 @@ export async function isolateRuntime(executable: string, args: readonly string[]
       ...(options.maxGpuMemoryBytes!==undefined?{maxGpuMemoryBytes:options.maxGpuMemoryBytes}:{})});
   }
   if (process.platform !== "linux" || process.arch !== "x64") throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
-  // This profile cannot safely account for GPU virtual-address reservations or grant driver access.
-  if (options.backend !== "cpu") throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+  const gpu = options.backend === "cuda";
+  if (options.backend !== "cpu" && !gpu) throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+  if (gpu && (!Number.isSafeInteger(options.maxGpuMemoryBytes) || options.maxGpuMemoryBytes! < 1024**3 || options.maxGpuMemoryBytes! > 128*1024**3))
+    throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
   const base = fileURLToPath(new URL("../native/", import.meta.url));
-  const helper = join(base, "excess-sandbox");
+  const helper = join(base, gpu ? "excess-gpu-sandbox" : "excess-sandbox");
+  const profile = gpu ? "linux-cuda-device-budget-v1" : "linux-landlock-v1";
   try {
-    const pin = JSON.parse(await readFile(join(base, "integrity.json"), "utf8")) as { profile?: unknown; sha256?: unknown };
+    const pin = JSON.parse(await readFile(join(base, gpu ? "integrity-gpu.json" : "integrity.json"), "utf8")) as { profile?: unknown; sha256?: unknown };
     const hash = createHash("sha256").update(await readFile(helper)).digest("hex");
-    if (pin.profile !== "linux-landlock-v1" || typeof pin.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(pin.sha256) || hash !== pin.sha256) throw Error();
+    if (pin.profile !== profile || typeof pin.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(pin.sha256) || hash !== pin.sha256) throw Error();
   } catch { throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE"); }
   const parent = await realpath(tmpdir());
   await mkdir(parent, { recursive: true });
@@ -43,7 +46,8 @@ export async function isolateRuntime(executable: string, args: readonly string[]
     const reads = [...new Set(await Promise.all(options.readPaths.map(path => realpath(path))))];
     const models = [...new Set(await Promise.all((options.modelPaths ?? []).map(path => realpath(path))))];
     if (models.length > 32) throw Error();
-    return { executable: helper, args: [String(options.maxMemoryBytes), String(Math.ceil(options.timeoutMs / 1000) + 5), String(options.port), scratch,
-      String(reads.length), ...reads, String(models.length), ...models, "--", await realpath(executable), ...args], scratch, profile: "linux-landlock-v1", cleanup };
+    return { executable: helper, args: [...(gpu ? [String(options.maxGpuMemoryBytes)] : []), String(options.maxMemoryBytes), String(Math.ceil(options.timeoutMs / 1000) + 5), String(options.port), scratch,
+      String(reads.length), ...reads, String(models.length), ...models, "--", await realpath(executable), ...args], scratch, profile,
+      ...(gpu ? { supervision: { protocol: "linux-cuda-device-budget-v1" as const, input: "{}" } } : {}), cleanup };
   } catch { await cleanup(); throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE"); }
 }

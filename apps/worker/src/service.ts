@@ -8,14 +8,19 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { readWorkerPolicy } from "./policy.js";
 const execute = promisify(execFile);
 
 export const SERVICE_NAME = "excess-worker.service";
 
 /** The unit file. `drain` and `stop-now` end `run` cleanly, and a clean exit is not restarted. */
-export function userUnit(launcher: string): string {
+export function userUnit(launcher: string, policy?: { backend: string; maxMemoryMb: number }): string {
   if (!/^\/[^\n"\\$%`]+$/.test(launcher)) throw Error("The worker launcher path cannot be written into a unit file");
-  const memoryMb = Math.max(256, Math.min(12288, Math.floor(os.totalmem() * 0.75 / 1048576)));
+  const gpu = policy?.backend === "cuda";
+  const requested = gpu ? policy!.maxMemoryMb + 2048 : 12288;
+  if (gpu && (!Number.isSafeInteger(requested) || requested < 3072 || requested > 131072)) throw Error("CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED");
+  const memoryMb = Math.max(256, Math.min(requested, Math.floor(os.totalmem() * 0.75 / 1048576)));
+  if (gpu && memoryMb < requested) throw Error("CONTROLLER_RESOURCE_BOUNDARY_REQUIRED");
   return ["[Unit]", "Description=EXCESS supplier worker", "Wants=network-online.target", "After=network-online.target", "",
     "[Service]", `ExecStart="${launcher}" run`, "Restart=on-failure", "RestartSec=15",
     `MemoryMax=${memoryMb}M`, "MemorySwapMax=0", "TasksMax=128", "CPUQuota=200%",
@@ -51,7 +56,8 @@ export async function workerService(action: string | undefined) {
   if (action === "install") {
     const launcher = await launcherPath();
     await mkdir(dirname(unit), { recursive: true });
-    await writeFile(unit, userUnit(launcher), { mode: 0o644 });
+    const policy = await readWorkerPolicy(resolve(process.env.EXCESS_WORKER_HOME ?? ".local/worker"));
+    await writeFile(unit, userUnit(launcher, policy), { mode: 0o644 });
     const reload = await systemctl("daemon-reload"), enable = reload.ok ? await systemctl("enable", "--now", SERVICE_NAME) : reload;
     const linger = await lingering();
     return { product: "EXCESS", service: SERVICE_NAME, unit, launcher, started: enable.ok,

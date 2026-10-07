@@ -8,6 +8,7 @@ import {archiveDirectory} from "./public-worker/archive.mjs";
 import {assertPublicBytes} from "./public-worker/privacy.mjs";
 import {bundleWindowsControllerEntry} from "./public-worker/build-windows-controller-entry.mjs";
 import {packagePayloadFingerprint,verifyExecutionEvidence} from "./public-worker/execution-gates.mjs";
+import {readLinuxGpuSandbox,requiresLinuxGpuSandbox} from "./public-worker/linux-gpu-package.mjs";
 
 // Builds the supplier worker package for Windows x64 (default) or Linux x64 (--platform linux-x64): a Node runtime,
 // the compiled worker and only its runtime dependencies, a launcher, onboarding notes and SHA-256 sums.
@@ -22,6 +23,7 @@ if(!linux&&(process.platform!=="win32"||process.arch!=="x64"))throw new Error("P
 if(process.version!=="v24.11.1")throw new Error("PACKAGE_REQUIRES_PINNED_NODE_24_11_1");
 const version=JSON.parse(await readFile(join(root,"apps/worker/package.json"),"utf8")).version;
 if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))throw Error("PACKAGE_VERSION_INVALID");
+const packageNeedsLinuxGpuSandbox=linux&&requiresLinuxGpuSandbox(version);
 const releaseSequence=Number(process.env.EXCESS_RELEASE_SEQUENCE??1);
 if(!Number.isSafeInteger(releaseSequence)||releaseSequence<1)throw Error("RELEASE_SEQUENCE_INVALID");
 let sourceEpoch;
@@ -53,6 +55,7 @@ const nativeRoot=resolve(option("--native-dir")??join(root,"packages","adapters"
 const helperFile=linux?"excess-sandbox":"ExcessSandbox.exe",pinFile=linux?"integrity.json":"integrity-win32.json";
 const expectedProfile=linux?"linux-landlock-v1":"windows-appcontainer-v1";
 let native;
+let gpuNative;
 const controllerFiles=[];
 await noLinks(nativeRoot);
 const helperInfo=await lstat(join(nativeRoot,helperFile)).catch(error=>{if(error.code==="ENOENT")return null;throw error;});
@@ -65,6 +68,8 @@ if(helperInfo){
   if(pin.profile!==expectedProfile||pin.sha256!==hash)throw Error("RUNTIME_SANDBOX_INTEGRITY_INVALID");
   native={helper,pinBytes,profile:expectedProfile,sha256:hash};
 }else if(linux||args.includes("--require-native"))throw Error("RUNTIME_SANDBOX_BUILD_REQUIRED");
+
+if(packageNeedsLinuxGpuSandbox)gpuNative=await readLinuxGpuSandbox(nativeRoot);
 
 {
   for(const [file,pin,profile] of linux?[
@@ -113,6 +118,10 @@ for(const pkg of ["adapters","protocol"]){
     await mkdir(join(target,"native"),{recursive:true});
     await writeFile(join(target,"native",helperFile),native.helper);
     await writeFile(join(target,"native",pinFile),native.pinBytes);
+     if(gpuNative){
+       await writeFile(join(target,"native","excess-gpu-sandbox"),gpuNative.helper);
+       await writeFile(join(target,"native","integrity-gpu.json"),gpuNative.pinBytes);
+     }
     for(const file of controllerFiles){
       await writeFile(join(target,"native",file.file),file.bytes);
       await writeFile(join(target,"native",file.pin),file.pinBytes);
@@ -154,7 +163,8 @@ await writeFile(join(stage,"ONBOARDING.txt"),[
   `  3. ${cli} complete-pairing`,
   `  4. ${cli} models                     see every model (text, embedding, transcription, image) and whether this computer fits it`,
   `     ${cli} use qwen3-4b               choose the pinned verified text model on the CPU`,
-  linux?"     Linux GPU execution is not supported by the current isolation profile.":"     Windows CUDA Qwen3-4B requires an explicit policy with at least 6144 MiB host memory and 6144 MiB combined GPU memory. See docs/PLATFORMS.md; GPU memory is monitored, not reserved.",
+  gpuNative?"     Linux CUDA candidate (execution unverified): hardware fit is model-specific; this package does not claim support for every model.":
+    linux?"     Linux GPU execution is not supported by the current isolation profile.":"     Windows CUDA Qwen3-4B requires an explicit policy with at least 6144 MiB host memory and 6144 MiB combined GPU memory. See docs/PLATFORMS.md; GPU memory is monitored, not reserved.",
   `  5. ${cli} install-model --accept-download --accept-licenses   downloads the chosen model (0.6 to 64 GB; checks free disk first)`,
   `     ${cli} import <model id> <file.gguf ...> --accept-licenses   already have the exact GGUF (LM Studio, llama.cpp)? use it instead of downloading`,
   `  6. ${cli} offer USDG <price>          per million output tokens (text), million input tokens (embedding), audio hour (transcription) or image`,
@@ -184,15 +194,22 @@ if(args.includes("--release-ready")){
   verification=verifyExecutionEvidence(evidence,platform,await packagePayloadFingerprint(stage),releaseSequence);
   execFileSync("git",[...gitArgs,"merge-base","--is-ancestor",verification.testedSourceCommit,commit],{cwd:root,stdio:"ignore"});
   const notes=await readFile(join(stage,"ONBOARDING.txt"),"utf8");
-  await writeFile(join(stage,"ONBOARDING.txt"),notes.replace("Excess Worker local candidate", "Excess Worker")
+  const updatedNotes=notes.replace("Excess Worker local candidate", "Excess Worker")
     .replace("UNRELEASED: isolated CPU/GPU execution has not passed the release gates. Model execution fails closed on unsupported isolation profiles.",
-      "Verified configuration: "+verification.configuration+". Unsupported model and isolation profiles refuse execution. Anonymous Minisign release signing; Windows has no trusted publisher signature."));
+      "Verified configuration: "+verification.configuration+". Unsupported model and isolation profiles refuse execution. Anonymous Minisign release signing; Windows has no trusted publisher signature.");
+  await writeFile(join(stage,"ONBOARDING.txt"),gpuNative&&verification.gpuVerified===true
+    ?updatedNotes.replace("Linux CUDA candidate (execution unverified): hardware fit is model-specific; this package does not claim support for every model.",
+      "Linux CUDA is verified only for the recorded configuration: "+verification.configuration+". Hardware fit remains model-specific.")
+    :updatedNotes);
 }
 const ready=verification!==undefined;
 await writeFile(join(stage,"manifest.json"),JSON.stringify({product:"EXCESS",package:"worker",version,platform,node:nodeVersion,sourceCommit:commit,
   releaseSequence,licensesIncluded:nodeLicenseIncluded,publicDistributionReady:ready,releaseGate:ready?"verified-execution":"isolated-hardware-execution-pending",codeSigned:false,
   releaseSigning:"anonymous-minisign",...(!linux?{windowsPublisher:"no-trusted-authenticode-signature"}:{}),
   execution:{profile:native?.profile??"unavailable",cpuVerified:ready,gpuVerified:verification?.gpuVerified??false},
+  ...(gpuNative?{gpu:{profile:gpuNative.profile,file:"app/node_modules/@excess/adapters/native/excess-gpu-sandbox",
+    integrityFile:"app/node_modules/@excess/adapters/native/integrity-gpu.json",sha256:gpuNative.sha256,
+    status:ready&&verification?.gpuVerified===true?"verified-configuration-only":"candidate-unverified"}}:{}),
   ...(verification?{verification}:{}),
   ...(native?{native:{profile:native.profile,file:"app/node_modules/@excess/adapters/native/"+helperFile,sha256:native.sha256}}:{}),
   controller:{profile:linux?"linux-controller-namespaces-v1":"windows-appcontainer-controller-v1",files:controllerFiles.map(({file,profile,sha256})=>({file:"app/node_modules/@excess/adapters/native/"+file,profile,sha256})),verified:ready},

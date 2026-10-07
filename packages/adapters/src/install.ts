@@ -11,7 +11,7 @@ const MiB=1024*1024,GiB=1024*MiB;
 // Each platform and backend archive has its own reviewed bounds; CUDA runtimes are far larger than the CPU builds.
 const ARCHIVE_LIMITS:Readonly<Record<Platform,Partial<Record<Backend,ZipLimits>>>>={
   "win32-x64":{cpu:DEFAULT_ZIP_LIMITS,cuda:{maxInputBytes:512*MiB,maxTotalBytes:4*GiB,maxEntryBytes:2*GiB}},
-  "linux-x64":{cpu:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB},vulkan:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:256*MiB}},
+  "linux-x64":{cuda:{maxInputBytes:1024*MiB,maxTotalBytes:4*GiB,maxEntryBytes:1024*MiB},cpu:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB},vulkan:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:256*MiB}},
 };
 export interface InstallProgress { artifact:string; receivedBytes:number; totalBytes:number }
 export interface VerifiedRuntimeFile {path:string;sha256:string}

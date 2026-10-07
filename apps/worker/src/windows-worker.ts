@@ -80,7 +80,7 @@ export function validateWindowsControllerModelPolicy(policy: WorkerPolicy): void
   if (policy.backend !== "cpu") {
     if (policy.backend !== "cuda" || policy.model !== "qwen3-4b") throw Error("CONTROLLER_GPU_PROFILE_UNVERIFIED");
     if (!Number.isSafeInteger(policy.maxMemoryMb) || policy.maxMemoryMb < 6144 ||
-        !Number.isSafeInteger(policy.maxGpuMemoryMb) || policy.maxGpuMemoryMb < 6144) throw Error("CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED");
+        !Number.isSafeInteger(policy.maxGpuMemoryMb) || policy.maxGpuMemoryMb < 6144 || policy.maxGpuMemoryMb > 32768) throw Error("CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED");
   }
   if (servedModel(policy.model).kind !== "text") throw Error("CONTROLLER_MEDIA_PROFILE_UNVERIFIED");
 }

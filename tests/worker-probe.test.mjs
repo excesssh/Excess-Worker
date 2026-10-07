@@ -1,13 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {mkdtemp,mkdir} from "node:fs/promises";
-import {resolve} from "node:path";
 import {runLocalProbe} from "../apps/worker/dist/probe.js";
 import {setWorkerControl,readWorkerStatus} from "../apps/worker/dist/control.js";
 import {parseWorkerPolicy} from "../apps/worker/dist/policy.js";
+import { createFixtureScratch } from "./helpers/fixture-scratch.mjs";
 
-test("explicit probe obeys idle policy and local stop without leaving a fake process running",async()=>{
-  await mkdir(".cache",{recursive:true});const dir=await mkdtemp(resolve(".cache/worker-probe-fixture-"));
+test("explicit probe obeys idle policy and local stop without leaving a fake process running",async t=>{
+  const scratch=await createFixtureScratch("worker-probe-fixture-");t.after(()=>scratch.cleanup());const dir=scratch.path;
   // Idle-only is set explicitly: it is the Windows default only, and without it the first probe would never be blocked.
   const policy=parseWorkerPolicy({idleOnly:true});
   let probes=0,stopCalls=0,rejectProbe;

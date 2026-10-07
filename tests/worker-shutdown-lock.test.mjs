@@ -2,22 +2,26 @@ import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { acquireRuntimeLock, setWorkerControl, readWorkerControl, readWorkerStatus } from "../apps/worker/dist/control.js";
 import { runWorker } from "../apps/worker/dist/runtime.js";
 import { runLocalProbe } from "../apps/worker/dist/probe.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
+import { createFixtureScratch } from "./helpers/fixture-scratch.mjs";
 
 // Fake stop rejection is deliberately unresolved process evidence, not a real
 // model failure. The only child spawned here runs the lock helper and exits.
 const live = new Set();
+const scratchDirectories = new Set();
 afterEach(async () => {
   const pending = [...live]; live.clear();
   for (const fixture of pending) fixture.shutdown.abort();
   await Promise.allSettled(pending.map(fixture => fixture.operation));
+  const scratches = [...scratchDirectories]; scratchDirectories.clear();
+  for (const scratch of scratches) await scratch.cleanup();
 });
-async function directory() { await mkdir(".cache", { recursive: true }); return mkdtemp(resolve(".cache/worker-shutdown-fixture-")); }
+async function directory() { const scratch = await createFixtureScratch("worker-shutdown-fixture-"); scratchDirectories.add(scratch); return scratch.path; }
 const readLock = async dir => JSON.parse(await readFile(join(dir, "runtime.lock"), "utf8"));
 const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 5, idleOnly: false, idleSeconds: 60 };
 const telemetry = async () => ({ freeMemoryMb: 8192, idleSeconds: 120 });

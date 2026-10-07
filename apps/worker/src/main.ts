@@ -24,7 +24,26 @@ import { createCoordinatorFetcher } from "./coordinator-fetch.js";
 import { configuredControllerOrigin, saveControllerOrigin } from "./controller-config.js";
 const execute = promisify(execFile);
 const gigabytes = (bytes: number) => (bytes / 1073741824).toFixed(1) + " GB";
+const memoryMb = (mb: number) => (Number.isInteger(mb / 1024) ? String(mb / 1024) : (mb / 1024).toFixed(1)) + " GB";
 const diskMessage = (disk: DiskCheck) => `INSUFFICIENT_DISK_SPACE: this install needs ${gigabytes(disk.requiredBytes)} free on the model drive and ${gigabytes(disk.freeBytes ?? 0)} is free. Free space or set EXCESS_MODEL_DIR to a larger drive.`;
+function selectionBudgetProblems(entry: ReturnType<typeof servedModel>, backend: Backend, policy: { maxMemoryMb: number; maxGpuMemoryMb: number }): string[] {
+  const problems: string[] = [];
+  if (backend === "cpu") {
+    if (policy.maxMemoryMb < entry.minMemoryMb) problems.push(`${entry.id} needs an explicit host memory cap of at least ${memoryMb(entry.minMemoryMb)}; model selection does not raise it.`);
+    return problems;
+  }
+  if (backend !== "cuda") return ["Isolated Vulkan execution is refused; choose CPU or the supported NVIDIA CUDA profile."];
+  const windows = process.platform === "win32", linux = process.platform === "linux";
+  if (!windows && !linux) return ["No isolated GPU profile is available on this operating system."];
+  const minimumHostMb = Math.max(entry.minMemoryMb, windows ? 6144 : 0);
+  const minimumGpuMb = Math.max(entry.minVramMb, windows ? 6144 : 0);
+  if (policy.maxMemoryMb < minimumHostMb) problems.push(`${entry.id} needs an explicit host memory cap of at least ${memoryMb(minimumHostMb)} for this CUDA profile; model selection does not raise it.`);
+  if (policy.maxGpuMemoryMb < minimumGpuMb) problems.push(`${entry.id} needs an explicit GPU memory budget of at least ${memoryMb(minimumGpuMb)}; model selection does not raise it.`);
+  if (windows && policy.maxGpuMemoryMb > 32768) problems.push("Windows CUDA GPU memory budget cannot exceed 32 GB.");
+  if (linux && policy.maxGpuMemoryMb > 131072) problems.push("Linux CUDA GPU memory budget cannot exceed 128 GB.");
+  if (linux && policy.maxMemoryMb > 129024) problems.push("Linux CUDA host memory cap cannot exceed 126 GB; the controller needs 2 GB within the 128 GB total budget.");
+  return problems;
+}
 export async function diagnostics() {
   let nvidia: { status: string; devices: string[] } = { status: "unavailable", devices: [] };
   try {
@@ -74,9 +93,12 @@ try {
   const flags = new Set(args.filter(arg => arg.startsWith("--"))), positional = args.filter(arg => !arg.startsWith("--"));
   const stateDir = resolve(process.env.EXCESS_WORKER_HOME ?? ".local/worker"), installDir = resolve(process.env.EXCESS_MODEL_DIR ?? ".local/ai");
   const path = resolve(stateDir, "identity.json");
-  // --gpu means CUDA on Windows and Vulkan on Linux.
-  const gpuBackend: Backend = process.platform === "win32" ? "cuda" : "vulkan";
-  const chosenBackend = (fallback: Backend): Backend => flags.has("--gpu") ? gpuBackend : flags.has("--cpu") ? "cpu" : fallback;
+  // --gpu selects only an isolated CUDA route. Vulkan entries remain catalogued, but isolated Vulkan execution is refused.
+  const gpuBackend = (): Backend => {
+    if (process.platform === "win32" || process.platform === "linux") return "cuda";
+    throw Error("GPU_ISOLATION_UNVERIFIED: no isolated GPU profile is available on this operating system");
+  };
+  const chosenBackend = (fallback: Backend): Backend => flags.has("--gpu") ? gpuBackend() : flags.has("--cpu") ? "cpu" : fallback;
   if (command === "doctor") print(await diagnostics());
   else if (command === "pair") {
     let exists = false;
@@ -109,15 +131,21 @@ try {
         downloadBytes: entry.downloadBytes, licence: entry.licence, installed: installed.models.includes(entry.id), gpuOnly: entry.gpuOnly,
         executionEvidence: "not established by catalogue inventory", ...fit })),
       next: "excess-worker use <model id> [--gpu], then excess-worker install-model <model id> [--gpu] --accept-download --accept-licenses (or excess-worker import <model id> <file.gguf ...> --accept-licenses if you already have the exact file)",
-      note: "Kinds: text (streamed), embedding, transcription and image (buffered). fits says where a model fits: gpu, cpu, gpu or cpu, or no. GPU memory is read from nvidia-smi; other GPUs are not measured. GPU mode needs an NVIDIA GPU with a current driver on Windows or a Vulkan driver on Linux; gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. Fit estimates are guidance; the worker's local check decides." });
+      note: "Kinds: text (streamed), embedding, transcription and image (buffered). fits is a hardware-size estimate, not execution evidence. GPU memory is read from nvidia-smi; other GPUs are not measured. Windows CUDA is verified only for Qwen3 4B on its recorded RTX 3070 Ti and driver 596.49 configuration. Linux --gpu selects CUDA for a new, unverified Worker 0.2.0 candidate: NVIDIA SM90, CUDA 12.9, driver 580 or newer, helper ABI 6 and kernel 6.12 or newer are required. The published 0.1.0 Linux archive remains CPU-only. Vulkan catalog/runtime entries remain visible, but isolated Vulkan execution is refused. gpuOnly models never run on the CPU. Reasoning models think before answering, and those tokens are billed as output. The worker's local check decides whether a model can be served." });
   } else if (command === "use") {
     if (positional.length !== 1) throw Error("Usage: worker use <model id> [--gpu | --cpu]");
     const current = await readWorkerPolicy(stateDir), entry = servedModel(positional[0]!);
     if (entry.gpuOnly && flags.has("--cpu")) throw Error("This model runs on a GPU only; use --gpu");
-    const backend = entry.gpuOnly ? gpuBackend : chosenBackend("cpu");
-    const policy = await writeWorkerPolicy(stateDir, { ...current, model: entry.id, backend,
-      maxMemoryMb: backend === "cpu" ? Math.max(current.maxMemoryMb, entry.minMemoryMb) : current.maxMemoryMb });
-    print({ product: "EXCESS", policy, kind: entry.kind, next: `excess-worker install-model ${entry.id}${backend !== "cpu" ? " --gpu" : ""} --accept-download --accept-licenses (if not installed), then excess-worker offer <SYMBOL> <price per ${priceUnit(entry.kind).label}>` });
+    const backend = entry.gpuOnly ? gpuBackend() : chosenBackend("cpu");
+    if (backend === "cuda" && process.platform === "win32" && entry.id !== "qwen3-4b")
+      throw Error("GPU_PROFILE_UNVERIFIED: Windows CUDA is available only for the verified Qwen3 4B profile.");
+    const budgetProblems = selectionBudgetProblems(entry, backend, current);
+    if (budgetProblems.length) throw Error("MODEL_RESOURCE_BUDGET_REQUIRED: " + budgetProblems.join(" "));
+    const policy = await writeWorkerPolicy(stateDir, { ...current, model: entry.id, backend });
+    const linuxGpuCandidate = backend === "cuda" && process.platform === "linux";
+    print({ product: "EXCESS", policy, kind: entry.kind, executionEvidence: "not established by catalogue inventory",
+      ...(linuxGpuCandidate ? { candidate: "unverified Linux CUDA profile; new Worker 0.2.0 binary and actual hardware trial required; published 0.1.0 Linux archive remains CPU-only" } : {}),
+      next: `excess-worker install-model ${entry.id}${backend !== "cpu" ? " --gpu" : ""} --accept-download --accept-licenses (if not installed), then excess-worker offer <SYMBOL> <price per ${priceUnit(entry.kind).label}>. Resource caps stay at their configured values.` });
   } else if (command === "model-plan") {
     const policy = await readWorkerPolicy(stateDir), id = positional[0] ?? policy.model, backend = chosenBackend(policy.backend), text = servedModel(id).kind === "text";
     const plan = text ? textInstallationPlan(installDir, id, backend) : mediaInstallationPlan(installDir, id, backend);

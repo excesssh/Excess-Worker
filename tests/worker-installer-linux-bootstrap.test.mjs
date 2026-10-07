@@ -58,14 +58,26 @@ function makeRelease(archive, { version, commit, sequence }) {
   }));
 }
 
-function packageFiles({ version, commit, sequence, ready = true, packageCommit = commit, candidate = false }) {
-  const manifest = Buffer.from(JSON.stringify({ product: "EXCESS", package: "worker", publicDistributionReady: ready,
+function packageFiles({ version, commit, sequence, ready = true, packageCommit = commit, candidate = false, gpuMode = "valid" }) {
+  const packageManifest = { product: "EXCESS", package: "worker", publicDistributionReady: ready,
     ...(candidate?{releaseGate:'isolated-hardware-execution-pending',licensesIncluded:true}:{}),
-    releaseSequence: sequence, version, sourceCommit: packageCommit, platform: "linux-x64" }));
+    releaseSequence: sequence, version, sourceCommit: packageCommit, platform: "linux-x64",
+    execution: { profile: "linux-landlock-v1", cpuVerified: ready, gpuVerified: false } };
   const launcher = ["#!/bin/sh", "set -eu", "DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)",
     "exec \"$DIR/node/bin/node\" \"$DIR/app/worker/dist/main.js\" \"$@\"", ""].join("\n");
   const node = ["#!/bin/sh", "printf '%s\\n' \"$@\" > \"$EXCESS_WORKER_TEST_MARKER\"", ""].join("\n");
-  return { "manifest.json": manifest, "excess-worker": Buffer.from(launcher), "node/bin/node": Buffer.from(node), "@fixture/package": Buffer.from("scoped archive path") };
+  const files = { "excess-worker": Buffer.from(launcher), "node/bin/node": Buffer.from(node), "@fixture/package": Buffer.from("scoped archive path") };
+  const core = version.split("-",1)[0].split(".").map(Number), required = core[0] > 0 || (core[0] === 0 && core[1] >= 2);
+  if (required && gpuMode !== "missing") {
+    const helper = Buffer.from("linux installer GPU helper fixture"), helperHash = digest(helper);
+    const helperPath = "app/node_modules/@excess/adapters/native/excess-gpu-sandbox";
+    const integrityPath = "app/node_modules/@excess/adapters/native/integrity-gpu.json";
+    files[helperPath] = helper;
+    files[integrityPath] = Buffer.from(JSON.stringify({ profile: "linux-cuda-device-budget-v1", sha256: gpuMode === "pin" ? "f".repeat(64) : helperHash }));
+    packageManifest.gpu = { profile: "linux-cuda-device-budget-v1", file: helperPath, integrityFile: integrityPath, sha256: helperHash, status: "candidate-unverified" };
+  }
+  files["manifest.json"] = Buffer.from(JSON.stringify(packageManifest));
+  return files;
 }
 
 test("Linux standalone installer executes signed fixture install, upgrade, rollback and rejection cases in WSL", {
@@ -83,8 +95,8 @@ test("Linux standalone installer executes signed fixture install, upgrade, rollb
     add(manifest, release); add(sig, signature); add(`cases/${name}/${filename}`, archiveBytes);
     input[`cases/${name}/filename.txt`] = Buffer.from(filename).toString("base64");
   }
-  function signedCase(name, { version = "1.1.0", commit = firstCommit, sequence = 2, ready = true, packageCommit = commit, symlink = false, candidate = false } = {}) {
-    const folder = `excess-worker-${version}-linux-x64`, archive = tarArchive(folder, packageFiles({ version, commit, sequence, ready, packageCommit,candidate }), symlink);
+  function signedCase(name, { version = "1.1.0", commit = firstCommit, sequence = 2, ready = true, packageCommit = commit, symlink = false, candidate = false, gpuMode = "valid" } = {}) {
+    const folder = `excess-worker-${version}-linux-x64`, archive = tarArchive(folder, packageFiles({ version, commit, sequence, ready, packageCommit,candidate,gpuMode }), symlink);
     const release = makeRelease(archive, { version, commit, sequence }), signature = signer.sign(release);
     addCase(name, archive, release, signature);
     return { archive, release, signature };
@@ -107,6 +119,9 @@ test("Linux standalone installer executes signed fixture install, upgrade, rollb
   addCase('candidate-tampered',candidate.archive,candidate.release,candidate.signature,alteredCandidate);
   signedCase("unsafe", { symlink: true });
   signedCase("identity", { packageCommit: "f".repeat(40) });
+  signedCase("gpu-missing", { gpuMode: "missing" });
+  signedCase("gpu-pin", { gpuMode: "pin" });
+  const legacy = signedCase("legacy-v01", { version: "0.1.1", sequence: 2 });
 
   const payload = JSON.stringify(input);
   const wrapper = `set -eu
@@ -129,8 +144,8 @@ ${payload}
 PAYLOAD
 cp "$tools/install.sh" "$tools/install-under-test.sh"
 chmod 700 "$tools/install-under-test.sh"
-run_ok() { case_name=$1; prefix=$2; case_dir="$tools/cases/$case_name"; filename=$(cat "$case_dir/filename.txt"); EXCESS_INSTALL_ROOT="$prefix" sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$prefix" >"$tools/output" 2>&1 || { printf 'fixture-success-failed:%s\n' "$case_name"; exit 1; }; }
-run_fail() { case_name=$1; prefix=$2; expected_text=$3; case_dir="$tools/cases/$case_name"; filename=$(cat "$case_dir/filename.txt"); if EXCESS_INSTALL_ROOT="$prefix" sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$prefix" >"$tools/output" 2>&1; then printf 'fixture-should-refuse:%s\n' "$case_name"; exit 1; fi; grep -F -q "$expected_text" "$tools/output" || { printf 'fixture-wrong-refusal:%s\n' "$case_name"; exit 1; }; }
+run_ok() { case_name=$1; install_prefix=$2; case_dir="$tools/cases/$case_name"; filename=$(cat "$case_dir/filename.txt"); EXCESS_INSTALL_ROOT="$install_prefix" sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$install_prefix" >"$tools/output" 2>&1 || { printf 'fixture-success-failed:%s\n' "$case_name"; exit 1; }; }
+run_fail() { case_name=$1; install_prefix=$2; expected_text=$3; case_dir="$tools/cases/$case_name"; filename=$(cat "$case_dir/filename.txt"); if EXCESS_INSTALL_ROOT="$install_prefix" sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$install_prefix" >"$tools/output" 2>&1; then printf 'fixture-should-refuse:%s\n' "$case_name"; exit 1; fi; grep -F -q "$expected_text" "$tools/output" || { printf 'fixture-wrong-refusal:%s\n' "$case_name"; exit 1; }; }
 prefix="$tools/installed"
 step=candidate-installation
 run_fail candidate "$tools/candidate-default" 'distribution gate is closed'
@@ -140,9 +155,14 @@ python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["publicDistribu
 case_dir="$tools/cases/candidate-tampered"; filename=$(cat "$case_dir/filename.txt")
 if sh "$tools/install-under-test.sh" "$case_dir/release.json" "$case_dir/release.json.minisig" "$case_dir/$filename" --prefix "$tools/candidate-install" --verification-candidate >"$tools/output" 2>&1; then exit 91; fi
 grep -F -q 'archive SHA-256 mismatch' "$tools/output"
+step=legacy-v01-compatibility
+run_ok legacy-v01 "$tools/legacy-installed"
+[ -x "$tools/legacy-installed/bin/excess-worker" ]
+[ ! -e "$tools/legacy-installed/app/0.1.1-0123456789ab/app/node_modules/@excess/adapters/native/excess-gpu-sandbox" ]
 step=initial-install
 run_ok first "$prefix"
 [ -x "$prefix/bin/excess-worker" ] && [ -f "$prefix/app/1.1.0-0123456789ab/manifest.json" ]
+[ -x "$prefix/app/1.1.0-0123456789ab/app/node_modules/@excess/adapters/native/excess-gpu-sandbox" ]
 run_ok second "$prefix"
 [ -f "$prefix/app/1.1.0-0123456789ab/manifest.json" ] && [ -f "$prefix/app/1.2.0-abcdef012345/manifest.json" ]
 sequence=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sequence"])' "$prefix/state/release-high-water.json")
@@ -191,8 +211,10 @@ run_fail tamper-manifest "$tools/manifest-install" 'pinned Minisign signature ve
 run_fail closed "$tools/closed-install" 'worker package distribution gate is closed'
 run_fail unsafe "$tools/unsafe-install" 'archive links and special entries are not allowed'
 run_fail identity "$tools/identity-install" 'worker package source or platform identity mismatch'
-for name in tamper-install manifest-install closed-install unsafe-install identity-install; do [ ! -e "$tools/$name" ]; done
-printf 'Linux WSL bootstrap fixtures passed: install, upgrade, launcher, serialized concurrent installs, rollback, tampering, gate, unsafe tar, identity.\n'
+run_fail gpu-missing "$tools/gpu-missing-install" 'Linux GPU helper integrity metadata is missing or invalid'
+run_fail gpu-pin "$tools/gpu-pin-install" 'Linux GPU helper does not match its integrity pin'
+for name in tamper-install manifest-install closed-install unsafe-install identity-install gpu-missing-install gpu-pin-install; do [ ! -e "$tools/$name" ]; done
+printf 'Linux WSL bootstrap fixtures passed: install, upgrade, launcher, CUDA helper integrity and mode, v0.1 compatibility, serialized installs, rollback, tampering, gate, unsafe tar, identity.\n'
 `;
   const result = spawnSync("wsl.exe", ["-d", "Ubuntu", "--", "sh", "-s"], { input: wrapper, encoding: "utf8", timeout: 180000, maxBuffer: 1024 * 1024 });
   const safeDiagnostic = `${result.stdout}\n${result.stderr}`.replace(/(?:[A-Za-z]:\\Users\\)[^\\\s]+/gi, "<home>").replace(/\/mnt\/[a-z]\/Users\/[^/\s]+/gi, "<home>").trim().slice(-500);

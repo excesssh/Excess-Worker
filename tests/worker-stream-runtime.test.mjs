@@ -1,13 +1,14 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { runWorker } from "../apps/worker/dist/runtime.js";
 import { setWorkerControl } from "../apps/worker/dist/control.js";
 import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
+import { createFixtureScratch } from "./helpers/fixture-scratch.mjs";
 
 // Injected adapters and coordinator receipts are synthetic transport fixtures.
 // Nothing in this file starts a model or attests hardware/token observations.
@@ -30,13 +31,13 @@ afterEach(async () => {
   for (const f of active) f.shutdown.abort();
   await Promise.allSettled(active.map(f => setWorkerControl(f.dir, "stop")));
   await Promise.allSettled(active.flatMap(f => [...f.operations]));
+  for (const f of active) await f.scratch.cleanup();
 });
 
 async function fixture() {
-  await mkdir(".cache", { recursive: true });
-  const dir = await mkdtemp(resolve(".cache/worker-stream-fixture-"));
+  const scratch = await createFixtureScratch("worker-stream-fixture-"), dir = scratch.path;
   const shutdown = new AbortController(), operations = new Set();
-  fixtures.add({ dir, shutdown, operations });
+  fixtures.add({ dir, shutdown, operations, scratch });
   const request = { prompt: "SYNTHETIC STREAM REQUEST", maxTokens: 16, seed: 42 }, deviceId = randomUUID();
   const a = { jobId: randomUUID(), attemptId: randomUUID(), deviceId, fence: "1", offerId: randomUUID(), capabilityDigest,
     requestDigest: requestDigest(request), maxUnits: "16", leaseExpiresAt: new Date(Date.now() + 60000).toISOString(), runDeadlineAt: new Date(Date.now() + 90000).toISOString() };
@@ -104,7 +105,7 @@ async function fixture() {
     operations.add(operation); operation.then(() => operations.delete(operation), () => operations.delete(operation)); return operation;
   };
   const journal = async () => (await readFile(join(dir, "attempts.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-  return { dir, a, chunks, output, state, calls, heartbeats, acceptedChunks, adapter, start, journal };
+  return { dir, a, chunks, output, state, calls, heartbeats, acceptedChunks, adapter, start, journal, scratch };
 }
 
 test("synthetic worker stream persists ordered chunks with backpressure, renews while awaiting ack, and drains", async () => {

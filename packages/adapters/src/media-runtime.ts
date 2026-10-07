@@ -13,12 +13,13 @@ import { startSupervisedProcess } from "./process.js";
 import { artifactRef,parsePng,parseWav,sha256,strictBase64,toneWav } from "./media-format.js";
 import { isolateRuntime, type RuntimeIsolation } from "./isolation.js";
 
-export interface MediaAdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:number;modelId:string;backend?:Backend}
+export interface MediaAdapterOptions {threads:number;maxMemoryMb:number;maxGpuMemoryMb?:number;timeoutMs:number;modelId:string;backend?:Backend}
 export interface MediaArtifact {ref:ArtifactRef;data:Buffer}
 /** A media result and the bytes of every artifact it references. */
 export interface MediaOutput {result:MediaResult;artifacts:MediaArtifact[]}
 export interface MediaProbe {ok:true;kind:MediaKind;capabilityDigest:string;backend:Backend;modelId:string;model:string;runtime:string;threads:number;maxMemoryMb:number;
-  probedAt:string;generatedTokens:0;elapsedMs:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
+  probedAt:string;generatedTokens:0;elapsedMs:number;peakRssMb:number;nativePid?:number;guardianPid?:number;maxGpuMemoryMb?:number;peakGpuMemoryMb?:number;
+  peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"linux-cuda-device-budget-v1";gpuMemoryScope?:"whole-device"}
 export interface MediaAdapter {
   readonly kind:MediaKind;
   /** Validates a request against the model's own limits before a job is started. */
@@ -34,7 +35,7 @@ export interface MediaAdapter {
 export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonly<Record<string,string>>}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
 
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
-  modelId:z.string().min(1).max(64),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
+  maxGpuMemoryMb:z.number().int().min(1024).max(131072).optional(),modelId:z.string().min(1).max(64),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
 // One embedding input is at most 8,192 UTF-8 bytes, so at most 8,192 tokens plus special tokens; last-token pooling
 // needs the whole input in one physical batch.
 const EMBEDDING_BATCH_TOKENS=8448;
@@ -53,14 +54,21 @@ export function cleanTranscript(content:string):string {
   return text.replace(/<\/asr_text>\s*$/,"").trim();
 }
 export function createMediaAdapter(installDir:string,options:MediaAdapterOptions):MediaAdapter {
-  if(mediaCatalogEntry(options.modelId).runtime!=="llama.cpp")throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
+  if(mediaCatalogEntry(options.modelId).runtime!=="llama.cpp" &&
+    (currentPlatform()!=="linux-x64" || options.backend!=="cuda"))throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
   return createMediaAdapterWith(options,{isolate:true,resolve:()=>verifyMediaInstallation(installDir,options?.modelId,options?.backend??"cpu")});
 }
 export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:MediaLaunch):MediaAdapter {
   const parsed=optionsSchema.safeParse(inputOptions);
   if(!parsed.success)throw new AdapterError("INVALID_ADAPTER_POLICY");
   const options=parsed.data,entry=mediaCatalogEntry(options.modelId),backend:Backend=options.backend??"cpu",llama=entry.runtime==="llama.cpp";
+  if(launch.isolate&&!llama&&(currentPlatform()!=="linux-x64"||backend!=="cuda"))throw new AdapterError("RUNTIME_AUTH_UNSUPPORTED");
   if(entry.gpuOnly&&backend==="cpu")throw new AdapterError("MODEL_REQUIRES_GPU");
+  if(launch.isolate&&backend!=="cpu"){
+    if(currentPlatform()!=="linux-x64"||backend!=="cuda")throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+    if(options.maxGpuMemoryMb===undefined)throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
+    if(options.maxGpuMemoryMb<entry.minVramMb)throw new AdapterError("GPU_MEMORY_BELOW_MODEL_REQUIREMENT");
+  }
   if(options.threads>availableParallelism()||options.maxMemoryMb*MiB>totalmem())throw new AdapterError("ADAPTER_POLICY_EXCEEDS_MACHINE");
   const limits=entry.capability.limits as {sizes?:number[];maxSteps?:number;maxImages?:number};
   const processes=new AdapterProcessState();
@@ -71,7 +79,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
   function serverArgs(files:Readonly<Record<string,string>>,selectedPort:number):string[] {
     const file=(name:string)=>{const path=files[name];if(!path)throw new AdapterError("ADAPTER_NOT_INSTALLED_OR_CORRUPT");return path;};
     const threads=String(options.threads),gpuLayers=backend==="cpu"?"0":"999";
-    const llamaCommon=["--host","127.0.0.1","--port",String(selectedPort),"--threads",threads,"--threads-batch",threads,"--threads-http","2","--parallel","1","--n-gpu-layers",gpuLayers,"--no-mmap","--no-webui","--no-cache-prompt"];
+    const llamaCommon=["--host","127.0.0.1","--port",String(selectedPort),"--threads",threads,"--threads-batch",threads,"--threads-http","2","--parallel","1","--n-gpu-layers",gpuLayers,...(backend==="cuda"?["--split-mode","none","--main-gpu","0","--log-verbosity","4","--log-colors","off"]:[]),...(currentPlatform()==="linux-x64"&&backend==="cuda"?["--flash-attn","off"]:[]),"--no-mmap","--no-webui","--no-cache-prompt"];
     if(entry.kind==="embedding")return ["--model",file("model.gguf"),...llamaCommon,"--ctx-size",String(EMBEDDING_BATCH_TOKENS),"--batch-size",String(EMBEDDING_BATCH_TOKENS),"--ubatch-size",String(EMBEDDING_BATCH_TOKENS),"--embeddings","--pooling","last"];
     if(entry.kind==="transcription")return ["--model",file("model.gguf"),"--mmproj",file("mmproj.gguf"),...llamaCommon,"--ctx-size",String(TRANSCRIPTION_CONTEXT),
       "--no-context-shift","--jinja","--reasoning-format","none",...(backend==="cpu"?["--no-mmproj-offload"]:[])];
@@ -90,7 +98,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
     const installed=await launch.resolve();signal.throwIfAborted();
     if(backend==="cpu"&&options.maxMemoryMb<entry.minMemoryMb)throw new AdapterError("ADAPTER_MEMORY_BELOW_MODEL_REQUIREMENT");
     const selectedPort=await port();signal.throwIfAborted();
-    secret=llama?randomBytes(32).toString("base64url"):"";origin=`http://127.0.0.1:${selectedPort}`;
+    secret=llama||launch.isolate?randomBytes(32).toString("base64url"):"";origin=`http://127.0.0.1:${selectedPort}`;
     let env:NodeJS.ProcessEnv;
     if(platform==="win32-x64") {
       const systemRoot=process.env.SystemRoot??"C:\\Windows";
@@ -100,13 +108,14 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
       env={PATH:"/usr/bin:/bin",LD_LIBRARY_PATH:dirname(installed.serverPath),OMP_NUM_THREADS:String(options.threads)};
       for(const key of ["HOME","TMPDIR"])if(process.env[key])env[key]=process.env[key];
     }
-    if(secret)env.LLAMA_API_KEY=secret;
+    if(secret)env[llama?"LLAMA_API_KEY":"SD_API_KEY"]=secret;
     const runtimeArgs=[...(launch.prefixArgs??[]),...serverArgs(installed.files,selectedPort)];
     if(launch.isolate){
       isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
         modelPaths:installed.modelFiles?.map(file=>file.path)??Object.entries(installed.files).filter(([name])=>!name.startsWith("licences/")).map(([,path])=>path),
         ...(installed.runtimeRoot?{runtimeRoot:installed.runtimeRoot}:{}),...(installed.runtimeFiles?{runtimeFiles:installed.runtimeFiles}:{}),
-        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*MiB,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*MiB,timeoutMs:options.timeoutMs,port:selectedPort,backend,
+        ...(options.maxGpuMemoryMb!==undefined?{maxGpuMemoryBytes:options.maxGpuMemoryMb*MiB}:{})});
       env.TEMP=isolation.scratch;env.TMP=isolation.scratch;
       if(platform==="linux-x64"){env.HOME=isolation.scratch;env.TMPDIR=isolation.scratch;}
     }
@@ -197,7 +206,17 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
     try {
       await processes.ready();
       signal.throwIfAborted();await ensure(signal);
-      return request.kind==="embedding"?await embed(request,signal):request.kind==="transcription"?await transcribe(request,inputs,signal):await image(request,signal);
+      const output=request.kind==="embedding"?await embed(request,signal):request.kind==="transcription"?await transcribe(request,inputs,signal):await image(request,signal);
+      if(launch.isolate&&backend==="cuda"){
+        // Check every result, including a runtime restarted after its startup probe.
+        // A CUDA context alone does not establish model residency. Each task needs
+        // a weight-sized allocation; llama media additionally needs full offload.
+        const runtime=processes.process;
+        const minimum=Math.floor(entry.artifacts.filter(file=>!file.name.startsWith("licences/")).reduce((sum,file)=>sum+file.bytes,0)*0.75);
+        if(!runtime?.alive()||runtime.peakDedicatedGpuMemoryBytes()<minimum||(llama&&runtime.gpuOffloadedLayers()<1))
+          throw new AdapterError("GPU_OFFLOAD_NOT_OBSERVED");
+      }
+      return output;
     }
     catch(error) {
       // Read the abort state before stop(), which aborts this run's own signal.
@@ -223,7 +242,10 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
         typeof guardianPid!=="number"||!Number.isSafeInteger(guardianPid)||guardianPid<=0){await stop();throw new AdapterError("RUNTIME_DIAGNOSTICS_UNAVAILABLE");}
       return {ok:true,kind:entry.kind,capabilityDigest:entry.capabilityDigest,backend,modelId:entry.id,model:entry.capability.model,runtime:entry.capability.runtime,
         threads:options.threads,maxMemoryMb:options.maxMemoryMb,probedAt:new Date().toISOString(),generatedTokens:0,elapsedMs:Date.now()-startedAt,
-        peakRssMb:Math.ceil(runtime.peakRssBytes()/MiB),nativePid,guardianPid};
+        peakRssMb:Math.ceil(runtime.peakRssBytes()/MiB),nativePid,guardianPid,
+        ...(launch.isolate&&backend==="cuda"?{maxGpuMemoryMb:options.maxGpuMemoryMb!,peakGpuMemoryMb:Math.ceil(runtime.peakGpuMemoryBytes()/MiB),
+          peakDedicatedGpuMemoryMb:Math.ceil(runtime.peakDedicatedGpuMemoryBytes()/MiB),gpuOffloadedLayers:runtime.gpuOffloadedLayers(),
+          gpuBoundary:"linux-cuda-device-budget-v1" as const,gpuMemoryScope:"whole-device" as const}:{})};
     },
   };
 }

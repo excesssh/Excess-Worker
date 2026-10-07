@@ -11,7 +11,7 @@ const MiB=1024*1024,GiB=1024*MiB;
 // 15 September 2026: flat archives of regular files (the Linux builds store versioned .so names as copies, not links).
 const SD_ARCHIVE_LIMITS:Readonly<Record<Platform,Partial<Record<Backend,ZipLimits>>>>={
   "win32-x64":{cpu:DEFAULT_ZIP_LIMITS,cuda:{maxInputBytes:768*MiB,maxTotalBytes:4*GiB,maxEntryBytes:2*GiB}},
-  "linux-x64":{cpu:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB},vulkan:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB}},
+  "linux-x64":{cuda:{maxInputBytes:1024*MiB,maxTotalBytes:4*GiB,maxEntryBytes:1024*MiB},cpu:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB},vulkan:{maxInputBytes:64*MiB,maxTotalBytes:512*MiB,maxEntryBytes:128*MiB}},
 };
 export interface MediaInstallation extends VerifiedRuntimeInputs {directory:string;serverPath:string;files:Readonly<Record<string,string>>;capabilityDigest:string;modelId:string;kind:MediaKind;runtime:MediaRuntime;backend:Backend}
 export const sdRuntimeDirectory=(root:string,backend:Backend)=>join(resolve(root),"sd-runtimes",backend);

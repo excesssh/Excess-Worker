@@ -13,9 +13,11 @@ Current evidence for the [published Excess Worker 0.1.0 release](https://github.
 
 ## Linux requirements
 
+Source version 0.2.0 adds a **development Linux CUDA profile**, pending actual NVIDIA execution and signed-package gates. It does not change the 0.1.0 configurations above. The candidate restricts one NVIDIA device and selected control calls for fixed trusted inference, keeps the sealed controller and model filesystem/network/credential/process boundaries, enforces hard cgroup CPU/RAM/task limits, and samples whole-device memory through NVML every 250 ms. Cancellation, deadlines and cleanup are required; missing monitoring or limits refuse execution. Shared-driver access and sampling provide no hard VRAM reservation or hardware fault partition. WSL `/dev/dxg` is outside this profile. Candidate availability does not verify any model or Windows configuration.
+
 Run as an ordinary non-root x64 user with systemd and a usable user service session. The boundary requires user and network namespaces, Landlock ABI 6 or newer, seccomp and cgroup v2. The dedicated `excess-worker.service` must have finite memory, zero swap, task-count and CPU limits. Missing kernel features, helper hashes, namespace identity or cgroup bounds refuse execution. [Service commands](INSTALLATION.md#supply-capacity) · [native build requirements](BUILD.md#linux-native-helpers).
 
-The worker's service generator caps memory at 75% of detected RAM, at most 12 GiB, with zero swap, 128 tasks and CPU 200%. The recorded release test used an explicit 8 GiB/64-task override. Linux model runtimes may need system shared libraries; `doctor` names missing prerequisites. Inventory and catalog fit estimates do not prove execution.
+The published 0.1.0 service generator caps memory at 75% of detected RAM, at most 12 GiB, with zero swap, 128 tasks and CPU 200%. The recorded release test used an explicit 8 GiB/64-task override. In source 0.2.0, a Linux CUDA policy may explicitly request up to 126 GiB host RAM plus 2 GiB controller overhead and up to 128 GiB GPU memory; the service still caps host memory at 75% of detected RAM and refuses inadequate budgets. Linux model runtimes may need system shared libraries; `doctor` names missing prerequisites. Inventory and catalog fit estimates do not prove execution.
 
 ## Supplier-machine boundary
 

@@ -26,7 +26,7 @@ export async function archiveDirectory(root, folder, destination, platform, epoc
 function tar(files, folder, epoch) {
   const records = [];
   const executableFiles = new Set(['excess-worker', 'node/bin/node',
-    ...['excess-sandbox', 'excess-controller', 'excess-egress-peer'].map(name => 'app/node_modules/@excess/adapters/native/' + name)]);
+    ...['excess-sandbox', 'excess-gpu-sandbox', 'excess-controller', 'excess-egress-peer'].map(name => 'app/node_modules/@excess/adapters/native/' + name)]);
   for (const { name, data } of files) {
     const full = folder + '/' + name, header = Buffer.alloc(512);
     let leaf = full, prefix = '';

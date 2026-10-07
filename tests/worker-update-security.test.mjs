@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { __testCheckForUpdate, __testInstallRelease, runInstaller } from "../apps/worker/dist/update.js";
 
@@ -23,13 +23,14 @@ function signatureFixture(bytes) {
 
 function manifestFor(platform, archive, overrides = {}) {
   const suffix = platform === "win32-x64" ? "win-x64.zip" : "linux-x64.tar.gz";
+  const version = overrides.version ?? "1.1.0";
   return {
-    format: 1, product: "Excess Worker", version: "1.1.0", sequence: 2, sourceCommit: commit,
+    format: 1, product: "Excess Worker", version, sequence: 2, sourceCommit: commit,
     repository: "https://github.com/excesssh/Excess-Worker", releasedAt: "2026-10-05T12:00:00Z",
     files: [
-      { platform, file: "excess-worker-1.1.0-" + commit.slice(0, 12) + "-" + suffix, bytes: archive.length, sha256: digest(archive), reproducible: true },
+      { platform, file: "excess-worker-" + version + "-" + commit.slice(0, 12) + "-" + suffix, bytes: archive.length, sha256: digest(archive), reproducible: true },
       { platform: platform === "win32-x64" ? "linux-x64" : "win32-x64",
-        file: "excess-worker-1.1.0-" + commit.slice(0, 12) + "-" + (platform === "win32-x64" ? "linux-x64.tar.gz" : "win-x64.zip"), bytes: 1, sha256: "c".repeat(64), reproducible: false },
+        file: "excess-worker-" + version + "-" + commit.slice(0, 12) + "-" + (platform === "win32-x64" ? "linux-x64.tar.gz" : "win-x64.zip"), bytes: 1, sha256: "c".repeat(64), reproducible: false },
     ],
     isolation: { "win32-x64": "fixture-only-profile", "linux-x64": "fixture-only-profile" },
     permissions: { filesystem: "fixture filesystem scope", network: "fixture loopback scope", credentials: "fixture attempt scope" },
@@ -96,11 +97,28 @@ function tarArchive(folder, entries, { symlink = false } = {}) {
   return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
 }
 
-function packageFiles(platform, sequence = 2, ready = true) {
-  const pkg = Buffer.from(JSON.stringify({ product: "EXCESS", package: "worker", publicDistributionReady: ready, releaseSequence: sequence, version: "1.1.0", sourceCommit: commit, platform }));
-  return platform === "win32-x64"
-    ? { "manifest.json": pkg, "excess-worker.cmd": Buffer.from("@echo off\r\n"), "node/node.exe": Buffer.from("node-fixture"), "app/node_modules/@excess/adapters/dist/index.js":Buffer.from("inert package fixture") }
-    : { "manifest.json": pkg, "excess-worker": Buffer.from("#!/bin/sh\n"), "node/bin/node": Buffer.from("node-fixture"), "app/node_modules/@excess/adapters/dist/index.js":Buffer.from("inert package fixture") };
+function packageFiles(platform, sequence = 2, ready = true, options = {}) {
+  const version = options.version ?? "1.1.0";
+  const manifest = { product: "EXCESS", package: "worker", publicDistributionReady: ready, releaseSequence: sequence, version, sourceCommit: commit, platform,
+    execution: { profile: platform === "linux-x64" ? "linux-landlock-v1" : "windows-appcontainer-v1", cpuVerified: ready, gpuVerified: false } };
+  const files = platform === "win32-x64"
+    ? { "manifest.json": Buffer.alloc(0), "excess-worker.cmd": Buffer.from("@echo off\r\n"), "node/node.exe": Buffer.from("node-fixture"), "app/node_modules/@excess/adapters/dist/index.js":Buffer.from("inert package fixture") }
+    : { "manifest.json": Buffer.alloc(0), "excess-worker": Buffer.from("#!/bin/sh\n"), "node/bin/node": Buffer.from("node-fixture"), "app/node_modules/@excess/adapters/dist/index.js":Buffer.from("inert package fixture") };
+  if (platform === "linux-x64" && Number(version.split(".")[0]) === 0 && Number(version.split(".")[1]) < 2) {
+    // v0.1 package fixtures remain valid without the v0.2 CUDA helper metadata.
+  } else if (platform === "linux-x64" && options.gpuMode !== "missing") {
+    const helperPath = "app/node_modules/@excess/adapters/native/excess-gpu-sandbox";
+    const integrityPath = "app/node_modules/@excess/adapters/native/integrity-gpu.json";
+    const helper = Buffer.from("linux gpu helper fixture"), helperHash = digest(helper);
+    const pin = options.gpuMode === "pin" ? { profile: "linux-cuda-device-budget-v1", sha256: "f".repeat(64) } : { profile: "linux-cuda-device-budget-v1", sha256: helperHash };
+    files[helperPath] = helper;
+    files[integrityPath] = Buffer.from(JSON.stringify(pin));
+    manifest.gpu = { profile: "linux-cuda-device-budget-v1", file: helperPath, integrityFile: integrityPath, sha256: helperHash,
+      status: options.gpuMode === "claim" ? "verified-configuration-only" : "candidate-unverified" };
+  }
+  const pkg = Buffer.from(JSON.stringify(manifest));
+  files["manifest.json"] = pkg;
+  return files;
 }
 
 function feedFor(platform, archive, overrides = {}) {
@@ -117,8 +135,9 @@ function feedFor(platform, archive, overrides = {}) {
 }
 
 async function fixtureRoot() {
-  await mkdir(".cache", { recursive: true });
-  const root = await import("node:fs/promises").then(({ mkdtemp }) => mkdtemp(resolve(".cache/worker-update-security-")));
+  const scratchRoot = resolve(process.env.EXCESS_TEST_ROOT ?? ".cache");
+  await mkdir(scratchRoot, { recursive: true });
+  const root = await import("node:fs/promises").then(({ mkdtemp }) => mkdtemp(join(scratchRoot, "worker-update-security-")));
   return { root, stateDir: join(root, "state"), appsDir: join(root, "apps"), binDir: join(root, "bin") };
 }
 
@@ -141,6 +160,12 @@ test("signed release package installs for Windows and Linux and records only var
       assert.deepEqual(highWater, { sequence: 2, version: "1.1.0", sourceCommit: commit, manifestDigest: digest(feed.manifestBytes) });
       assert.ok(shim.includes("1.1.0-" + commit.slice(0, 12)));
       assert.equal(shim.includes(root), false, "launcher must not persist a machine specific absolute path");
+       if (platform === "linux-x64") {
+         const gpuHelper = join(app, "app/node_modules/@excess/adapters/native/excess-gpu-sandbox");
+         const gpuPin = join(app, "app/node_modules/@excess/adapters/native/integrity-gpu.json");
+         if (process.platform !== "win32") assert.equal((await lstat(gpuHelper)).mode & 0o777, 0o755, "the CUDA helper remains executable after authenticated update installation");
+         assert.equal(JSON.parse(await readFile(gpuPin, "utf8")).profile, "linux-cuda-device-budget-v1");
+       }
       assert.deepEqual(feed.calls, ["https://fixture.example/downloads/release.json", "https://fixture.example/downloads/release.json.minisig",
         "https://fixture.example/downloads/" + feed.manifest.files[0].file]);
       assert.deepEqual(await readdir(root.appsDir), ["1.1.0-" + commit.slice(0, 12)]);
@@ -148,13 +173,25 @@ test("signed release package installs for Windows and Linux and records only var
   }
 });
 
+test("legacy v0.1 Linux packages without a CUDA helper remain installable", async () => {
+  const root = await fixtureRoot(), platform = "linux-x64", version = "0.1.1", folder = "excess-worker-" + version + "-linux-x64";
+  const files = packageFiles(platform, 2, true, { version }), archive = tarArchive(folder, files), feed = feedFor(platform, archive, { version });
+  try {
+    await __testInstallRelease({ origin: "https://fixture.example", fetcher: feed.fetcher, publicKey: feed.publicKey, platform, stateDir: root.stateDir, current, appsDir: root.appsDir, binDir: root.binDir });
+    const app = join(root.appsDir, version + "-" + commit.slice(0, 12));
+    assert.equal(await exists(join(app, "app/node_modules/@excess/adapters/native/excess-gpu-sandbox")), false);
+    assert.equal((await readFile(join(root.binDir, "excess-worker"), "utf8")).includes(version + "-" + commit.slice(0, 12)), true);
+  } finally { await rm(root.root, { recursive: true, force: true }); }
+});
+
 test("tampered archives, invalid signatures, package identity mismatch, closed release gates, and tar links leave install state untouched", async () => {
   const platform = "linux-x64", folder = "excess-worker-1.1.0-linux-x64", files = packageFiles(platform);
   const goodArchive = tarArchive(folder, files);
-  for (const mode of ["hash", "signature", "package", "gate", "link"]) {
+  for (const mode of ["hash", "signature", "package", "gate", "link", "gpu-missing", "gpu-pin", "gpu-claim"]) {
     const root = await fixtureRoot();
     try {
-      const archive = mode === "gate" ? tarArchive(folder, packageFiles(platform, 2, false)) : mode === "link" ? tarArchive(folder, files, { symlink: true }) : mode === "package" ? tarArchive(folder, packageFiles(platform, 3)) : goodArchive;
+      const archive = mode === "gate" ? tarArchive(folder, packageFiles(platform, 2, false)) : mode === "link" ? tarArchive(folder, files, { symlink: true }) :
+        mode === "package" ? tarArchive(folder, packageFiles(platform, 3)) : mode.startsWith("gpu-") ? tarArchive(folder, packageFiles(platform, 2, true, { gpuMode: mode.slice(4) })) : goodArchive;
       const feed = feedFor(platform, archive);
       if (mode === "hash") {
         const mismatched = Buffer.from(goodArchive); mismatched[mismatched.length - 5] ^= 1;
@@ -165,7 +202,8 @@ test("tampered archives, invalid signatures, package identity mismatch, closed r
         const signature = mode === "signature" ? feed.signatureText.replace("sequence:2 fixture", "sequence:2 forged") : feed.signatureText;
         const fetcher = async url => url.endsWith("release.json") ? new Response(feed.manifestBytes) : url.endsWith(".minisig") ? new Response(signature)
           : new Response(archive);
-        const matcher = mode === "signature" ? /signature verification failed|trusted comment verification failed/ : (mode === "package" || mode === "gate") ? /identity/ : /links are not allowed/;
+        const matcher = mode === "signature" ? /signature verification failed|trusted comment verification failed/ : (mode === "package" || mode === "gate") ? /identity/ :
+          mode.startsWith("gpu-") ? /Linux GPU/ : /links are not allowed/;
         await assert.rejects(__testInstallRelease({ origin: "https://fixture.example", fetcher, publicKey: feed.publicKey, platform, stateDir: root.stateDir, current, appsDir: root.appsDir, binDir: root.binDir }), matcher);
       }
       assert.equal(await exists(root.binDir), false, mode + " must not create or change the launcher directory");
