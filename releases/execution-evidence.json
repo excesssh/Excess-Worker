@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "testedSourceCommit": "9ef74a78a57eb817483d2d48374787f53bb1a23a",
+  "signedCandidateSequence": 15,
+  "signedManifestSha256": "ac2ca80896b9382c0919dea71dd77c0f8fa0e117e18a7527c9ecc9b3922e7955",
+  "platforms": {
+    "win32-x64": {
+      "payloadSha256": "e17ea58b2bfdf3a042121d8502f5642b354adb093fcd4c6cd891927886c77e1a",
+      "checks": {
+        "signedInstallation": true,
+        "cpuInference": true,
+        "fundedBuyerJob": true,
+        "controllerBoundary": true,
+        "drain": true,
+        "restart": true,
+        "revoke": true,
+        "cleanup": true
+      },
+      "gpuInference": true,
+      "gpuCancellation": true,
+      "configuration": "Windows11Pro10.0.22631 x64; RTX3070Ti8192MiB driver596.49 WDDM; pinned Qwen3-4B/llama.cppb10809;2threads;6144MiB host/6144MiB combined GPU;37layers;4184MiB combined/3780MiB dedicated peak; CPU separately4096MiB Job Object.",
+      "reports": [
+        {
+          "name": "signed-package-source74.json",
+          "sha256": "68752fbc5c18c829e1181903042832f4a3af11af733d0eab880ea893bcfb24f8"
+        }
+      ]
+    },
+    "linux-x64": {
+      "payloadSha256": "88986863d2a48dc988a16d395e76c56d845dd2c1cb21168b059d8239ade0d3ae",
+      "checks": {
+        "signedInstallation": true,
+        "cpuInference": true,
+        "fundedBuyerJob": true,
+        "controllerBoundary": true,
+        "drain": true,
+        "restart": true,
+        "revoke": true,
+        "cleanup": true
+      },
+      "gpuInference": false,
+      "gpuCancellation": false,
+      "configuration": "WSL2 Linux6.18.40.1 x64 CPU; pinned Qwen3-4B/llama.cppb10809;2threads; dedicated8GiB cgroupv2 user service,swap0,64tasks,CPU200%; GPU unsupported/refused. Fresh application installation, not a fresh OS.",
+      "reports": [
+        {
+          "name": "signed-package-source74.json",
+          "sha256": "68752fbc5c18c829e1181903042832f4a3af11af733d0eab880ea893bcfb24f8"
+        }
+      ]
+    }
+  }
+}

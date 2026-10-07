@@ -1,0 +1,105 @@
+{
+  "format": 1,
+  "date": "2026-10-07",
+  "sourceCommit": "9ef74a78a57eb817483d2d48374787f53bb1a23a",
+  "signedCandidateSequence": 15,
+  "signedManifestSha256": "ac2ca80896b9382c0919dea71dd77c0f8fa0e117e18a7527c9ecc9b3922e7955",
+  "releaseSigning": "anonymous project Minisign",
+  "trustedWindowsPublisher": false,
+  "freshApplicationInstall": true,
+  "freshOperatingSystem": false,
+  "fixtureCoordinator": false,
+  "fixtureLedger": false,
+  "traffic": "operator-funded testnet verification using existing credited custody balances; no new deposit, withdrawal, mainnet action, independent supplier or organic demand",
+  "model": {
+    "id": "Qwen3-4B-Q4_K_M",
+    "revision": "bc640142c66e1fdd12af0bd68f40445458f3869b",
+    "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "licence": "Apache-2.0"
+  },
+  "runtime": "llama.cpp b10809 pinned commit5266f24da75dc449bd56cbed7addb9c8e4a6a73e",
+  "journeys": {
+    "windowsGpu": {
+      "result": "passed",
+      "configuration": {
+        "backend": "cuda",
+        "model": "Qwen3-4B-Q4_K_M",
+        "runtime": "llama.cpp-b10809",
+        "threads": 2,
+        "maxMemoryMb": 6144,
+        "peakRssMb": 717,
+        "maxGpuMemoryMb": 6144,
+        "peakGpuMemoryMb": 4184,
+        "peakDedicatedGpuMemoryMb": 3780,
+        "gpuOffloadedLayers": 37,
+        "gpuBoundary": "windows-cuda-budget-v1"
+      },
+      "buyerProducedTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "deviceSignatureVerified": true,
+      "settledAccounting": true,
+      "runningDrain": true,
+      "freshRestart": true,
+      "remoteRevokeAndLocalRetirement": true,
+      "privateReportSha256": "c6494f0adb5efea58586adc363b4e26de4611d9811505c5b9554d6281ac45fbf",
+      "buyerCancellation": {
+        "authenticatedStreamChunks": 1,
+        "accountedTokens": 8,
+        "completedResultSignatureRequired": false,
+        "drainAndCleanupAfterCancellation": true
+      }
+    },
+    "windowsCpu": {
+      "result": "passed",
+      "configuration": {
+        "backend": "cpu",
+        "model": "Qwen3-4B-Q4_K_M",
+        "runtime": "llama.cpp-b10809",
+        "threads": 2,
+        "maxMemoryMb": 4096,
+        "peakRssMb": 3605
+      },
+      "buyerProducedTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "deviceSignatureVerified": true,
+      "settledAccounting": true,
+      "runningDrain": true,
+      "freshRestart": true,
+      "remoteRevokeAndLocalRetirement": true,
+      "privateReportSha256": "af555abdafef3a4902fb1e84bb2920bd1f5738e067ed70add41581c845b757ff",
+      "buyerCancellation": {
+        "authenticatedStreamChunks": 1,
+        "accountedTokens": 8,
+        "completedResultSignatureRequired": false,
+        "drainAndCleanupAfterCancellation": true
+      }
+    },
+    "linuxCpu": {
+      "result": "passed",
+      "configuration": {
+        "backend": "cpu",
+        "model": "Qwen3-4B-Q4_K_M",
+        "runtime": "llama.cpp-b10809",
+        "threads": 2,
+        "maxMemoryMb": 8192,
+        "peakRssMb": 3617
+      },
+      "buyerProducedTokens": 27,
+      "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+      "deviceSignatureVerified": true,
+      "settledAccounting": true,
+      "runningDrain": true,
+      "freshRestart": true,
+      "remoteRevokeAndLocalRetirement": true,
+      "privateReportSha256": "064dbb8cff3bdf907b8ddd7948551a70e3ca38ba16cd561635be2842e6a973a5",
+      "cgroup": {
+        "memoryMaxBytes": 8589934592,
+        "memorySwapMaxBytes": 0,
+        "tasksMax": 64,
+        "cpuQuotaPercent": 200
+      }
+    }
+  },
+  "gpuLimits": "Only the measured Windows RTX3070Ti/driver596.49 WDDM Qwen3-4B CUDA profile is verified. Shared OS/driver/GPU trusted; sampled250ms combined residency watchdog, no hard VRAM reservation or hardware fault partition. Linux GPU remains refused.",
+  "pending": "Positive controlled HTTPS signed update, rollback/high-water protection, final eligible-package verification and public feed/download publication remain pending."
+}
