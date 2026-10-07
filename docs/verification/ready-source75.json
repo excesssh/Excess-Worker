@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "23fada7737258b2942c2f12edaeec7c2f8457e0b",
+  "files": [
+    {
+      "platform": "win32-x64",
+      "file": "excess-worker-0.1.0-23fada773725-win-x64.zip",
+      "bytes": 35576861,
+      "sha256": "38b0ef82002c24e5602890b280abb40b12c0e65f495ca7da716c3a60a96daef4",
+      "reproducible": true
+    },
+    {
+      "platform": "linux-x64",
+      "file": "excess-worker-0.1.0-23fada773725-linux-x64.tar.gz",
+      "bytes": 44518309,
+      "sha256": "9372f66c71b83b4e2f8df422408e09e19c0671730a931510fc93f22376c526c1",
+      "reproducible": true
+    }
+  ],
+  "signature": "verified",
+  "publication": "not attempted; final package and HTTPS gates pending",
+  "sequence": 16,
+  "metadataSha256": {
+    "minisign.pub": "c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6",
+    "release.json": "52e9469475530946c942bde53a80d9ff9996433ace1d004685df18ee14591e99",
+    "release.json.minisig": "f8a8ec96a327ebbf9d0537fad800199a53ccf5390d1244c82b82fb6ba0901742",
+    "reproducibility.json": "a53793fedcd1d1a26424d17d28aad9a60412e4248703fbd7d29ad1dbaeb3c01f"
+  },
+  "scope": "Local eligible sequence16 A/B reproduction and anonymous Minisign verification. Runtime payload matches tested source74 candidate15. Final eligible execution, positive HTTPS update/recovery and publication remain pending."
+}
