@@ -18,7 +18,7 @@ export async function processRss(pid:number):Promise<number> {
   if(!match)throw new AdapterError("PROCESS_MONITOR_FAILED");return Number(match[1])*1024;
 }
 export interface RuntimeSupervision {protocol:"windows-appcontainer-v1";input:string}
-export interface ManagedProcess {child:ChildProcess;closed:Promise<void>;alive():boolean;error():AdapterError|null;peakRssBytes():number;nativePid():number|undefined;stop():Promise<void>;
+export interface ManagedProcess {child:ChildProcess;closed:Promise<void>;alive():boolean;error():AdapterError|null;peakRssBytes():number;peakGpuMemoryBytes():number;peakDedicatedGpuMemoryBytes():number;gpuOffloadedLayers():number;nativePid():number|undefined;stop():Promise<void>;
   sendRuntime(message:RuntimeRequest|RuntimeControl):void;onRuntimeFrame(listener:(frame:RuntimeResponse)=>void):void}
 // Internal process boundary. The exported adapter supplies only verified fixed paths/args.
 export function startNativeProcess(executable:string,args:readonly string[],options:{cwd:string;env:NodeJS.ProcessEnv;maxMemoryBytes:number;supervision?:RuntimeSupervision|undefined}):ManagedProcess {
@@ -26,7 +26,7 @@ export function startNativeProcess(executable:string,args:readonly string[],opti
   if(supervised&&(options.supervision!.protocol!=="windows-appcontainer-v1"||Buffer.byteLength(options.supervision!.input)>65536||/[\r\n]/.test(options.supervision!.input)))throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
   const child=spawn(executable,[...args],{cwd:options.cwd,env:options.env,windowsHide:true,stdio:[supervised?"pipe":"ignore","pipe","pipe"]});
   let ended=false,fault:AdapterError|null=null,peak=0,sampling=false,monitorFailures=0,stopping:Promise<void>|undefined,monitorTask:Promise<void>|undefined;
-  let nativePid=supervised?undefined:child.pid,cleanupOk=false,statusPending="";
+  let nativePid=supervised?undefined:child.pid,cleanupOk=false,statusPending="",gpuPeak=0,gpuLocalPeak=0,gpuLayers=0;
   let runtimeFrameListener:((frame:RuntimeResponse)=>void)|undefined;
   let resolveClosed!:()=>void;
   const closed=new Promise<void>(resolve=>{resolveClosed=resolve;});
@@ -40,7 +40,7 @@ export function startNativeProcess(executable:string,args:readonly string[],opti
       for(const line of lines){
         if(line.length>131072){fault=new AdapterError("RUNTIME_CONTROL_INVALID");void stop().catch(()=>{});break;}
         try{
-          const data=JSON.parse(line) as {type?:unknown;pid?:unknown;peakWorkingSetBytes?:unknown;ok?:unknown;error?:unknown};
+          const data=JSON.parse(line) as {type?:unknown;pid?:unknown;peakWorkingSetBytes?:unknown;gpuMemoryBytes?:unknown;gpuLocalBytes?:unknown;gpuNonLocalBytes?:unknown;gpuOffloadedLayers?:unknown;gpuTotalLayers?:unknown;ok?:unknown;error?:unknown};
           if(data.type==="response"||data.type==="data"||data.type==="end"||data.type==="error"){
             const frame=runtimeResponseSchema.safeParse(data);
             if(!frame.success)throw Error();
@@ -49,6 +49,17 @@ export function startNativeProcess(executable:string,args:readonly string[],opti
           if(data.type==="started"&&Number.isSafeInteger(data.pid)&&Number(data.pid)>0)nativePid=Number(data.pid);
           else if(data.type==="status"&&typeof data.peakWorkingSetBytes==="number"&&Number.isSafeInteger(data.peakWorkingSetBytes)&&data.peakWorkingSetBytes>=0)peak=Math.max(peak,data.peakWorkingSetBytes);
           else if(data.type==="cleanup"&&data.ok===true)cleanupOk=true;
+          if(data.type==="status"&&data.gpuMemoryBytes!==undefined){
+            if(typeof data.gpuMemoryBytes!=="number"||!Number.isSafeInteger(data.gpuMemoryBytes)||data.gpuMemoryBytes<0)throw Error();
+            if(typeof data.gpuLocalBytes!=="number"||!Number.isSafeInteger(data.gpuLocalBytes)||data.gpuLocalBytes<0||data.gpuLocalBytes>data.gpuMemoryBytes||
+              typeof data.gpuNonLocalBytes!=="number"||!Number.isSafeInteger(data.gpuNonLocalBytes)||data.gpuNonLocalBytes<0||data.gpuLocalBytes+data.gpuNonLocalBytes!==data.gpuMemoryBytes)throw Error();
+            gpuPeak=Math.max(gpuPeak,data.gpuMemoryBytes);gpuLocalPeak=Math.max(gpuLocalPeak,data.gpuLocalBytes);
+          }
+          if(data.type==="status"&&(data.gpuOffloadedLayers!==undefined||data.gpuTotalLayers!==undefined)){
+            if(!Number.isSafeInteger(data.gpuOffloadedLayers)||!Number.isSafeInteger(data.gpuTotalLayers)||Number(data.gpuTotalLayers)<1||
+              Number(data.gpuTotalLayers)>128||Number(data.gpuOffloadedLayers)<0||Number(data.gpuOffloadedLayers)>Number(data.gpuTotalLayers))throw Error();
+            gpuLayers=data.gpuOffloadedLayers===data.gpuTotalLayers?Number(data.gpuOffloadedLayers):0;
+          }
           if(typeof data.error==="string"&&/^[A-Z_]{1,64}$/.test(data.error))fault=new AdapterError(data.error);
         }catch{fault=new AdapterError("RUNTIME_CONTROL_INVALID");void stop().catch(()=>{});}
       }
@@ -123,6 +134,6 @@ export function startNativeProcess(executable:string,args:readonly string[],opti
     if(Buffer.byteLength(frame)>32*1024*1024)throw new AdapterError("RUNTIME_REQUEST_TOO_LARGE");
     child.stdin.write(frame);
   };
-  return {child,closed,alive:()=>!ended&&child.exitCode===null&&child.signalCode===null,error:()=>fault,peakRssBytes:()=>peak,nativePid:()=>nativePid,stop,
+  return {child,closed,alive:()=>!ended&&child.exitCode===null&&child.signalCode===null,error:()=>fault,peakRssBytes:()=>peak,peakGpuMemoryBytes:()=>gpuPeak,peakDedicatedGpuMemoryBytes:()=>gpuLocalPeak,gpuOffloadedLayers:()=>gpuLayers,nativePid:()=>nativePid,stop,
     sendRuntime,onRuntimeFrame:listener=>{runtimeFrameListener=listener;}};
 }

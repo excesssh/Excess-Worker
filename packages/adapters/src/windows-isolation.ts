@@ -36,10 +36,13 @@ async function scratchParent():Promise<string> {
 
 /** The native helper checks and holds every pinned file before granting its unique container access. */
 export async function isolateWindowsRuntime(executable:string,args:readonly string[],options:VerifiedRuntimeInputs&{
-  maxMemoryBytes:number;timeoutMs:number;backend:string;port:number;
+  maxMemoryBytes:number;maxGpuMemoryBytes?:number;timeoutMs:number;backend:string;port:number;
 }):Promise<WindowsRuntimeIsolation> {
   if(process.platform!=="win32"||process.arch!=="x64")throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
-  if(options.backend!=="cpu")throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+  const gpu=options.backend==="cuda";
+  if(options.backend!=="cpu"&&!gpu)throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+  if(gpu&&(!Number.isSafeInteger(options.maxGpuMemoryBytes)||options.maxGpuMemoryBytes!<1024*1024*1024||options.maxGpuMemoryBytes!>32*1024*1024*1024))
+    throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
   const base=fileURLToPath(new URL("../native/",import.meta.url)),helper=join(base,"ExcessSandbox.exe");
   let helperHash:string;
   try{
@@ -62,7 +65,8 @@ export async function isolateWindowsRuntime(executable:string,args:readonly stri
     const config={executable:await realpath(executable),runtimeRoot:await realpath(options.runtimeRoot),scratchDirectory:scratch,
       runtimeFiles:await files(options.runtimeFiles),modelFiles:await files(options.modelFiles),arguments:[...args],
       relayFile:{path:await realpath(helper),sha256:helperHash},runtimePort:options.port,
-      memoryLimitBytes:options.maxMemoryBytes,processLimit:2,timeoutMilliseconds:Math.min(600000,options.timeoutMs+5000)};
+      memoryLimitBytes:options.maxMemoryBytes,processLimit:2,timeoutMilliseconds:Math.min(600000,options.timeoutMs+5000),
+      ...(gpu?{gpuProfile:"windows-cuda-budget-v1",gpuMemoryLimitBytes:options.maxGpuMemoryBytes}:{})};
     const input=JSON.stringify(config);
     if(Buffer.byteLength(input)>65536)throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
     return {executable:helper,args:[],scratch,profile:"windows-appcontainer-v1",

@@ -137,6 +137,16 @@ internal static class ExcessSandbox
                 timeoutMilliseconds < 100 || timeoutMilliseconds > 600000)
                 return Fail("invalid-limits", 2);
 
+            ulong gpuMemoryLimitBytes = 0;
+            if (config.ContainsKey("gpuProfile") || config.ContainsKey("gpuMemoryLimitBytes"))
+            {
+                if (relayFile == null || RequiredString(config, "gpuProfile") != "windows-cuda-budget-v1")
+                    return Fail("invalid-gpu-profile", 2);
+                gpuMemoryLimitBytes = RequiredUInt64(config, "gpuMemoryLimitBytes");
+                if (gpuMemoryLimitBytes < 1024UL * 1024 * 1024 || gpuMemoryLimitBytes > 32UL * 1024 * 1024 * 1024)
+                    return Fail("invalid-gpu-budget", 2);
+            }
+
             currentStage = "path-validation";
             executable = Path.GetFullPath(executable);
             runtimeRoot = Path.GetFullPath(runtimeRoot);
@@ -233,7 +243,7 @@ internal static class ExcessSandbox
             try
             {
                 packageSid = new SecurityIdentifier(appContainerSid);
-                aclLease = new AclLease(packageSid);
+                aclLease = new AclLease();
                 CheckSetup();
                 Directory.CreateDirectory(scratch);
                 RejectReparsePath(scratch);
@@ -273,7 +283,7 @@ internal static class ExcessSandbox
                 {
                     if (processLimit != 2) return Fail("invalid-relay-process-limit", 2);
                     childResult = RunRelayInContainer(packageSid, appContainerSid, executable, relayFile.Path,
-                        runtimeRoot, scratch, childArguments, runtimePort, memoryLimitBytes, timeoutMilliseconds, stopEvent);
+                        runtimeRoot, scratch, childArguments, runtimePort, memoryLimitBytes, gpuMemoryLimitBytes, timeoutMilliseconds, stopEvent);
                 }
                 else
                 {
@@ -356,7 +366,7 @@ internal static class ExcessSandbox
 
     private static int RunRelayInContainer(SecurityIdentifier packageSid, IntPtr packageSidPtr,
         string executable, string relayExecutable, string runtimeRoot, string scratch, string[] arguments,
-        int runtimePort, ulong memoryLimitBytes, uint timeoutMilliseconds, ManualResetEvent requestedStop)
+        int runtimePort, ulong memoryLimitBytes, ulong gpuMemoryLimitBytes, uint timeoutMilliseconds, ManualResetEvent requestedStop)
     {
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
         if (job == IntPtr.Zero) throw LastError();
@@ -365,6 +375,7 @@ internal static class ExcessSandbox
         IntPtr relayIn = IntPtr.Zero, parentRelayIn = IntPtr.Zero;
         IntPtr parentRelayOut = IntPtr.Zero, relayOut = IntPtr.Zero, relayErr = IntPtr.Zero;
         bool runtimeAssigned = false, relayAssigned = false;
+        GpuBudgetMonitor gpuMonitor = null;
         try
         {
             var limits = new JobExtendedLimitInformation();
@@ -392,7 +403,7 @@ internal static class ExcessSandbox
                 !CreatePipe(out parentRelayOut, out relayOut, ref security, 0)) throw LastError();
             if (!SetHandleInformation(parentRelayIn, 1, 0) || !SetHandleInformation(parentRelayOut, 1, 0)) throw LastError();
 
-            string environment = BuildChildEnvironment(runtimeRoot, scratch, true);
+            string environment = BuildChildEnvironment(runtimeRoot, scratch, true, gpuMemoryLimitBytes != 0);
             currentStage = "runtime-create-suspended";
             var runtimeHandles = new[] { runtimeIn, runtimeOut, runtimeErrWrite };
             ProcessInformation runtimeInfo = CreateAppContainerChild(executable, arguments, packageSidPtr, environment,
@@ -420,6 +431,15 @@ internal static class ExcessSandbox
             CloseHandle(runtimeErrWrite); runtimeErrWrite = IntPtr.Zero;
             CloseHandle(relayErr); relayErr = IntPtr.Zero;
 
+            // GPU controls are separate from Job Object system-memory limits.
+            // This is a host watchdog over WDDM residency, not a hardware VRAM
+            // partition or an allocation-time quota. Keep CPU launch unchanged.
+            if (gpuMemoryLimitBytes != 0)
+            {
+                currentStage = "gpu-resource-preflight";
+                try { gpuMonitor = new GpuBudgetMonitor(runtimeProcess); }
+                catch (GpuControlException fault) { WriteGpuStatus(runtimeInfo.dwProcessId, 0, fault.Code); return 127; }
+            }
             currentStage = "runtime-resume";
             if (ResumeThread(runtimeThread) == 0xffffffff) throw LastError();
             currentStage = "relay-resume";
@@ -496,16 +516,38 @@ internal static class ExcessSandbox
             });
             inputThread.IsBackground = true; inputThread.Name = "sandbox-relay-input"; inputThread.Start();
 
+            bool gpuLayerFactsReported = false;
             var supervisionClock = Stopwatch.StartNew();
             uint wait;
             while (true)
             {
                 long elapsedMilliseconds = supervisionClock.ElapsedMilliseconds;
                 if (elapsedMilliseconds >= timeoutMilliseconds) { wait = WaitTimeout; break; }
-                uint waitSlice = (uint)Math.Min(1000L, (long)timeoutMilliseconds - elapsedMilliseconds);
+                uint waitSlice = (uint)Math.Min(gpuMonitor == null ? 1000L : 250L, (long)timeoutMilliseconds - elapsedMilliseconds);
                 wait = WaitForMultipleObjects(3, new[] { runtimeProcess, relayProcess, requestedStop.SafeWaitHandle.DangerousGetHandle() }, false, waitSlice);
                 if (wait != WaitTimeout) break;
                 if (supervisionClock.ElapsedMilliseconds >= timeoutMilliseconds) { wait = WaitTimeout; break; }
+                if (gpuMonitor != null)
+                {
+                    string gpuError = null;
+                    ulong gpuBytes = 0;
+                    try { gpuBytes = gpuMonitor.Sample(); if (gpuBytes > gpuMemoryLimitBytes) gpuError = "GPU_MEMORY_BUDGET_EXCEEDED"; }
+                    catch
+                    {
+                        gpuBytes = checked(gpuMonitor.LocalBytes + gpuMonitor.NonLocalBytes);
+                        // A bounded startup grace handles creation of WDDM
+                        // state. Once monitoring works, any failure stops work.
+                        if (gpuMonitor.Ready || supervisionClock.ElapsedMilliseconds >= 10000)
+                            gpuError = "GPU_RESOURCE_MONITOR_FAILED";
+                    }
+                    WriteGpuStatus(runtimeInfo.dwProcessId, gpuBytes, gpuError, gpuMonitor.LocalBytes, gpuMonitor.NonLocalBytes);
+                    if (!gpuLayerFactsReported) gpuLayerFactsReported = WriteGpuLayerFacts(runtimeInfo.dwProcessId, runtimeDiagnostics);
+                    if (gpuError != null)
+                    {
+                        stopReasonCode = gpuError == "GPU_MEMORY_BUDGET_EXCEEDED" ? "gpu-memory-budget" : "gpu-monitor-failed";
+                        requestedStop.Set(); wait = WaitObject0 + 2; break;
+                    }
+                }
                 WriteWorkingSetStatus(runtimeInfo.dwProcessId, QueryPeakWorkingSet(runtimeProcess));
             }
             string termination = "exit";
@@ -538,12 +580,125 @@ internal static class ExcessSandbox
                 if (!TerminateJobAndWait(job, 126)) cleanupUnsafe = true;
                 CloseHandle(job);
             }
+            if (gpuMonitor != null) gpuMonitor.Dispose();
             CloseIfValid(runtimeProcess); CloseIfValid(runtimeThread); CloseIfValid(relayProcess); CloseIfValid(relayThread);
             CloseIfValid(runtimeIn); CloseIfValid(runtimeOut); CloseIfValid(runtimeErrRead); CloseIfValid(runtimeErrWrite);
             CloseIfValid(relayIn); CloseIfValid(parentRelayIn);
             CloseIfValid(parentRelayOut); CloseIfValid(relayOut); CloseIfValid(relayErr);
         }
     }
+
+    private static bool WriteGpuLayerFacts(uint pid, DiagnosticCapture capture)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(capture.ToString(), @"offloaded\s+([0-9]{1,3})/([0-9]{1,3}) layers to GPU");
+        int offloaded, total;
+        if (!match.Success || !Int32.TryParse(match.Groups[1].Value, out offloaded) || !Int32.TryParse(match.Groups[2].Value, out total) ||
+            total < 1 || total > 128 || offloaded < 0 || offloaded > total) return false;
+        TryEmitOutput("{\"type\":\"status\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) +
+            ",\"peakWorkingSetBytes\":0,\"gpuOffloadedLayers\":" + offloaded.ToString(CultureInfo.InvariantCulture) +
+            ",\"gpuTotalLayers\":" + total.ToString(CultureInfo.InvariantCulture) + "}");
+        return true;
+    }
+
+    private static void WriteGpuStatus(uint pid, ulong bytes, string error, ulong localBytes = 0, ulong nonLocalBytes = 0)
+    {
+        TryEmitOutput("{\"type\":\"status\",\"pid\":" + pid.ToString(CultureInfo.InvariantCulture) +
+            ",\"peakWorkingSetBytes\":0,\"gpuMemoryBytes\":" + bytes.ToString(CultureInfo.InvariantCulture) +
+            ",\"gpuLocalBytes\":" + localBytes.ToString(CultureInfo.InvariantCulture) +
+            ",\"gpuNonLocalBytes\":" + nonLocalBytes.ToString(CultureInfo.InvariantCulture) +
+            (error == null ? "" : ",\"error\":\"" + error + "\"") + "}");
+    }
+
+    // Windows SDK d3dkmthk.h: x64 layouts 20/16/56 bytes. The held process
+    // handle binds queries to this child even if a PID is later reused.
+    // Query both local and non-local residency on every enumerated adapter;
+    // shared GPU allocations are not silently charged to the CPU RAM limit.
+    private sealed class GpuControlException : Exception
+    {
+        public readonly string Code;
+        public GpuControlException(string code) { Code = code; }
+    }
+    private sealed class GpuBudgetMonitor : IDisposable
+    {
+        private readonly IntPtr process;
+        private readonly List<uint> adapters = new List<uint>();
+        public GpuBudgetMonitor(IntPtr child)
+        {
+            process = child;
+            if (!Environment.Is64BitProcess || Marshal.SizeOf(typeof(GpuAdapterInfo)) != 20 ||
+                Marshal.SizeOf(typeof(GpuAdapterList)) != 16 || Marshal.SizeOf(typeof(GpuMemoryInfo)) != 56)
+                throw new GpuControlException("GPU_API_LAYOUT_INVALID");
+            try
+            {
+                var list = new GpuAdapterList { Count = 16 };
+                list.Adapters = Marshal.AllocHGlobal(16 * 20);
+                try
+                {
+                    if (D3DKMTEnumAdapters2(ref list) != 0 || list.Count == 0 || list.Count > 16)
+                        throw new GpuControlException("GPU_ENUMERATION_FAILED");
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var adapter = (GpuAdapterInfo)Marshal.PtrToStructure(IntPtr.Add(list.Adapters, i * 20), typeof(GpuAdapterInfo));
+                        adapters.Add(adapter.Handle);
+                    }
+                }
+                finally { Marshal.FreeHGlobal(list.Adapters); }
+
+            }
+            catch { Dispose(); throw; }
+        }
+        public bool Ready { get; private set; }
+        public ulong LocalBytes { get; private set; }
+        public ulong NonLocalBytes { get; private set; }
+        public ulong Sample()
+        {
+            if (!Ready)
+            {
+                // WDDM process state does not exist while its first thread is
+                // suspended. No buyer input is admitted during this startup.
+                int priority;
+                if (D3DKMTSetProcessSchedulingPriorityClass(process, 0) != 0 ||
+                    D3DKMTGetProcessSchedulingPriorityClass(process, out priority) != 0 || priority != 0)
+                    throw new GpuControlException("GPU_IDLE_PRIORITY_UNAVAILABLE");
+            }
+            int observedPriority;
+            if (D3DKMTGetProcessSchedulingPriorityClass(process, out observedPriority) != 0 || observedPriority != 0)
+                throw new GpuControlException("GPU_IDLE_PRIORITY_UNAVAILABLE");
+            ulong total = 0, local = 0, nonLocal = 0;
+            foreach (uint adapter in adapters)
+            {
+                for (uint group = 0; group < 2; group++)
+                {
+                    var info = new GpuMemoryInfo { Process = process, Adapter = adapter, SegmentGroup = group };
+                    if (D3DKMTQueryVideoMemoryInfo(ref info) != 0) throw new GpuControlException("GPU_QUERY_FAILED");
+                    total = checked(total + info.CurrentUsage);
+                    if (group == 0) local = checked(local + info.CurrentUsage);
+                    else nonLocal = checked(nonLocal + info.CurrentUsage);
+                }
+            }
+            LocalBytes = local; NonLocalBytes = nonLocal; Ready = true; return total;
+        }
+        public void Dispose()
+        {
+            foreach (uint adapter in adapters) { uint value = adapter; D3DKMTCloseAdapter(ref value); }
+            adapters.Clear();
+        }
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct GpuAdapterInfo
+    { public uint Handle, LuidLow; public int LuidHigh; public uint Sources; public int Precise; }
+    [StructLayout(LayoutKind.Sequential)] private struct GpuAdapterList
+    { public uint Count; public IntPtr Adapters; }
+    [StructLayout(LayoutKind.Sequential)] private struct GpuMemoryInfo
+    {
+        public IntPtr Process; public uint Adapter, SegmentGroup;
+        public ulong Budget, CurrentUsage, CurrentReservation, AvailableForReservation;
+        public uint PhysicalAdapterIndex;
+    }
+    [DllImport("gdi32.dll")] private static extern int D3DKMTEnumAdapters2(ref GpuAdapterList adapters);
+    [DllImport("gdi32.dll")] private static extern int D3DKMTQueryVideoMemoryInfo(ref GpuMemoryInfo info);
+    [DllImport("gdi32.dll")] private static extern int D3DKMTCloseAdapter(ref uint adapter);
+    [DllImport("gdi32.dll")] private static extern int D3DKMTSetProcessSchedulingPriorityClass(IntPtr process, int priority);
+    [DllImport("gdi32.dll")] private static extern int D3DKMTGetProcessSchedulingPriorityClass(IntPtr process, out int priority);
 
     private static ProcessInformation CreateAppContainerChild(string executable, string[] arguments, IntPtr packageSid,
         string environment, string scratch, IntPtr[] stdHandles, IntPtr stdin, IntPtr stdout, IntPtr stderr)
@@ -581,7 +736,7 @@ internal static class ExcessSandbox
         }
     }
 
-    private static string BuildChildEnvironment(string runtimeRoot, string scratch, bool includeApiKey)
+    private static string BuildChildEnvironment(string runtimeRoot, string scratch, bool includeApiKey, bool gpuEnabled = false)
     {
         string windowsRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         string drive = Path.GetPathRoot(scratch).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -589,6 +744,7 @@ internal static class ExcessSandbox
         values["=" + drive] = scratch; values["APPDATA"] = scratch; values["LOCALAPPDATA"] = scratch;
         values["PATH"] = runtimeRoot; values["SystemRoot"] = windowsRoot; values["TEMP"] = scratch;
         values["TMP"] = scratch; values["USERPROFILE"] = scratch; values["WINDIR"] = windowsRoot;
+        if (gpuEnabled) { values["CUDA_VISIBLE_DEVICES"] = "0"; values["CUDA_CACHE_DISABLE"] = "1"; }
         if (includeApiKey)
         {
             string key = Environment.GetEnvironmentVariable("LLAMA_API_KEY");
@@ -1317,60 +1473,96 @@ internal static class ExcessSandbox
         public string Sha256;
     }
 
+    // Serialize only ACL edits, not workloads. Never restore another live
+    // sandbox's temporary grants from a stale whole-descriptor snapshot.
+    private sealed class AclEditLock : IDisposable
+    {
+        private Mutex mutex;
+        private bool held;
+        public AclEditLock()
+        {
+            var owner = WindowsIdentity.GetCurrent().User;
+            var security = new MutexSecurity();
+            security.SetAccessRuleProtection(true, false);
+            security.AddAccessRule(new MutexAccessRule(owner, MutexRights.FullControl, AccessControlType.Allow));
+            security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), MutexRights.FullControl, AccessControlType.Allow));
+            bool created;
+            mutex = new Mutex(false, "Local\\Excess.AclEdit.v1." + owner.Value, out created, security);
+            try { try { held = mutex.WaitOne(5000); } catch (AbandonedMutexException) { held = true; } }
+            catch { mutex.Dispose(); mutex = null; throw; }
+            if (!held) { mutex.Dispose(); mutex = null; throw new InvalidOperationException("acl-edit-timeout"); }
+        }
+        public void Dispose()
+        {
+            if (mutex == null) return;
+            try { if (held) mutex.ReleaseMutex(); } finally { held = false; mutex.Dispose(); mutex = null; }
+        }
+    }
+
     private sealed class AclLease
     {
         private readonly List<Action> restoreActions = new List<Action>();
         private readonly HashSet<string> savedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private readonly SecurityIdentifier packageSid;
 
-        public AclLease(SecurityIdentifier sid) { packageSid = sid; }
-
+        private static FileSystemAccessRule[] OwnRules(FileSystemSecurity security, SecurityIdentifier sid)
+        {
+            var result = new List<FileSystemAccessRule>();
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+                if (rule.IdentityReference.Equals(sid)) result.Add(rule);
+            return result.ToArray();
+        }
         public void GrantDirectory(SecurityIdentifier sid, string path, FileSystemRights rights, bool recursive)
         {
-            var info = new DirectoryInfo(path);
-            DirectorySecurity original = info.GetAccessControl(AccessControlSections.Access);
-            Save(path, delegate
+            using (new AclEditLock())
             {
-                DirectorySecurity current = info.GetAccessControl(AccessControlSections.Access);
-                current.PurgeAccessRules(packageSid);
-                info.SetAccessControl(current);
-                info.SetAccessControl(original);
-            });
-            DirectorySecurity security = info.GetAccessControl(AccessControlSections.Access);
-            InheritanceFlags inheritance = recursive ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit : InheritanceFlags.None;
-            security.AddAccessRule(new FileSystemAccessRule(sid, rights, inheritance, PropagationFlags.None, AccessControlType.Allow));
-            info.SetAccessControl(security);
+                var info = new DirectoryInfo(path);
+                var originalRules = OwnRules(info.GetAccessControl(AccessControlSections.Access), sid);
+                Save(path, delegate
+                {
+                    using (new AclEditLock())
+                    {
+                        var current = info.GetAccessControl(AccessControlSections.Access);
+                        current.PurgeAccessRules(sid);
+                        foreach (var rule in originalRules) current.AddAccessRule(rule);
+                        info.SetAccessControl(current);
+                    }
+                });
+                var security = info.GetAccessControl(AccessControlSections.Access);
+                var flags = recursive ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit : InheritanceFlags.None;
+                security.AddAccessRule(new FileSystemAccessRule(sid, rights, flags, PropagationFlags.None, AccessControlType.Allow));
+                info.SetAccessControl(security);
+            }
         }
-
         public void GrantFile(SecurityIdentifier sid, string path, FileSystemRights rights)
         {
-            var info = new FileInfo(path);
-            FileSecurity original = info.GetAccessControl(AccessControlSections.Access);
-            Save(path, delegate
+            using (new AclEditLock())
             {
-                FileSecurity current = info.GetAccessControl(AccessControlSections.Access);
-                current.PurgeAccessRules(packageSid);
-                info.SetAccessControl(current);
-                info.SetAccessControl(original);
-            });
-            FileSecurity security = info.GetAccessControl(AccessControlSections.Access);
-            security.AddAccessRule(new FileSystemAccessRule(sid, rights, AccessControlType.Allow));
-            info.SetAccessControl(security);
+                var info = new FileInfo(path);
+                var originalRules = OwnRules(info.GetAccessControl(AccessControlSections.Access), sid);
+                Save(path, delegate
+                {
+                    using (new AclEditLock())
+                    {
+                        var current = info.GetAccessControl(AccessControlSections.Access);
+                        current.PurgeAccessRules(sid);
+                        foreach (var rule in originalRules) current.AddAccessRule(rule);
+                        info.SetAccessControl(current);
+                    }
+                });
+                var security = info.GetAccessControl(AccessControlSections.Access);
+                security.AddAccessRule(new FileSystemAccessRule(sid, rights, AccessControlType.Allow));
+                info.SetAccessControl(security);
+            }
         }
-
         private void Save(string path, Action restore)
         {
             if (savedPaths.Add(Path.GetFullPath(path))) restoreActions.Add(restore);
         }
-
         public bool Restore()
         {
             bool okay = true;
             for (int i = restoreActions.Count - 1; i >= 0; i--)
-            {
-                try { restoreActions[i](); }
-                catch { okay = false; }
-            }
+                try { restoreActions[i](); } catch { okay = false; }
             return okay;
         }
     }
@@ -1767,6 +1959,7 @@ internal static class ExcessSandbox
     private sealed class DiagnosticCapture
     {
         private readonly byte[] bytes;
+        private readonly object captureLock = new object();
         private int start;
         private int count;
 
@@ -1774,6 +1967,8 @@ internal static class ExcessSandbox
 
         public void Append(byte[] source, int offset, int length)
         {
+            lock (captureLock)
+            {
             for (int i = 0; i < length; i++)
             {
                 int index;
@@ -1789,15 +1984,19 @@ internal static class ExcessSandbox
                 }
                 bytes[index] = source[offset + i];
             }
+            }
         }
 
         public override string ToString()
         {
+            lock (captureLock)
+            {
             var ordered = new byte[count];
             int first = Math.Min(count, bytes.Length - start);
             Buffer.BlockCopy(bytes, start, ordered, 0, first);
             if (first < count) Buffer.BlockCopy(bytes, 0, ordered, first, count - first);
             return Encoding.UTF8.GetString(ordered);
+            }
         }
     }
 

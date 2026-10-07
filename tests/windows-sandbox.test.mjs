@@ -415,6 +415,37 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     assert.ok(stopEvents.some((event) => event.type === 'cleanup' && event.ok === true));
     console.log('windows-stop-command-cleanup=ok');
 
+    const overlapRoot = path.join(outputBase, randomUUID().replaceAll('-', ''));
+    const overlapScratch = path.join(overlapRoot, 'scratch');
+    mkdirSync(overlapScratch, {recursive:true}); protectScratchRoot(overlapScratch);
+    const overlapBefore = getAclSnapshot(aclTargets);
+    const firstOverlap = launchSandbox({ ...config, arguments: ['--probe-hang'], timeoutMilliseconds: 30000 });
+    let secondOverlap;
+    try {
+      await firstOverlap.waitFor(output => output.includes('"type":"started"') || output.includes('"type":"error"'));
+      assert.equal(parseEvents(firstOverlap.output()).find(event => event.type === 'error')?.code, undefined, 'first overlap sandbox should start');
+      secondOverlap = launchSandbox({ ...config, scratchDirectory: overlapScratch, arguments: ['--probe-hang'], timeoutMilliseconds: 30000 });
+      await new Promise(resolve => setTimeout(resolve, 500));
+      assert.equal(secondOverlap.output().includes('"type":"started"'), false, 'the existing runtime transaction must serialize two model sandboxes');
+      firstOverlap.stop();
+      const firstDone = await firstOverlap.done;
+      assert.ok(parseEvents(firstDone.stdout).some(event => event.type === 'cleanup' && event.ok === true));
+      await secondOverlap.waitFor(output => output.includes('"type":"started"') || output.includes('"type":"error"'));
+      assert.equal(parseEvents(secondOverlap.output()).find(event => event.type === 'error')?.code, undefined, 'queued sandbox should start after the first stop');
+      assert.notDeepEqual(getAclSnapshot(aclTargets), overlapBefore, 'the second sandbox must retain its own live grants');
+      secondOverlap.stop();
+      const secondDone = await secondOverlap.done;
+      assert.ok(parseEvents(secondDone.stdout).some(event => event.type === 'cleanup' && event.ok === true));
+      assert.deepEqual(getAclSnapshot(aclTargets), overlapBefore, 'both serialized stops must restore the original grants');
+      console.log('windows-overlap-cleanup=runtime-serialization-and-restoration-preserved');
+    } finally {
+      if (firstOverlap.child.exitCode === null) firstOverlap.stop();
+      if (secondOverlap?.child.exitCode === null) secondOverlap.stop();
+      await firstOverlap.done; if (secondOverlap) await secondOverlap.done;
+      await rmdirFixture(overlapScratch);
+      await rmdirFixture(overlapRoot);
+    }
+
     const setupFd = openSync(setupModel, 'w');
     const setupBytes = 512 * 1024 * 1024;
     ftruncateSync(setupFd, setupBytes);

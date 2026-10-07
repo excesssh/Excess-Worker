@@ -12,8 +12,8 @@ import { AnswerGate,readLlamaStream,unansweredReasoning,type ChunkCallback } fro
 import { PROMPT_FORMATS } from "./prompt-format.js";
 import { isolateRuntime, type RuntimeIsolation } from "./isolation.js";
 
-export interface AdapterOptions {threads:number;maxMemoryMb:number;timeoutMs:number;modelId?:string;backend?:Backend}
-export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number}
+export interface AdapterOptions {threads:number;maxMemoryMb:number;maxGpuMemoryMb?:number;timeoutMs:number;modelId?:string;backend?:Backend}
+export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number;maxGpuMemoryMb?:number;peakGpuMemoryMb?:number;peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"windows-cuda-budget-v1"}
 export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal;onChunk?:ChunkCallback}):Promise<TextResult>;stop():Promise<void>;
   /** Memory the loaded runtime already holds (its peak resident size), or 0 when no runtime is running. A job runs in that
    * process, so this memory counts toward the job's allowance rather than against the machine's free memory. */
@@ -22,7 +22,7 @@ export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<A
  * only createTextAdapter, which always re-verifies the pinned installation. */
 export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
-  modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
+  maxGpuMemoryMb:z.number().int().min(1024).max(32768).optional(),modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
 // Sampling as pinned in the capability; version 3 entries predate minP and repeatPenalty and used llama-server's neutral values.
 const samplingSchema=z.object({temperature:z.string(),topP:z.string(),topK:z.number().int().min(0),minP:z.string().default("0"),presencePenalty:z.string().default("0"),repeatPenalty:z.string().default("1")});
 // Internal supervisor state (not re-exported by the adapter package entry point).
@@ -67,6 +67,11 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
   const parsed=optionsSchema.safeParse(inputOptions);
   if(!parsed.success)throw new AdapterError("INVALID_ADAPTER_POLICY");
   const options=parsed.data,entry=catalogEntry(options.modelId??DEFAULT_MODEL_ID),backend:Backend=options.backend??"cpu";
+  if(launch.isolate&&backend!=="cpu"){
+    if(currentPlatform()!=="win32-x64"||backend!=="cuda"||entry.id!=="qwen3-4b")throw new AdapterError("GPU_ISOLATION_UNVERIFIED");
+    if(options.maxGpuMemoryMb===undefined)throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
+    if(options.maxGpuMemoryMb<entry.minVramMb)throw new AdapterError("GPU_MEMORY_BELOW_MODEL_REQUIREMENT");
+  }
   const pinned=PROMPT_FORMATS[entry.capability.promptFormat],parsedSampling=samplingSchema.safeParse(entry.capability);
   if(!pinned||!parsedSampling.success)throw new AdapterError("INVALID_CATALOG_ENTRY");
   const format=pinned,values=parsedSampling.data;
@@ -97,16 +102,19 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       for(const key of ["HOME","TMPDIR"])if(process.env[key])env[key]=process.env[key];
     }
     // A split model is opened through its first part; llama.cpp loads the other parts from their standard names beside it.
+    // Pinned llama.cpp maps layer-offload INFO messages to verbosity 4. The native
+    // helper retains bounded diagnostics privately and emits only numeric GPU facts.
     const runtimeArgs=[...(launch.prefixArgs??[]),"--model",installed.modelPath,"--host","127.0.0.1","--port",String(selectedPort),
       "--threads",String(options.threads),"--threads-batch",String(options.threads),"--threads-http","2","--ctx-size",String(entry.capability.contextTokens),
       // GPU builds (CUDA, Vulkan) offload every layer; the CPU build keeps them all on the processor. Prompts are rendered by the
       // pinned format, so the GGUF's own chat template is never used.
-      "--parallel","1","--n-gpu-layers",backend==="cpu"?"0":"999","--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"];
+      "--parallel","1","--n-gpu-layers",backend==="cpu"?"0":"999",...(backend==="cuda"?["--split-mode","none","--main-gpu","0","--log-verbosity","4","--log-colors","off"]:[]),"--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"];
     if(launch.isolate){
       isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
         modelPaths:installed.modelFiles?.map(file=>file.path)??[installed.modelPath],
         ...(installed.runtimeRoot?{runtimeRoot:installed.runtimeRoot}:{}),...(installed.runtimeFiles?{runtimeFiles:installed.runtimeFiles}:{}),
-        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*1048576,timeoutMs:options.timeoutMs,port:selectedPort,backend});
+        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*1048576,timeoutMs:options.timeoutMs,port:selectedPort,backend,
+        ...(options.maxGpuMemoryMb!==undefined?{maxGpuMemoryBytes:options.maxGpuMemoryMb*1048576}:{})});
       env.TEMP=isolation.scratch;env.TMP=isolation.scratch;
       if(platform==="linux-x64"){env.HOME=isolation.scratch;env.TMPDIR=isolation.scratch;}
     }
@@ -117,6 +125,13 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       try {const response=await runtimeFetch("/health",{signal:AbortSignal.any([signal,AbortSignal.timeout(1000)]),redirect:"error"});if(response.ok){await boundedJson(response,4096);break;}await response.body?.cancel();}
       catch(error){if(signal.aborted)throw error;}
       await delay(200,undefined,{signal});
+    }
+    if(launch.isolate&&backend==="cuda"){
+      // A CUDA build can fall back to CPU. Require host-observed device residency
+      // consistent with the pinned weights before accepting inference inputs.
+      const minimum=Math.floor(entry.artifacts.filter(file=>file.name.endsWith(".gguf")).reduce((sum,file)=>sum+file.bytes,0)*0.75);
+      for(let i=0;i<10&&(processes.process!.peakDedicatedGpuMemoryBytes()<minimum||processes.process!.gpuOffloadedLayers()!==37);i++)await delay(200,undefined,{signal});
+      if(processes.process!.peakDedicatedGpuMemoryBytes()<minimum||processes.process!.gpuOffloadedLayers()!==37)throw new AdapterError("GPU_OFFLOAD_NOT_OBSERVED");
     }
     if(format.answerMarker!==undefined) {
       // The marker's token IDs come from the loaded vocabulary, so the gate follows the model's own special tokens.
@@ -173,7 +188,8 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       if(!runtime?.alive()||typeof nativePid!=="number"||!Number.isSafeInteger(nativePid)||nativePid<=0||
         typeof guardianPid!=="number"||!Number.isSafeInteger(guardianPid)||guardianPid<=0){await stop();throw new AdapterError("RUNTIME_DIAGNOSTICS_UNAVAILABLE");}
       return {ok:true,capabilityDigest:entry.capabilityDigest,backend,modelId:entry.id,model:entry.capability.model,runtime:entry.capability.runtime,threads:options.threads,maxMemoryMb:options.maxMemoryMb,
-        probedAt:new Date().toISOString(),generatedTokens:result.generatedTokens,peakRssMb:Math.ceil(runtime.peakRssBytes()/1048576),nativePid,guardianPid};
+        probedAt:new Date().toISOString(),generatedTokens:result.generatedTokens,peakRssMb:Math.ceil(runtime.peakRssBytes()/1048576),nativePid,guardianPid,
+        ...(launch.isolate&&backend==="cuda"?{maxGpuMemoryMb:options.maxGpuMemoryMb!,peakGpuMemoryMb:Math.ceil(runtime.peakGpuMemoryBytes()/1048576),peakDedicatedGpuMemoryMb:Math.ceil(runtime.peakDedicatedGpuMemoryBytes()/1048576),gpuOffloadedLayers:runtime.gpuOffloadedLayers(),gpuBoundary:"windows-cuda-budget-v1" as const}:{})};
     },
   };
 }

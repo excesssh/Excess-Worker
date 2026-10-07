@@ -14,12 +14,13 @@ export interface RuntimeFilePin { path: string; sha256: string }
 /** Only verified native launches use this boundary. Injected test servers are fixtures. */
 export async function isolateRuntime(executable: string, args: readonly string[], options: {
   readPaths: readonly string[]; modelPaths?: readonly string[]; runtimeRoot?: string; runtimeFiles?: readonly RuntimeFilePin[]; modelFiles?: readonly RuntimeFilePin[];
-  maxMemoryBytes: number; timeoutMs: number; port: number; backend: string;
+  maxMemoryBytes: number; maxGpuMemoryBytes?: number; timeoutMs: number; port: number; backend: string;
 }): Promise<RuntimeIsolation> {
   if(process.platform==="win32"){
     if(!options.runtimeRoot||!options.runtimeFiles?.length||!options.modelFiles?.length)throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
     return isolateWindowsRuntime(executable,args,{runtimeRoot:options.runtimeRoot,runtimeFiles:options.runtimeFiles,modelFiles:options.modelFiles,
-      maxMemoryBytes:options.maxMemoryBytes,timeoutMs:options.timeoutMs,backend:options.backend,port:options.port});
+      maxMemoryBytes:options.maxMemoryBytes,timeoutMs:options.timeoutMs,backend:options.backend,port:options.port,
+      ...(options.maxGpuMemoryBytes!==undefined?{maxGpuMemoryBytes:options.maxGpuMemoryBytes}:{})});
   }
   if (process.platform !== "linux" || process.arch !== "x64") throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");
   // This profile cannot safely account for GPU virtual-address reservations or grant driver access.

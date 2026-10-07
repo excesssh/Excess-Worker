@@ -6,7 +6,7 @@ import { AdapterError } from "./manifest.js";
 import type { RuntimeSupervision } from "./native-process.js";
 import { MAX_RUNTIME_BODY_BYTES,MAX_RUNTIME_CHUNK_BYTES,MAX_RUNTIME_RESPONSE_BYTES,RUNTIME_PATHS,runtimeResponseSchema,type RuntimeRequest } from "./runtime-rpc.js";
 export { processRss } from "./native-process.js";
-export interface ManagedProcess {child:ChildProcess;closed:Promise<void>;alive():boolean;error():AdapterError|null;peakRssBytes():number;nativePid():number|undefined;stop():Promise<void>;request?(path:string,options?:RequestInit):Promise<Response>}
+export interface ManagedProcess {child:ChildProcess;closed:Promise<void>;alive():boolean;error():AdapterError|null;peakRssBytes():number;peakGpuMemoryBytes():number;peakDedicatedGpuMemoryBytes():number;gpuOffloadedLayers():number;nativePid():number|undefined;stop():Promise<void>;request?(path:string,options?:RequestInit):Promise<Response>}
 const execFileAsync=promisify(execFile);
 // The private guardian owns the native process. Parent IPC loss is a shutdown,
 // including when a worker is killed without executing its own finally handlers.
@@ -15,7 +15,7 @@ export function startSupervisedProcess(executable:string,args:readonly string[],
   const forkOptions:ForkOptions&{windowsHide:boolean}={execArgv:[],windowsHide:true,
     detached:process.platform!=="win32",env:{SystemRoot:systemRoot,WINDIR:systemRoot,PATH:join(systemRoot,"System32")},stdio:["ignore","ignore","ignore","ipc"]};
   const child=fork(fileURLToPath(new URL("./process-helper.js",import.meta.url)),[],forkOptions);
-  let ended=false,fault:AdapterError|null=null,peak=0,pid:number|undefined,stopping:Promise<void>|undefined;
+  let ended=false,fault:AdapterError|null=null,peak=0,gpuPeak=0,gpuLocalPeak=0,gpuLayers=0,pid:number|undefined,stopping:Promise<void>|undefined;
   let requestId=0;
   type PendingRequest={resolve:(response:Response)=>void;reject:(error:Error)=>void;controller?:ReadableStreamDefaultController<Uint8Array>;bytes:number;
     awaitingChunk:boolean;completePull?:()=>void;removeAbort:()=>void;started:boolean;aborted:boolean};
@@ -32,7 +32,7 @@ export function startSupervisedProcess(executable:string,args:readonly string[],
   child.once("close",()=>{ended=true;for(const id of pending.keys())finishRequest(id,new AdapterError("RUNTIME_EXITED"));resolveClosed();});
   child.on("message",(message:unknown)=>{
     if(!message||typeof message!=="object")return;
-    const data=message as {type?:string;pid?:number;peakRssBytes?:number;error?:string};
+    const data=message as {type?:string;pid?:number;peakRssBytes?:number;peakGpuMemoryBytes?:number;peakDedicatedGpuMemoryBytes?:number;gpuOffloadedLayers?:number;error?:string};
     if(data.type==="response"||data.type==="data"||data.type==="end"||data.type==="error"){
       const parsed=runtimeResponseSchema.safeParse(message);
       if(!parsed.success){fault=new AdapterError("RUNTIME_CONTROL_INVALID");void stop().catch(()=>{});return;}
@@ -78,6 +78,9 @@ export function startSupervisedProcess(executable:string,args:readonly string[],
     if(data.type==="status"){
       if(Number.isSafeInteger(data.pid)&&data.pid!>0)pid=data.pid;
       if(typeof data.peakRssBytes==="number"&&Number.isFinite(data.peakRssBytes))peak=Math.max(peak,data.peakRssBytes);
+      if(typeof data.peakGpuMemoryBytes==="number"&&Number.isSafeInteger(data.peakGpuMemoryBytes)&&data.peakGpuMemoryBytes>=0)gpuPeak=Math.max(gpuPeak,data.peakGpuMemoryBytes);
+      if(typeof data.peakDedicatedGpuMemoryBytes==="number"&&Number.isSafeInteger(data.peakDedicatedGpuMemoryBytes)&&data.peakDedicatedGpuMemoryBytes>=0)gpuLocalPeak=Math.max(gpuLocalPeak,data.peakDedicatedGpuMemoryBytes);
+      if(Number.isSafeInteger(data.gpuOffloadedLayers)&&data.gpuOffloadedLayers!>=0&&data.gpuOffloadedLayers!<=128)gpuLayers=data.gpuOffloadedLayers!;
       if(data.error&&/^[A-Z_]{1,64}$/.test(data.error))fault=new AdapterError(data.error);
     }
   });
@@ -117,6 +120,6 @@ export function startSupervisedProcess(executable:string,args:readonly string[],
     try{await Promise.race([closed,new Promise<never>((_,reject)=>{timeout=setTimeout(()=>reject(new AdapterError("RUNTIME_STOP_TIMEOUT")),5000);})]);}finally{clearTimeout(timeout);}
     if(options.supervision)throw new AdapterError("RUNTIME_STOP_TIMEOUT");
   })();
-  return {child,closed,alive:()=>!ended&&child.exitCode===null&&child.signalCode===null,error:()=>fault,peakRssBytes:()=>peak,nativePid:()=>pid,stop,
+  return {child,closed,alive:()=>!ended&&child.exitCode===null&&child.signalCode===null,error:()=>fault,peakRssBytes:()=>peak,peakGpuMemoryBytes:()=>gpuPeak,peakDedicatedGpuMemoryBytes:()=>gpuLocalPeak,gpuOffloadedLayers:()=>gpuLayers,nativePid:()=>pid,stop,
     ...(options.supervision?{request}:{})};
 }

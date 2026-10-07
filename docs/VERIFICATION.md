@@ -1,66 +1,51 @@
-# Verify a local candidate
+# Release verification and evidence
 
-No worker release has been published. These steps are for a locally prepared, signed candidate and future release files. A signature authenticates release metadata and artifact hashes; it does not certify isolation, honest work, device-key custody or hardware execution.
+No downloadable worker release is published. A project Minisign signature authenticates source/version/sequence and archive hashes. It does not certify honest inference, isolation, device-key custody or GPU hardware. [PLATFORMS.md](PLATFORMS.md) is the current support/evidence summary.
 
-## Check the manifest signature
+## Current evidence
 
-Establish the project's Minisign public key from a trusted source checkout. A key downloaded beside an untrusted archive does not provide independent trust. The checked-in key is [minisign.pub](../releases/minisign.pub).
+The [exact source70 signed CPU report](verification/signed-cpu-source70.json) records fresh application installation on Windows and WSL Linux, live HTTPS pairing at testnet.excess.sh, a project-funded 27-token buyer job on each platform, device-signature validation, settled accounting, drain, restart, remote revocation and cleanup. The coordinator/database/ledger were real testnet services. These were existing project-funded test accounts; no new deposit, withdrawal, mainnet action, organic demand, independent supplier or fresh operating system is claimed.
 
-With Minisign installed, verify the manifest signature:
+Actual offline signed installation/update and manual recovery passed. Recovery reverified the previous project signature, archive, every installed file and Linux executable modes, preserved sequence 11 high-water, ran previous-package inference and rolled forward. This is manual recovery evidence, not an automatic network updater or integrated rollback-command claim.
+
+The [Windows CUDA report](verification/windows-cuda-development.json) records real GPU development inference on RTX 3070 Ti / driver 596.49 with two independent 6 GiB budgets,37/37 observed layers, correct output, cancellation, restart and cleanup. The newest native helper and source hashes are included. The exact signed GPU installation/funded buyer/drain/revoke journey and controlled HTTPS signed updates remain pending. Neither fixture tests nor inventory/health probes complete these gates.
+
+Build-time `publicDistributionReady`, controller and execution readiness flags remain closed. They must change only against corresponding source/artifact-bound evidence. No public binary or production download/update feed has been verified.
+
+## Verify a signature and archive
+
+Establish [minisign.pub](../releases/minisign.pub) from a trusted checkout. Downloading a key beside an untrusted archive does not establish independent trust.
 
 ```sh
 minisign -Vm release.json -x release.json.minisig -p releases/minisign.pub
 ```
 
-Then compare the archive name, byte count and SHA-256 with the authenticated platform entry in `release.json`. The manifest binds version, increasing release sequence, source commit, exact filenames and hashes, declared isolation and reproducibility results.
+Compare the exact platform filename, byte count and SHA-256 with its authenticated entry in `release.json`. Require the intended source commit, increasing release sequence and supported platform. The updater additionally retains TLS/paired-origin authentication, archive/path/file validation, source identity and downgrade/high-water protections.
 
-The local candidate builder compares complete archives from two independent build directories and signs the resulting metadata. It requires `EXCESS_WORKER_MINISIGN_KEY` to be supplied from private credential storage:
+The local builder compares complete archives from two independent clean build directories before signing with the anonymous project key supplied through secure storage:
 
 ```sh
 node scripts/public-worker/release.mjs <build-a/packages> <build-b/packages> <candidate-out>
 ```
 
-Signing is permitted for a closed local candidate used by verifier and update tests. The candidate remains closed; its signature is not evidence that runtime or release gates passed.
+Signing a closed candidate does not promote readiness. Windows executables have no trusted Authenticode publisher signature. Trusted publisher signing, paid certificates and identity verification are outside scope.
 
-## Verify-only installer behavior
+## Deliberate candidate installation
 
-The installer scripts check the signature, package identity, sizes, hashes and archive paths. By default they inspect and stage archive contents, then refuse installation with closed package flags, remove staging and return a nonzero status. For deliberate local verification of an actual project-signed closed candidate, use `-VerificationCandidate` on Windows or `--verification-candidate` on Linux with a separate install root. The option preserves signature, identity, hash, archive, high-water and native isolation checks. It cannot promote readiness or enable GPU execution or automatic updates. They do not execute a downloaded script.
-
-```sh
-sh scripts/worker-install/install.sh release.json release.json.minisig <exact-linux-archive>
-```
+Default installers refuse closed candidates after verification and remove staging. For deliberate verification of the actual project-signed candidate, use a separate install root and `-VerificationCandidate` on Windows or `--verification-candidate` on Linux. These options preserve signature, identity, hashes, archive paths, high-water, native isolation and cleanup; they do not open public readiness or automatic updates. They do not execute a downloaded script.
 
 ```powershell
-powershell -NoProfile -File scripts/worker-install/install.ps1 release.json release.json.minisig <exact-windows-archive>
+powershell -NoProfile -File scripts/worker-install/install.ps1 release.json release.json.minisig <exact-windows-archive> -VerificationCandidate
 ```
 
-These commands validate a local candidate and demonstrate the expected closed-gate refusal; they are not an installation path. No public installer or binary release is available.
+```sh
+sh scripts/worker-install/install.sh release.json release.json.minisig <exact-linux-archive> --verification-candidate
+```
 
-## Other checks are separate
+Use [INSTALLATION.md](INSTALLATION.md) for the current installation scope. Windows host-owned signed update reporting permits only the captured paired origin and package state; the child cannot choose a URL, version override or installer command. Windows automatic installation remains disabled. Positive controlled HTTPS updating is required before publication.
 
-The website's local file checker compares the selected manifest's exact filename, size and SHA-256. It does not verify Minisign in the browser. Job-receipt checking is separate and verifies only the signed fields for the supplied device key.
+## Historical evidence
 
-The local Linux CPU integration report at [verification/linux-controller-cpu.json](verification/linux-controller-cpu.json) used a fixture HTTPS coordinator, ephemeral test CA, test-only PGlite and synthetic ledger. It records one paired CPU job, a three-token output and receipt, a drain request, clean exit, lock release and revocation. It is local integration evidence only: no public coordinator, production database, chain-backed funds, payment, installed package or GPU execution was involved.
+Earlier [source64 CPU packages](verification/packaged-cpu-source64.json), [Linux integration](verification/linux-controller-cpu.json), prototype Windows reports and native/control fixtures remain unchanged historical reports. Their fixture HTTPS coordinators, ephemeral CAs and synthetic PGlite ledgers do not establish funded production/testnet journeys. Their closed flags and pending checks describe those exact older sources. They are superseded as current status by the source70 CPU report and latest narrowly scoped GPU development report above.
 
-The [source64 packaged CPU report](verification/packaged-cpu-source64.json) binds both local archives, complete package inventories, controller helpers and entry files to unchanged package bytes. Windows and Linux each completed a real Qwen3-4B CPU buyer job, returned `Ready.` (three tokens), drained, released the runtime lock and revoked the device. The existing model was read in place. Windows measured 3,606 MiB probe peak RSS under its 4,096 MiB native limit; Linux measured 3,617 MiB probe RSS with an 8 GiB configured service cap. The Linux systemd summary's 512 KiB peak is excluded from model-memory evidence. Both runs used a local fixture coordinator, ephemeral TLS and synthetic PGlite accounting. Fresh extraction is separate from positive verified installation, and all package release flags remain closed.
-
-An earlier Windows CPU journey used prototype helper `cabf33e536646cc8a4dfb88fb7af9e25e31ad0fd7cd12f7760e124226ed8cc2a`, local TLS, PGlite and a synthetic ledger. It records a real local CPU journey through that prototype; it does not verify the updated final package, its hardware isolation or a production coordinator.
-
-Linux kernel and package fixtures test specific namespace, broker, resource and archive boundaries. The CI suite does not set release verification flags. The Linux package marks `publicDistributionReady`, `controller.verified`, `cpuVerified` and `gpuVerified` false. The installer therefore stops after validation, and Linux package auto-install remains unavailable.
-
-Windows source now implements host-owned signed update reporting: the trusted host captures the paired origin and current signed package release, and the confined controller can request only a fixed check and receives a validated result. The host uses the existing signed release checker; the child cannot supply a URL, version override or installer command. Windows automatic installation is disabled, and the manual signed host-side CLI update path remains. These implementation boundaries do not establish a production signed update exchange or successful package installation.
-
-The [Windows controller and sandbox native fixtures](verification/windows-controller-fixtures.json) passed 3/3 with no skips or failures when run with the exact neutral roots and pinned toolchain in [build instructions](BUILD.md). They cover the documented controller refusal/cleanup, sandbox network boundary, cancellation, queue, memory observation and ACL restoration cases; they do not verify final-package model execution, installation or a production signed update.
-
-Windows [control concurrency checks](verification/windows-control-concurrency.json) reproduce transient lock-open failures under simultaneous stop/run requests and verify bounded retry with 1,024 real control writes. Ownership checks and the existing lock deadline remain in force. This is local control evidence, not a signed-install or model-execution claim.
-
-Before publication, bind the exact source revision, helper hashes and complete archive bytes to independent builds. Complete bootstrap, positive installation, restart, signed update, rollback, drain and revocation checks on supported clean hosts. Verify each advertised backend using the exact packaged workload. Linux also requires the bounded cgroup v2 service and supported namespace, Landlock and seccomp features. Positive installation on clean hosts, production signed-update behavior, GPU execution remain unverified. The scoped local CPU jobs do not establish these gates.
-Ubuntu 24.04 hosted CI temporarily permits unprivileged user namespaces on its disposable runner and restores the previous AppArmor sysctl in an always-run step. The namespace probe must then pass before the native fixtures run. This is an explicit CI host prerequisite, not evidence that every default Ubuntu host permits the production profile. See the [Ubuntu 24.04 namespace restrictions](https://documentation.ubuntu.com/release-notes/24.04/). Production launch continues to fail closed when its host disallows the required namespaces.
-
-Anonymous Minisign signing is the release authentication gate. Windows binaries have no trusted Authenticode publisher signature; certificates and identity verification are outside scope. Superseded-repository deletion is a separate migration task and does not gate a release.
-
-The Windows streaming host bridge distinguishes the required chunk sequence from the host-owned heartbeat counter. The focused and standalone regression evidence is in `verification/streaming-chunk-regression.json`; real signed-package buyer verification remains required.
-
-Actual signed sequence8 source67 candidates completed fresh application installation, pairing, a real project-funded testnet inference with signed output, drain during the active job, clean exit/reap, restart and revocation on Windows and Linux. Both returned the expected27-token answer and settled27 acknowledged tokens. These are workstation/WSL checks, not a fresh OS, second-machine, organic-demand or GPU claim. See `verification/signed-cpu-journey-source67.json` for exact archive/model hashes and scope.
-
-The signed offline installer advanced sequence7 to8. Manual operator recovery fully reverified the previous project-signed package and all installed bytes before restoring its launcher, retained the sequence8 high-water record, executed a real isolated probe and rolled forward through the signed installer. This is manual recovery evidence; automatic network update and an integrated rollback command are not claimed. A production-ready signed download feed is still required for network-update verification. Existing candidate manifests remain immutable, with their build-time readiness flags closed.
+Kernel fixtures cover their named filesystem, credential, network, broker, process, resource and cleanup cases. CI does not set release readiness. The website file checker compares filename/size/SHA but does not verify Minisign in the browser; receipt checking verifies only signed fields for the supplied device key. Keep these claims distinct from release authentication and hardware proof.

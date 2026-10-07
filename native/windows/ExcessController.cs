@@ -662,22 +662,98 @@ internal static class ExcessController
     { var b = new StringBuilder("\""); int n = 0; foreach (char c in value) { if (c == '\\') { n++; continue; } if (c == '"') { b.Append('\\', n * 2 + 1).Append('"'); n = 0; continue; } b.Append('\\', n).Append(c); n = 0; } return b.Append('\\', n * 2).Append('"').ToString(); }
     private static void Close(IntPtr h) { if (h != IntPtr.Zero && h != new IntPtr(-1)) CloseHandle(h); }
 
+    // Serialize only ACL edits, not workloads. Never restore another live
+    // sandbox's temporary grants from a stale whole-descriptor snapshot.
+    private sealed class AclEditLock : IDisposable
+    {
+        private Mutex mutex;
+        private bool held;
+        public AclEditLock()
+        {
+            var owner = WindowsIdentity.GetCurrent().User;
+            var security = new MutexSecurity();
+            security.SetAccessRuleProtection(true, false);
+            security.AddAccessRule(new MutexAccessRule(owner, MutexRights.FullControl, AccessControlType.Allow));
+            security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), MutexRights.FullControl, AccessControlType.Allow));
+            bool created;
+            mutex = new Mutex(false, "Local\\Excess.AclEdit.v1." + owner.Value, out created, security);
+            try { try { held = mutex.WaitOne(5000); } catch (AbandonedMutexException) { held = true; } }
+            catch { mutex.Dispose(); mutex = null; throw; }
+            if (!held) { mutex.Dispose(); mutex = null; throw new InvalidOperationException("acl-edit-timeout"); }
+        }
+        public void Dispose()
+        {
+            if (mutex == null) return;
+            try { if (held) mutex.ReleaseMutex(); } finally { held = false; mutex.Dispose(); mutex = null; }
+        }
+    }
+
     private sealed class AclLease
     {
-        private readonly List<Action> restore = new List<Action>(); private readonly HashSet<string> saved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<Action> restoreActions = new List<Action>();
+        private readonly HashSet<string> savedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private static FileSystemAccessRule[] OwnRules(FileSystemSecurity security, SecurityIdentifier sid)
+        {
+            var result = new List<FileSystemAccessRule>();
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+                if (rule.IdentityReference.Equals(sid)) result.Add(rule);
+            return result.ToArray();
+        }
         public void GrantDirectory(string path, SecurityIdentifier sid, FileSystemRights rights, bool inheritance)
         {
-            var info = new DirectoryInfo(path); var original = info.GetAccessControl(AccessControlSections.Access); Save(path, () => { var current = info.GetAccessControl(AccessControlSections.Access); current.PurgeAccessRules(sid); info.SetAccessControl(current); info.SetAccessControl(original); });
-            var acl = info.GetAccessControl(AccessControlSections.Access); var flags = inheritance ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit : InheritanceFlags.None;
-            acl.AddAccessRule(new FileSystemAccessRule(sid, rights, flags, PropagationFlags.None, AccessControlType.Allow)); info.SetAccessControl(acl);
+            using (new AclEditLock())
+            {
+                var info = new DirectoryInfo(path);
+                var originalRules = OwnRules(info.GetAccessControl(AccessControlSections.Access), sid);
+                Save(path, delegate
+                {
+                    using (new AclEditLock())
+                    {
+                        var current = info.GetAccessControl(AccessControlSections.Access);
+                        current.PurgeAccessRules(sid);
+                        foreach (var rule in originalRules) current.AddAccessRule(rule);
+                        info.SetAccessControl(current);
+                    }
+                });
+                var security = info.GetAccessControl(AccessControlSections.Access);
+                var flags = inheritance ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit : InheritanceFlags.None;
+                security.AddAccessRule(new FileSystemAccessRule(sid, rights, flags, PropagationFlags.None, AccessControlType.Allow));
+                info.SetAccessControl(security);
+            }
         }
         public void GrantFile(string path, SecurityIdentifier sid, FileSystemRights rights)
         {
-            var info = new FileInfo(path); var original = info.GetAccessControl(AccessControlSections.Access); Save(path, () => { var current = info.GetAccessControl(AccessControlSections.Access); current.PurgeAccessRules(sid); info.SetAccessControl(current); info.SetAccessControl(original); });
-            var acl = info.GetAccessControl(AccessControlSections.Access); acl.AddAccessRule(new FileSystemAccessRule(sid, rights, AccessControlType.Allow)); info.SetAccessControl(acl);
+            using (new AclEditLock())
+            {
+                var info = new FileInfo(path);
+                var originalRules = OwnRules(info.GetAccessControl(AccessControlSections.Access), sid);
+                Save(path, delegate
+                {
+                    using (new AclEditLock())
+                    {
+                        var current = info.GetAccessControl(AccessControlSections.Access);
+                        current.PurgeAccessRules(sid);
+                        foreach (var rule in originalRules) current.AddAccessRule(rule);
+                        info.SetAccessControl(current);
+                    }
+                });
+                var security = info.GetAccessControl(AccessControlSections.Access);
+                security.AddAccessRule(new FileSystemAccessRule(sid, rights, AccessControlType.Allow));
+                info.SetAccessControl(security);
+            }
         }
-        private void Save(string path, Action action) { if (saved.Add(Path.GetFullPath(path))) restore.Add(action); }
-        public bool Restore() { bool ok = true; for (int i = restore.Count - 1; i >= 0; i--) try { restore[i](); } catch { ok = false; } return ok; }
+        private void Save(string path, Action restore)
+        {
+            if (savedPaths.Add(Path.GetFullPath(path))) restoreActions.Add(restore);
+        }
+        public bool Restore()
+        {
+            bool okay = true;
+            for (int i = restoreActions.Count - 1; i >= 0; i--)
+                try { restoreActions[i](); } catch { okay = false; }
+            return okay;
+        }
     }
 
     private sealed class ProtocolException : Exception { public string Code; public ProtocolException(string code) { Code = code; } }

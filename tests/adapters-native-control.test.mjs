@@ -19,7 +19,8 @@ function stop(){
 }
 lines.on('line',line=>{
  if(!native){JSON.parse(line);native=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
- emit({type:'started',pid:native.pid});emit({type:'status',peakWorkingSetBytes:123456,peakJobCommitBytes:987654});}
+ emit({type:'started',pid:native.pid});emit({type:'status',peakWorkingSetBytes:123456,peakJobCommitBytes:987654});
+ if(process.env.FIXTURE_GPU_STATUS)emit(JSON.parse(process.env.FIXTURE_GPU_STATUS));}
  else if(line==='{"type":"stop"}')stop();else process.exit(2);
 });
 lines.on('close',stop);
@@ -39,5 +40,39 @@ for(const cleanup of [true,false])test(`native control fixture ${cleanup?"reaps 
   if(cleanup)await runtime.stop();else await assert.rejects(runtime.stop(),/RUNTIME_CLEANUP_FAILED/);
   assert.equal(runtime.alive(),false);
   assert.throws(()=>process.kill(pid,0),"native fixture has been reaped");
+ }finally{await runtime.stop().catch(()=>{});}
+});
+
+for(const invalid of [false,true])test(`GPU guardian protocol ${invalid?'refuses inconsistent residency counters':'keeps GPU and CPU observations separate'}`,async()=>{
+ const runtime=startSupervisedProcess(process.execPath,['--input-type=module','-e',fixture],{
+  cwd:resolve('.'),env:{...process.env,FIXTURE_CLEANUP:'yes',FIXTURE_GPU_STATUS:JSON.stringify({type:'status',peakWorkingSetBytes:123456,
+   gpuMemoryBytes:1073741824,gpuLocalBytes:805306368,gpuNonLocalBytes:invalid?-1:268435456})},maxMemoryBytes:2147483648,
+  supervision:{protocol:'windows-appcontainer-v1',input:JSON.stringify({fixture:true})},
+ });
+ try{
+  const deadline=Date.now()+10000;
+  while(!(invalid?runtime.error():runtime.peakGpuMemoryBytes())&&Date.now()<deadline)await delay(25);
+  if(invalid){assert.equal(runtime.error()?.code,'RUNTIME_CONTROL_INVALID');await runtime.closed;assert.equal(runtime.alive(),false);}
+  else{assert.equal(runtime.peakGpuMemoryBytes(),1073741824);assert.equal(runtime.peakDedicatedGpuMemoryBytes(),805306368);assert.equal(runtime.peakRssBytes(),123456);await runtime.stop();}
+ }finally{await runtime.stop().catch(()=>{});}
+});
+
+for(const [label,status,expectedLayers,invalid] of [
+ ['full offload',{gpuOffloadedLayers:37,gpuTotalLayers:37},37,false],
+ ['partial offload',{gpuOffloadedLayers:36,gpuTotalLayers:37},0,false],
+ ['missing total',{gpuOffloadedLayers:37},0,true],
+ ['fractional layers',{gpuOffloadedLayers:36.5,gpuTotalLayers:37},0,true],
+ ['over-total layers',{gpuOffloadedLayers:38,gpuTotalLayers:37},0,true],
+ ['unbounded total',{gpuOffloadedLayers:129,gpuTotalLayers:129},0,true],
+])test(`GPU guardian layer evidence ${label}`,async()=>{
+ const runtime=startSupervisedProcess(process.execPath,['--input-type=module','-e',fixture],{
+  cwd:resolve('.'),env:{...process.env,FIXTURE_CLEANUP:'yes',FIXTURE_GPU_STATUS:JSON.stringify({type:'status',peakWorkingSetBytes:123456,...status})},
+  maxMemoryBytes:2147483648,supervision:{protocol:'windows-appcontainer-v1',input:JSON.stringify({fixture:true})},
+ });
+ try{
+  const deadline=Date.now()+10000;
+  while(!(invalid?runtime.error():runtime.nativePid()&&runtime.peakRssBytes())&&Date.now()<deadline)await delay(25);
+  if(invalid){assert.equal(runtime.error()?.code,'RUNTIME_CONTROL_INVALID');await runtime.closed;assert.equal(runtime.alive(),false);}
+  else{assert.equal(runtime.gpuOffloadedLayers(),expectedLayers);await runtime.stop();}
  }finally{await runtime.stop().catch(()=>{});}
 });

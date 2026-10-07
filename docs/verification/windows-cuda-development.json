@@ -1,0 +1,42 @@
+{
+  "kind": "development-GPU-evidence-not-signed-package-verification",
+  "configuration": {
+    "gpu": "RTX 3070 Ti",
+    "driver": "596.49",
+    "backend": "cuda",
+    "model": "qwen3-4b",
+    "systemMemoryMb": 6144,
+    "gpuResidencyBudgetMb": 6144,
+    "threads": 2
+  },
+  "platform": "win32-x64",
+  "model": "Qwen3-4B-Q4_K_M",
+  "runtime": "llama.cpp-b10809",
+  "nativeHelperSha256": "c269a111806333b94c518ac5efb0a86f184808cb0d62e3236cbd0f6939ef3ad2",
+  "nativeSourceSha256": "d55ee432dec4460e414347b498faf83741c543d935af2e11e2bbf0494e2bd003",
+  "runtimeSourceSha256": "6c45741b0f6d323b8ac2ecc34af95aeac0b9240a7fd0a972ded31c37136ebba9",
+  "layers": 37,
+  "peakCombinedGpuMiB": 4184,
+  "peakDedicatedGpuMiB": 3780,
+  "correctOutput": true,
+  "generatedTokens": 27,
+  "outputSha256": "dc85f2d000277302dc6a5ead120f12bca6d6de7a620803ae8d5a1ea7f9bcdfe4",
+  "cancellationAfterTokens": 8,
+  "cancelledProcessReaped": true,
+  "restartUsedNewProcess": true,
+  "restartProcessReaped": true,
+  "cleanup": true,
+  "isolation": "AppContainer, authenticated relay, read-only pinned files and private scratch, separate hard host-commit cap and sampled WDDM local/shared GPU usage watchdog, idle GPU scheduling",
+  "limitations": "shared trusted OS/driver/GPU; no hardware partition, hard VRAM reservation, performance or fault-isolation guarantee",
+  "signedGpuBuyerJourneyVerified": false,
+  "linuxGpuVerified": false,
+  "binariesPublished": false,
+  "operatingSystem": {
+    "name": "Windows 11 Pro",
+    "version": "10.0.22631",
+    "build": 22631,
+    "architecture": "x64"
+  },
+  "modelFileSha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+  "modelLicence": "Apache-2.0, exact pinned licence SHA256 5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd"
+}

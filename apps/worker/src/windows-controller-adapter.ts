@@ -179,6 +179,9 @@ export function createWindowsTextAdapterClient(call: Call): TextAdapter {
               !["cpu", "cuda", "vulkan"].includes(String(proof.backend)) || typeof proof.model !== "string" || typeof proof.runtime !== "string" ||
               typeof proof.probedAt !== "string" || !Number.isFinite(Date.parse(proof.probedAt)) ||
               ![proof.threads, proof.maxMemoryMb, proof.generatedTokens, proof.peakRssMb].every(value => Number.isSafeInteger(value) && Number(value) >= 0)) fail("CONTROLLER_ADAPTER_PROBE_INVALID");
+          if(proof.backend==="cuda"&&(proof.gpuBoundary!=="windows-cuda-budget-v1"||proof.gpuOffloadedLayers!==37||
+            ![proof.maxGpuMemoryMb,proof.peakGpuMemoryMb,proof.peakDedicatedGpuMemoryMb].every(value=>Number.isSafeInteger(value)&&Number(value)>0)||
+            Number(proof.peakGpuMemoryMb)>Number(proof.maxGpuMemoryMb)||Number(proof.peakDedicatedGpuMemoryMb)>Number(proof.peakGpuMemoryMb)))fail("CONTROLLER_ADAPTER_PROBE_INVALID");
           finished = true; return proof as unknown as AdapterProbe;
         }
         if (event.kind === "result" && kind === "execute") { record(event, "kind,residentMb,result"); const result = parseTextResult(event.result); finished = true; return result; }

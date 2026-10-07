@@ -1,0 +1,69 @@
+{
+  "kind": "exact-project-signed-CPU-candidate-evidence",
+  "sourceCommit": "ea4caa9c41bdad716264551a9aad1fdeabfecfcc",
+  "releaseSequence": 11,
+  "projectMinisignVerified": true,
+  "coordinator": "https://testnet.excess.sh",
+  "fixtureCoordinator": false,
+  "fixtureLedger": false,
+  "funding": "existing project-funded testnet accounts; no new deposit or withdrawal",
+  "freshApplicationInstall": true,
+  "freshOperatingSystem": false,
+  "platforms": {
+    "windows": {
+      "model": "Qwen3-4B-Q4_K_M",
+      "backend": "cpu",
+      "threads": 2,
+      "systemMemoryLimitMiB": 4096,
+      "buyerTokens": 27,
+      "accounting": {
+        "netUnits": "27000000",
+        "feeUnits": "3000000",
+        "grossUnits": "30000000",
+        "heldUnits": "71111112",
+        "releasedUnits": "41111112",
+        "fundingSource": "custody"
+      },
+      "receiptSignatureVerified": true,
+      "tamperedSignatureRefused": true,
+      "pairing": true,
+      "drainDuringJob": true,
+      "restart": true,
+      "remoteRevoke": true,
+      "cleanup": true,
+      "offlineSignedUpdate": true,
+      "manualSignedRollback": true
+    },
+    "linux": {
+      "model": "Qwen3-4B-Q4_K_M",
+      "backend": "cpu",
+      "threads": 2,
+      "systemMemoryLimitMiB": 8192,
+      "buyerTokens": 27,
+      "accounting": {
+        "netUnits": "27000000",
+        "feeUnits": "3000000",
+        "grossUnits": "30000000",
+        "heldUnits": "71111112",
+        "releasedUnits": "41111112",
+        "fundingSource": "custody"
+      },
+      "receiptSignatureVerified": true,
+      "tamperedSignatureRefused": true,
+      "pairing": true,
+      "drainDuringJob": true,
+      "restart": true,
+      "remoteRevoke": true,
+      "cleanup": true,
+      "offlineSignedUpdate": true,
+      "manualSignedRollback": true
+    }
+  },
+  "archiveSha256": {
+    "win32-x64": "ee90ae524ff146083a1d31c65dcf1830e20f0a890f29a017cdea865aa31e68f3",
+    "linux-x64": "d62e91312e6e17ab50cfc7bb2c30e6563f6e58a8b2928b7cc8ddbe29eec99cb7"
+  },
+  "manualRecovery": "previous signature/archive/files and Linux modes reverified; high-water sequence11 unchanged; previous-package inference and roll-forward passed",
+  "networkUpdateVerified": false,
+  "binariesPublished": false
+}

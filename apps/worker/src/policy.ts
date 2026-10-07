@@ -13,7 +13,7 @@ export type ScheduleWindow = { days: number[]; from: string; to: string };
  * user service install a newly published version by itself when idle. maxCpuTempC and maxGpuTempC are thermal limits in
  * degrees Celsius (null turns one off): at the limit the worker takes no new jobs, and a running job is stopped once the
  * reading reaches the limit plus THERMAL_STOP_MARGIN_C. */
-export type WorkerPolicy = { threads: number; maxMemoryMb: number; runSeconds: number; idleOnly: boolean; idleSeconds: number; model: string; backend: Backend;
+export type WorkerPolicy = { threads: number; maxMemoryMb: number; maxGpuMemoryMb: number; runSeconds: number; idleOnly: boolean; idleSeconds: number; model: string; backend: Backend;
   schedule: ScheduleWindow[]; pauseOnBattery: boolean; autoUpdate: boolean; maxCpuTempC: number | null; maxGpuTempC: number | null };
 /** `onBattery` is null when there is no battery or its state is unknown. Temperatures are the hottest CPU and GPU sensor
  * readings in degrees Celsius, null when the machine exposes none (many virtual machines and Windows desktops). */
@@ -28,7 +28,7 @@ export const THERMAL_LIMIT_RANGE = Object.freeze({ min: 50, max: 100 });
 // Idle detection exists only on Windows desktops, so Linux workers (usually servers) default to running whenever allowed.
 // Thermal defaults: desktop CPUs are designed to run up to about 95 C under load (AMD's limit; Intel's is 100 C), and
 // consumer NVIDIA GPUs start slowing themselves at about 87-93 C, so new work pauses a little below those points.
-export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 4096, runSeconds: TEXT_LIMITS.maxRunSeconds, idleOnly: process.platform === "win32", idleSeconds: 60, model: DEFAULT_MODEL_ID, backend: "cpu",
+export const DEFAULT_WORKER_POLICY: Readonly<WorkerPolicy> = Object.freeze({ threads: 2, maxMemoryMb: 4096, maxGpuMemoryMb: 4096, runSeconds: TEXT_LIMITS.maxRunSeconds, idleOnly: process.platform === "win32", idleSeconds: 60, model: DEFAULT_MODEL_ID, backend: "cpu",
   schedule: Object.freeze([]) as unknown as ScheduleWindow[], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 });
 const TIME = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/;
 const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
@@ -69,10 +69,10 @@ export function parseWorkerPolicy(input: unknown): WorkerPolicy {
   const unknown = Object.keys(value).filter(key => !Object.hasOwn(DEFAULT_WORKER_POLICY, key));
   if (unknown.length) invalid("unknown setting " + unknown.slice(0, 4).join(", ").slice(0, 120));
   const policy = { ...DEFAULT_WORKER_POLICY, ...value } as WorkerPolicy;
-  const whole = (key: "threads" | "maxMemoryMb" | "runSeconds" | "idleSeconds", minimum: number, maximum: number) => {
+  const whole = (key: "threads" | "maxMemoryMb" | "maxGpuMemoryMb" | "runSeconds" | "idleSeconds", minimum: number, maximum: number) => {
     if (!Number.isInteger(policy[key]) || policy[key] < minimum || policy[key] > maximum) invalid(`${key} must be a whole number from ${minimum} to ${maximum}`);
   };
-  whole("threads", 1, 64); whole("maxMemoryMb", 1024, 262144); whole("runSeconds", 1, TEXT_LIMITS.maxRunSeconds); whole("idleSeconds", 1, 3600);
+  whole("threads", 1, 64); whole("maxMemoryMb", 1024, 262144); whole("maxGpuMemoryMb", 1024, 32768); whole("runSeconds", 1, TEXT_LIMITS.maxRunSeconds); whole("idleSeconds", 1, 3600);
   if (typeof policy.idleOnly !== "boolean") invalid("idleOnly must be true or false");
   if (typeof policy.pauseOnBattery !== "boolean") invalid("pauseOnBattery must be true or false");
   if (typeof policy.autoUpdate !== "boolean") invalid("autoUpdate must be true or false");

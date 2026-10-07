@@ -15,7 +15,7 @@ import { requestDigest } from "../packages/protocol/dist/index.js";
 import { createControllerStateStore } from "../apps/worker/dist/controller-state.js";
 import { createWindowsExecutionProofStore } from "../apps/worker/dist/windows-execution-proof-store.js";
 
-const policy = { threads: 1, maxMemoryMb: 1024, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 };
+const policy = { threads: 1, maxMemoryMb: 1024, maxGpuMemoryMb: 4096, runSeconds: 2, idleOnly: false, idleSeconds: 60, model: "qwen3-4b", backend: "cpu", schedule: [], pauseOnBattery: true, autoUpdate: false, maxCpuTempC: 95, maxGpuTempC: 85 };
 const timings = { pollMs: 20, heartbeatMs: 20, renewMs: 20, monitorMs: 10 };
 const output = { text: "TEST FIXTURE OUTPUT", generatedTokens: 3, finishReason: "stop" };
 const ready = { freeMemoryMb: 8192, idleSeconds: 120 };

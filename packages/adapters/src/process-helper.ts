@@ -6,12 +6,12 @@ const startSchema=z.strictObject({type:z.literal("start"),executable:z.string().
   options:z.strictObject({cwd:z.string().min(1).max(4096),env:z.record(z.string(),z.string().optional()),maxMemoryBytes:z.number().int().positive(),
     supervision:z.strictObject({protocol:z.literal("windows-appcontainer-v1"),input:z.string().min(1).max(65536)}).optional()})});
 let native:ManagedProcess|undefined,started=false,closing=false,reporter:NodeJS.Timeout|undefined;
-function report(){if(process.connected&&native)process.send?.({type:"status",pid:native.nativePid(),peakRssBytes:native.peakRssBytes(),error:native.error()?.code},undefined,undefined,()=>{});}
+function report(){if(process.connected&&native)process.send?.({type:"status",pid:native.nativePid(),peakRssBytes:native.peakRssBytes(),peakGpuMemoryBytes:native.peakGpuMemoryBytes(),peakDedicatedGpuMemoryBytes:native.peakDedicatedGpuMemoryBytes(),gpuOffloadedLayers:native.gpuOffloadedLayers(),error:native.error()?.code},undefined,undefined,()=>{});}
 async function shutdown() {
   if(closing)return;closing=true;clearInterval(reporter);
   let shutdownError:string|undefined;
   try{await native?.stop();}catch(error){shutdownError=(error as {code?:string})?.code??"RUNTIME_STOP_FAILED";}finally{
-    if(process.connected&&native)await new Promise<void>(resolve=>{process.send?.({type:"status",pid:native!.nativePid(),peakRssBytes:native!.peakRssBytes(),error:shutdownError??native!.error()?.code},undefined,undefined,()=>resolve());});
+    if(process.connected&&native)await new Promise<void>(resolve=>{process.send?.({type:"status",pid:native!.nativePid(),peakRssBytes:native!.peakRssBytes(),peakGpuMemoryBytes:native!.peakGpuMemoryBytes(),peakDedicatedGpuMemoryBytes:native!.peakDedicatedGpuMemoryBytes(),gpuOffloadedLayers:native!.gpuOffloadedLayers(),error:shutdownError??native!.error()?.code},undefined,undefined,()=>resolve());});
     process.exit(shutdownError?1:0);
   }
 }
