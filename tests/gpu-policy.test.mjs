@@ -21,3 +21,17 @@ test('public CUDA route requires the supported fixed model and an explicit adequ
  // Validation does not launch hardware or claim that a configured machine passed.
  assert.doesNotThrow(()=>createTextAdapter('unused',{...options,backend:'cpu'}));
 });
+
+
+test('Windows controller admits only the pinned CUDA model with independent six GiB budgets', async()=>{
+ const {validateWindowsControllerModelPolicy}=await import('../apps/worker/dist/windows-worker.js');
+ const policy=parseWorkerPolicy({...DEFAULT_WORKER_POLICY,model:'qwen3-4b',backend:'cuda',maxMemoryMb:6144,maxGpuMemoryMb:6144});
+ assert.doesNotThrow(()=>validateWindowsControllerModelPolicy(policy));
+ for(const limit of ['maxMemoryMb','maxGpuMemoryMb'])for(const value of [1024,4096,6143]){
+  assert.throws(()=>validateWindowsControllerModelPolicy({...policy,[limit]:value}),/CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED/);
+ }
+ for(const changed of [{backend:'vulkan'},{model:'qwen3-8b'},{model:'qwen3-14b'},{model:'flux1-schnell'}]){
+  assert.throws(()=>validateWindowsControllerModelPolicy({...policy,...changed}),/CONTROLLER_GPU_PROFILE_UNVERIFIED/);
+ }
+ assert.doesNotThrow(()=>validateWindowsControllerModelPolicy({...DEFAULT_WORKER_POLICY,backend:'cpu'}));
+});

@@ -19,6 +19,7 @@ import { createWindowsExecutionProofStore } from "./windows-execution-proof-stor
 import { createCoordinatorFetcher, __testOnlyCreateCoordinatorFetcher } from "./coordinator-fetch.js";
 import { startWindowsController, type WindowsControllerPins, type WindowsControllerClosed } from "./windows-controller.js";
 import { observeLocalResources } from "./telemetry.js";
+import type { WorkerPolicy } from "./policy.js";
 
 const execute = promisify(execFile);
 const NODE_SHA256 = "f13ac3ca23248dc389507e8fe38c34489ab7edb3e6d6700eb6da6a0b7e128eaf";
@@ -72,6 +73,18 @@ async function protectState(stateDir: string): Promise<void> {
   } catch { throw Error("CONTROLLER_STATE_PRIVACY_UNAVAILABLE"); }
 }
 
+/** Admit only the pinned CUDA model with the independently tested host/GPU
+ * budgets. Admission does not prove hardware: native probe validation still
+ * requires monitored residency and all 37 layers before supply is advertised. */
+export function validateWindowsControllerModelPolicy(policy: WorkerPolicy): void {
+  if (policy.backend !== "cpu") {
+    if (policy.backend !== "cuda" || policy.model !== "qwen3-4b") throw Error("CONTROLLER_GPU_PROFILE_UNVERIFIED");
+    if (!Number.isSafeInteger(policy.maxMemoryMb) || policy.maxMemoryMb < 6144 ||
+        !Number.isSafeInteger(policy.maxGpuMemoryMb) || policy.maxGpuMemoryMb < 6144) throw Error("CONTROLLER_GPU_MEMORY_BUDGET_REQUIRED");
+  }
+  if (servedModel(policy.model).kind !== "text") throw Error("CONTROLLER_MEDIA_PROFILE_UNVERIFIED");
+}
+
 export interface WindowsWorkerOptions { readonly packageDir: string; readonly stateDir: string; readonly installDir: string; readonly signal?: AbortSignal; }
 /** Trusted bootstrap owns signing keys, host-PID ownership, store quotas and the
  * separately isolated native adapter. The Node controller receives typed data. */
@@ -94,8 +107,7 @@ async function runWorkerWithTransport(options: WindowsWorkerOptions, fetchFactor
   try {
     lock = await acquireRuntimeLock(stateDir);
     reader = await createWorkerStateReader({ stateDir }); const policy = await reader.readPolicy();
-    if (policy.backend !== "cpu") throw Error("CONTROLLER_GPU_PROFILE_UNVERIFIED");
-    if (servedModel(policy.model).kind !== "text") throw Error("CONTROLLER_MEDIA_PROFILE_UNVERIFIED");
+    validateWindowsControllerModelPolicy(policy);
     // The connection initializes and keeps its decrypted signing key only here.
     const identityBytes = await boundedFile(join(stateDir, "identity.json"), 16384);
     let origin: string;
