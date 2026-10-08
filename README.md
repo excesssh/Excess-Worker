@@ -51,7 +51,7 @@ Choose the model, price, CPU threads, memory budget and operating schedule. Batt
 
 | Configuration | Candidate execution evidence and sequence-26 payload check | Published 0.1.0 historical evidence |
 | --- | --- | --- |
-| Windows x64 CPU | Qwen3-4B, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo buyer routes passed. | Qwen3-4B on the recorded Windows 11 workstation. |
+| Windows x64 CPU | Qwen3-4B, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo buyer routes passed. Published sequence26 additionally passed Qwen3-8B CPU buyer execution at two threads/10 GiB. | Qwen3-4B on the recorded Windows 11 workstation. |
 | Windows x64 NVIDIA CUDA | The same four model/task routes passed on the recorded RTX 3070 Ti, driver 596.49. | Qwen3-4B with separate 6 GiB host and GPU budgets. |
 | Linux x64 CPU | Qwen3-4B buyer job passed on signed sequence 25 in WSL2 (Linux 6.18.40.1, 2 threads, 8 GiB memory, zero swap, 64 tasks, CPU 200%). The sequence-26 build report matches its execution payload fingerprints; sequence-26 direct installation and CPU recovery also passed. | Qwen3-4B on WSL2 with the bounded systemd user service. |
 | Linux GPU | Candidate-unverified; no Linux GPU support claim. | Not supported in 0.1.0; that release refuses execution. |
@@ -73,3 +73,5 @@ npm test
 [Build and packaging](docs/BUILD.md) · [Architecture](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Source history](docs/HISTORY.md) · [MIT licence](LICENSE)
 
 Found a security issue? Use [GitHub private vulnerability reporting](https://github.com/excesssh/Excess-Worker/security/advisories/new). Keep exploitable details out of public issues. [Security policy](SECURITY.md#reporting).
+
+Published0.2.0 also passed a [Qwen3-8B Windows CPU buyer lifecycle](docs/verification/qwen3-8b-windows-cpu.md), including signed output, cancellation, settlement and cleanup. Its CUDA route remains unverified.

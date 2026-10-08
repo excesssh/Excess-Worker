@@ -94,3 +94,7 @@ The current [execution evidence](../releases/execution-evidence.json) binds the 
 The historical [0.1.0 execution evidence](https://github.com/excesssh/Excess-Worker/blob/v0.1.0/releases/execution-evidence.json) binds the tested source-74 candidate-15 payload to executable, dependency, native-pin, launcher and licence bytes. Optional release-ready builds require committed unchanged reports, tested-source ancestry and matching payload; default development packages remain closed. The published source-77 sequence-18 package repeated actual installation, execution, update and recovery checks before publication. Metadata changes cannot supply execution evidence. See [build and reproducibility scope](BUILD.md#reproducibility-and-release-status).
 
 For local development builds and candidate verification, use [BUILD.md](BUILD.md) and the current source's release tooling. A closed development candidate is not a public release.
+
+## Published26 Qwen3-8B CPU buyer evidence
+
+The installed published0.2.0 Windows package passed a real Qwen3-8B CPU buyer lifecycle on8October2026, separately from candidate25 payload reuse. The [execution record](verification/qwen3-8b-windows-cpu.md) identifies the exact package, resources, useful output, signatures, cancellation, accounting and cleanup. This adds no GPU or Linux claim and does not replace an independent security review.

@@ -78,3 +78,7 @@ The 4 GiB default GPU budget correctly refused the measured workload as insuffic
 Windows AppContainer and Linux namespace/Landlock/cgroup fixtures cover named filesystem, credential, broker, network, process, memory and cleanup cases. Fixtures do not attest inference honesty or every host/driver combination. Actual signed-package jobs supply separate execution evidence. Source identifiers, release sequences and historical fixtures are documented in [technical verification](VERIFICATION.md#technical-release-evidence).
 
 Release signing uses anonymous Minisign. Windows executables have no trusted Authenticode publisher signature. Signed metadata authenticates release contents, not honest inference or hardware identity.
+
+## Published26 Qwen3-8B Windows CPU
+
+Published0.2.0/source8724162f793d3ec009eb2f64f713a05c29857bd7/sequence26 passed on Windows11 x64 with two CPU threads, a10GiB host cap and300second job limit. The useful116token answer and an8token acknowledged-prefix cancellation have verified signatures and exact accounting; drain/restart, revocation and process/proof/scratch cleanup pass. This verifies the recorded CPU configuration only; Qwen3-8B CUDA and other platforms remain unverified. See the [bounded execution record](verification/qwen3-8b-windows-cpu.md).
