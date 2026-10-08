@@ -1,6 +1,6 @@
 # Remaining-work checklist
 
-[Excess Worker 0.2.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) is published. Its sequence-26 local signature, reproducibility, installation, update and recovery gates passed. Buyer execution remains attributed to signed candidate25; sequence26 payload-fingerprint equivalence and lifecycle reports are separate evidence. The scoped Windows release ships independently of Linux GPU capacity, with Linux CUDA explicitly unverified. Checked items record completed release evidence; unchecked catalogue gaps limit claims and do not imply broader execution.
+[Excess Worker 0.2.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) is published. Its sequence-26 local signature, reproducibility, installation, update and recovery gates passed. Buyer execution remains attributed to signed candidate25; sequence 26 payload-fingerprint equivalence and lifecycle reports are separate evidence. The scoped Windows release ships independently of Linux GPU capacity, with Linux CUDA explicitly unverified. Checked items record completed release evidence; unchecked catalogue gaps limit claims and do not imply broader execution.
 
 ## Implementation faults
 
@@ -10,7 +10,7 @@
 
 ## Missing execution evidence
 
-- [x] Windows: four model/task routes (Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo images) each passed actual packaged-worker CPU and CUDA buyer jobs on candidate25; five additional serial SD-Turbo CUDA buyer jobs passed signed-artifact and accounting reconciliation. Sequence26 matched execution payload fingerprints for both platform packages. Fresh sequence26 Windows install, authenticated update, CPU/CUDA recovery and cleanup checks passed. Runtime recovery probes are not buyer jobs.
+- [x] Windows: four model/task routes (Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo images) each passed actual packaged-worker CPU and CUDA buyer jobs on candidate25; five additional serial SD-Turbo CUDA buyer jobs passed signed-artifact and accounting reconciliation. Sequence26 matched execution payload fingerprints for both platform packages. Fresh sequence 26 Windows install, authenticated update, CPU/CUDA recovery and cleanup checks passed. Runtime recovery probes are not buyer jobs.
 - [ ] Windows catalogue breadth: 11 other local text entries have no Windows CPU buyer job; twelve text CUDA routes, including Qwen3-8B, remain unverified. FLUX.1 schnell has no route on the recorded 8 GiB GPU; its estimated requirement is 12 GiB. Do not claim support or fit for that configuration.
 - [x] Linux: one Qwen3-4B CPU buyer job passed on candidate25 under the recorded WSL2 limits. Sequence26 Linux direct installation and update/recovery passed.
 - [ ] Linux CPU breadth: the other 16 local catalogue entries have no Linux CPU buyer job. FLUX.1 schnell has no CPU backend; the other 15 remain untested on Linux CPU. Linux CUDA has no execution evidence for all 17 local entries. Keep Linux CUDA candidate-unverified and make no Linux GPU support claim.
@@ -20,4 +20,4 @@
 
 - [ ] Linux CUDA hardware verification is blocked by provider capacity, not credentials: the provider API was reachable, but no eligible GPU capacity was available for the checked approved sizes and regions. No GPU resource was created and no spend occurred. Keep Linux CUDA candidate-unverified and make no GPU support claim.
 - [x] This capacity blocker does not block the scoped Windows release or the verified Linux CPU/install/update claims. Any later Linux CUDA claim requires actual Linux NVIDIA execution and buyer evidence.
-- [x] Published26 Qwen3-8B Windows CPU buyer lifecycle: useful signed output, acknowledged-prefix cancellation, exact settlement/supplier earnings, drain/restart, revocation and cleanup. Two threads/10GiB/300seconds. [Recorded evidence](qwen3-8b-windows-cpu.md).
+- [x] Published sequence 26 Qwen3-8B Windows CPU buyer lifecycle: useful signed output, acknowledged-prefix cancellation, exact settlement/supplier earnings, drain/restart, revocation and cleanup. Two threads/10 GiB/300-seconds. [Recorded evidence](qwen3-8b-windows-cpu.md).
