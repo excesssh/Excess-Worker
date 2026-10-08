@@ -4,25 +4,37 @@ import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, rmdirSync, openSync, ftruncateSync, closeSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
+import { assertPublicBytes } from '../scripts/public-worker/privacy.mjs';
 
 const root = process.cwd();
-const buildScript = path.join(root, 'scripts', 'public-worker', 'build-windows-sandbox.ps1');
+const buildScript = path.join(root, 'scripts', 'public-worker', 'build-windows-sandbox.mjs');
+const configuredNeutralBase = process.env.EXCESS_WINDOWS_SANDBOX_TEST_ROOT ?? '';
+const configuredToolchain = process.env.EXCESS_WINDOWS_SANDBOX_TOOLCHAIN ?? '';
+if (configuredNeutralBase) assertPublicBytes(Buffer.from(configuredNeutralBase));
+if (configuredToolchain) assertPublicBytes(Buffer.from(configuredToolchain));
+const neutralBase = configuredNeutralBase ? path.resolve(configuredNeutralBase) : '';
+const toolchain = configuredToolchain ? path.resolve(configuredToolchain) : '';
+if (neutralBase) assertPublicBytes(Buffer.from(neutralBase));
+if (toolchain) assertPublicBytes(Buffer.from(toolchain));
+const systemRoot = process.env.SystemRoot ?? 'C:/Windows';
+function isWithin(base, target) { const rel = path.relative(path.resolve(base), path.resolve(target)); return !rel || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)); }
+const neutralBaseSafe = Boolean(neutralBase) && !isWithin(homedir(), neutralBase) && !isWithin(systemRoot, neutralBase);
+const nativeFixtureReady = process.platform === 'win32' && process.arch === 'x64' && process.version === 'v24.11.1' &&
+  Boolean(toolchain) && neutralBaseSafe && existsSync(path.join(toolchain, 'inputs.json'));
 const runId = randomUUID().replaceAll('-', '');
-const outputBase = 'C:\\ExcessBuilds\\tools\\excess-sandbox-runs';
+const outputBase = neutralBase;
 const runRoot = path.join(outputBase, runId);
 const runtimeRoot = path.join(runRoot, 'runtime');
 const helper = path.join(runtimeRoot, 'ExcessSandbox.exe');
-const sourceCopy = path.join(runtimeRoot, 'ExcessSandbox.cs');
 const scratch = path.join(runRoot, 'scratch');
 const unselectedFile = path.join(runtimeRoot, 'unselected.dat');
-const modelParent = process.env.LOCALAPPDATA ?? (process.platform === 'win32' ? '' : 'C:\\ExcessBuilds\\tools');
-if (process.platform === 'win32') assert.ok(modelParent, 'a per-user local application data directory is required for the exact-file ACL probe');
-const modelRoot = path.join(modelParent, `excess-sandbox-probe-${runId}`);
+const modelRoot = path.join(neutralBase, `${runId}-model-store`);
 const selectedModel = path.join(modelRoot, 'selected.bin');
 const unselectedModel = path.join(modelRoot, 'unselected.bin');
 const setupModel = path.join(modelRoot, 'setup-cancel.bin');
-const profileRoot = path.dirname(modelParent);
+const profileRoot = neutralBase;
 const activeLaunchers = new Set();
 
 function ancestors(target) {
@@ -36,16 +48,18 @@ function ancestors(target) {
 }
 
 function buildHelper() {
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-File', buildScript], {
+  const result = spawnSync(process.execPath, [buildScript, runtimeRoot, toolchain], {
     cwd: root,
     encoding: 'utf8',
-    timeout: 30000,
+    timeout: 60000,
     windowsHide: true,
-    env: { ...process.env, EXCESS_SANDBOX_OUTPUT_ROOT: runtimeRoot },
+    env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot },
   });
-  assert.equal(result.error, undefined, 'PowerShell should start the sandbox build');
-  assert.equal(result.status, 0, 'sandbox helper should compile');
-  assert.match(result.stdout, /status=build-ok/);
+  assert.equal(result.error, undefined, 'the pinned sandbox build should start');
+  assert.equal(result.status, 0, 'the pinned sandbox helper should compile');
+  const summary = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1));
+  assert.equal(summary.profile, 'windows-appcontainer-v1');
+  assert.equal(summary.privacy, 'passed');
   assert.equal(existsSync(helper), true);
 }
 
@@ -212,7 +226,7 @@ async function connectDuringLaunch(port, done) {
 }
 
 test('Windows sandbox denies an outside-process loopback TCP connection without network capability', {
-  skip: process.platform !== 'win32',
+  skip: !nativeFixtureReady ? 'Windows x64 Node 24.11.1, pinned Roslyn inputs, and an explicit neutral fixture root are required' : false,
 }, async (t) => {
   buildHelper();
   mkdirSync(scratch, { recursive: true });
@@ -227,7 +241,6 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     runtimeRoot,
     scratch,
     helper,
-    sourceCopy,
     modelRoot,
     selectedModel,
     unselectedModel,
@@ -259,7 +272,7 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     await unlinkFixture(setupModel);
     await rmdirFixture(modelRoot);
     await unlinkFixture(helper);
-    await unlinkFixture(sourceCopy);
+    await unlinkFixture(path.join(runtimeRoot, 'integrity-win32.json'));
     await rmdirFixture(runtimeRoot);
     await rmdirFixture(scratch);
     await rmdirFixture(runRoot);
@@ -287,7 +300,8 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     const child = await contained.done;
     assert.equal(child.error, undefined, 'sandbox launcher should finish');
     const childEvents = parseEvents(child.stdout);
-    assert.ok(childEvents.some((event) => event.type === 'started' && Number.isInteger(event.pid)));
+    assert.ok(childEvents.some((event) => event.type === 'started' && Number.isInteger(event.pid)),
+      'sandbox fixture should start; safe errors=' + childEvents.filter(event => event.type === 'error').map(event => event.code + ':' + event.win32).join(','));
     const childStatus = childEvents.find((event) => event.type === 'status');
     assert.ok(childStatus);
     assert.ok(childEvents.some((event) => event.type === 'cleanup' && event.ok === true));

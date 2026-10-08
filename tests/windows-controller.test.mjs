@@ -3,13 +3,29 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, unlink, rmdir, writeFile } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertPublicBytes } from '../scripts/public-worker/privacy.mjs';
 import { startWindowsControllerTestFixture } from '../apps/worker/dist/windows-controller.js';
 
-const neutralRoot = 'C:/ExcessBuilds/windows-controller-multiplex-proof';
-const toolchain = 'C:/ExcessBuilds/toolchains/windows-roslyn-4.14.0';
+const configuredNeutralRoot = process.env.EXCESS_WINDOWS_CONTROLLER_TEST_ROOT ?? '';
+const configuredToolchain = process.env.EXCESS_WINDOWS_CONTROLLER_TOOLCHAIN ?? '';
+if (configuredNeutralRoot) assertPublicBytes(Buffer.from(configuredNeutralRoot));
+if (configuredToolchain) assertPublicBytes(Buffer.from(configuredToolchain));
+const neutralRoot = configuredNeutralRoot ? path.resolve(configuredNeutralRoot) : '';
+const toolchain = configuredToolchain ? path.resolve(configuredToolchain) : '';
+if (neutralRoot) assertPublicBytes(Buffer.from(neutralRoot));
+if (toolchain) assertPublicBytes(Buffer.from(toolchain));
+const expectedNodeSha256 = process.env.EXCESS_WINDOWS_CONTROLLER_TEST_NODE_SHA256 ?? '';
+function isWithin(base, target) { const rel = path.relative(path.resolve(base), path.resolve(target)); return !rel || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)); }
+const systemRoot = process.env.SystemRoot ?? 'C:/Windows';
+const neutralRootSafe = Boolean(neutralRoot) && !isWithin(homedir(), neutralRoot) && !isWithin(systemRoot, neutralRoot);
+const nativeFixtureReady = process.platform === 'win32' && process.arch === 'x64' && process.version === 'v24.11.1' &&
+  Boolean(toolchain && expectedNodeSha256) && /^[0-9a-f]{64}$/.test(expectedNodeSha256) && neutralRootSafe &&
+  existsSync(path.join(toolchain, 'inputs.json')) && existsSync(path.join(neutralRoot, 'runtime', 'node.exe')) &&
+  existsSync(path.join(neutralRoot, 'sibling', 'ungranted.txt'));
 const testRoot = path.dirname(fileURLToPath(import.meta.url));
 const buildScript = path.join(testRoot, '..', 'scripts', 'public-worker', 'build-windows-controller.mjs');
 
@@ -134,6 +150,9 @@ process.stdin.on('data', chunk => { buffer += chunk.toString(); const index = bu
   const helperHash = digest(await readFile(helperA));
   if (helperHash !== first.sha256 || digest(await readFile(helperB)) !== helperHash) throw Error('CONTROLLER_BUILD_PIN_INVALID');
   const nodeHash = digest(await readFile(nodePath));
+  if (nodeHash !== expectedNodeSha256) throw Error('CONTROLLER_TEST_NODE_PIN_MISMATCH');
+  const nodeVersion = spawnSync(nodePath, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true, env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot } });
+  if (nodeVersion.status !== 0 || nodeVersion.stdout.trim() !== 'v24.11.1') throw Error('CONTROLLER_TEST_NODE_VERSION_INVALID');
   const aclTargets = [runtime, nodePath, path.join(runtime, 'LICENSE'), probeDir, probeFile, dependencyFile, nodeModules, scopeDir, protocolDir, protocolPackage, protocolEntry, stateDir, identity, scratchRoot];
   const before = snapshotAcl(aclTargets);
   return { moduleRoot, runtime, probeDir, probeFile, dependencyFile, nodeModules, scopeDir, protocolDir, protocolPackage, protocolEntry, sibling, nodePath, nodeHash, stateDir, scratchRoot, outputA, outputB, helperA, helperHash, aclTargets, before, phases: [], runs: [] };
@@ -194,7 +213,7 @@ async function waitForCount(values, count) {
 }
 
 test('Windows controller is a bounded, fail-closed host RPC boundary', {
-  skip: process.platform !== 'win32' || process.arch !== 'x64' || process.version !== 'v24.11.1',
+  skip: !nativeFixtureReady ? 'Windows x64 Node 24.11.1, the exact pinned Roslyn toolchain, and an explicit neutral fixture root are required' : false,
 }, async (t) => {
   const fixture = await prepare();
   const profilesBefore = controllerProfileCount();
