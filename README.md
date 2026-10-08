@@ -45,7 +45,7 @@ The local catalogue has **13 text models and four media models**, with pinned fi
 
 Catalogue availability is broader than verified execution. This table separates signed candidate25 buyer evidence, the sequence-26 payload-equivalence check, completed sequence-26 installation and lifecycle checks, and historical published 0.1.0 evidence. Candidate25 execution evidence applies only to the matching executable, native, dependency, launcher and licence payloads.
 
-Published 0.2.0 also passed a [Qwen3-8B Windows CPU buyer lifecycle](docs/verification/qwen3-8b-windows-cpu.md), including signed output, cancellation, settlement and cleanup. Its CUDA route remains unverified.
+Published 0.2.0 also passed [Qwen3-8B](docs/verification/qwen3-8b-windows-cpu.md) and [Qwen3-14B](docs/verification/qwen3-14b-windows-cpu.md) Windows CPU buyer lifecycles, including useful signed output, cancellation, settlement and cleanup. Both CUDA routes remain unverified.
 
 ## Your machine, your controls
 
@@ -53,7 +53,7 @@ Choose the model, price, CPU threads, memory budget and operating schedule. Batt
 
 | Configuration | Candidate execution evidence and sequence-26 payload check | Published 0.1.0 historical evidence |
 | --- | --- | --- |
-| Windows x64 CPU | Qwen3-4B, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo buyer routes passed. Published sequence 26 additionally passed Qwen3-8B CPU buyer execution at two threads/10 GiB. | Qwen3-4B on the recorded Windows 11 workstation. |
+| Windows x64 CPU | Qwen3-4B, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo buyer routes passed. Published sequence 26 additionally passed Qwen3-8B at two threads/10 GiB and Qwen3-14B at two threads/11 GiB. | Qwen3-4B on the recorded Windows 11 workstation. |
 | Windows x64 NVIDIA CUDA | The same four model/task routes passed on the recorded RTX 3070 Ti, driver 596.49. | Qwen3-4B with separate 6 GiB host and GPU budgets. |
 | Linux x64 CPU | Qwen3-4B buyer job passed on signed sequence 25 in WSL2 (Linux 6.18.40.1, 2 threads, 8 GiB memory, zero swap, 64 tasks, CPU 200%). The sequence-26 build report matches its execution payload fingerprints; sequence-26 direct installation and CPU recovery also passed. | Qwen3-4B on WSL2 with the bounded systemd user service. |
 | Linux GPU | Candidate-unverified; no Linux GPU support claim. | Not supported in 0.1.0; that release refuses execution. |

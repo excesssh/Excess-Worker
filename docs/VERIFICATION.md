@@ -98,3 +98,7 @@ For local development builds and candidate verification, use [BUILD.md](BUILD.md
 ## Published sequence 26 Qwen3-8B CPU buyer evidence
 
 The installed published 0.2.0 Windows package passed a real Qwen3-8B CPU buyer lifecycle on 8 October 2026, separately from candidate25 payload reuse. The [execution record](verification/qwen3-8b-windows-cpu.md) identifies the exact package, resources, useful output, signatures, cancellation, accounting and cleanup. This adds no GPU or Linux claim and does not replace an independent security review.
+
+## Published sequence 26 Qwen3-14B CPU buyer evidence
+
+The installed published 0.2.0 Windows package passed a Qwen3-14B CPU buyer lifecycle on 8 October 2026, separately from candidate25 payload reuse. The [execution record](verification/qwen3-14b-windows-cpu.md) identifies the release, pinned model, useful buyer output, cancellation, signatures, exact settlement and cleanup. It records pre-execution harness and launcher probes separately from the buyer result. This is operator-funded testnet evidence; it adds no GPU or Linux execution claim and does not attest honest inference or hardware identity.
