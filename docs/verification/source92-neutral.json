@@ -1,0 +1,180 @@
+{
+  "format": 1,
+  "report": "source92-neutral",
+  "version": "0.2.0",
+  "testedSourceCommit": "f07ffd9c6c447ed8f60fd258807a0f7d487796b4",
+  "releaseSourceCommit": "8724162f793d3ec009eb2f64f713a05c29857bd7",
+  "candidateSequence": 25,
+  "successorSequence": 26,
+  "candidateSignedManifestSha256": "d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493",
+  "executionEvidenceSha256": "7efd3ca1c5b040b78fb4d62ab88554b4487acc136649af11914d68f74b99d957",
+  "releaseManifestSha256": "d2eaa9a53be7c33d507b558501b4a89a0baa44772ef9ca4432a53d5d8e78c565",
+  "releaseSignatureSha256": "10c0812f632e5092526bd8b6b165468ef82cffea0f501faceb5960a37c533174",
+  "platforms": {
+    "win32-x64": {
+      "status": "verified-for-recorded-configurations",
+      "configuration": "Windows 11 x64; RTX 3070 Ti 8192 MiB; NVIDIA driver 596.49; Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo CPU and CUDA; exact route budgets in retained operator reports.",
+      "verifiedRouteCount": 8,
+      "reliabilityRoute": "image-sd-turbo-cuda",
+      "reliabilitySuccessJobs": 5,
+      "originalRepeatHarness": "failed after five successes; preserved",
+      "historicalCudaDeliveryCause": "unestablished",
+      "syntheticFixture": "admission reproduction and fix passed fixture only",
+      "authoritativeFiveJobReconciliation": "five succeeded and separately characterized",
+      "deliveryStartedMeaning": "stream marker; false is not treated as failure for buffered image results",
+      "gpuInference": true,
+      "gpuCancellation": true
+    },
+    "linux-x64": {
+      "status": "verified-cpu-only-for-recorded-configuration",
+      "configuration": "Linux x64 WSL2; Qwen3-4B CPU; two threads; 8 GiB systemd user memory maximum; zero swap; 64 tasks; CPU quota200percent; recorded kernel and namespace profile only.",
+      "model": "qwen3-4b",
+      "backend": "cpu",
+      "gpuInference": false,
+      "gpuCancellation": false,
+      "gpuScope": "omitted",
+      "gpuClaim": "candidate-unverified"
+    }
+  },
+  "publicationGates": {
+    "signature": "passed",
+    "installation": "passed",
+    "update": "passed",
+    "rollback": "passed",
+    "rollForward": "passed",
+    "recovery": "passed",
+    "payloadUnchangedFromCandidate25": true
+  },
+  "executionReports": {
+    "windows": [
+      {
+        "name": "candidate-signed-metadata.json",
+        "sha256": "2aafeea73145a2886f8e7172be5c08d54f63e4c9e22205b2c3c8e9227254ecf9"
+      },
+      {
+        "name": "candidate25-release.json",
+        "sha256": "d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493"
+      },
+      {
+        "name": "candidate25-release.json.minisig",
+        "sha256": "eccb81c07960060fa2bff83160da35f4c8cf9a520ef0cece57a40584d7ea1919"
+      },
+      {
+        "name": "candidate-install-lifecycle.json",
+        "sha256": "dc8168f3d78888b35d8d41a6c60decc83513c68d9b31f90e16faed4e44cef7bf"
+      },
+      {
+        "name": "windows25-signed-install-transition.json",
+        "sha256": "b2153bac9b8672379835878efe404b8de9b23624e537f14ef458ff6e2e10d5e8"
+      },
+      {
+        "name": "windows25-install-preflight.json",
+        "sha256": "8add3c14aaa9fb6ff5a5c68d0c7d5ec96816214fcec406b677f811551e0a2f55"
+      },
+      {
+        "name": "linux25-signed-install.json",
+        "sha256": "2374dafc6b60e0ee2c4530d11884740334c32f3fa7dbe9e002567bd6fdf89e0b"
+      },
+      {
+        "name": "linux25-cleanup-audit.json",
+        "sha256": "65d9e474bdbee162195fa31130ae0a605c52a4fd444e33d7a19e8e3ac8c6c8b3"
+      },
+      {
+        "name": "windows-original-repeat-failed.json",
+        "sha256": "2737e3490ae4d6cefd69b58f4e30f50074e027b14a838bbec538492fb0b5c408"
+      },
+      {
+        "name": "windows-five-job-characterization.json",
+        "sha256": "25b5b3d1c5e320b7d59ab33cda9a330117ddb4c1c14d975ed1f795e38b95f6c3"
+      },
+      {
+        "name": "windows-authoritative-delivery-audit.json",
+        "sha256": "fe2df85bd6578c713dcafdaad24cd77bea6d8c07484a196949d2f80cea45b3b4"
+      },
+      {
+        "name": "windows-fixed-all-eight-routes.json",
+        "sha256": "c7efe17c97de538a6fa0df9c62f39c08f6a2e4671a11a59c479971d98ec4c84a"
+      }
+    ],
+    "linux": [
+      {
+        "name": "candidate-signed-metadata.json",
+        "sha256": "2aafeea73145a2886f8e7172be5c08d54f63e4c9e22205b2c3c8e9227254ecf9"
+      },
+      {
+        "name": "candidate25-release.json",
+        "sha256": "d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493"
+      },
+      {
+        "name": "candidate25-release.json.minisig",
+        "sha256": "eccb81c07960060fa2bff83160da35f4c8cf9a520ef0cece57a40584d7ea1919"
+      },
+      {
+        "name": "candidate-install-lifecycle.json",
+        "sha256": "dc8168f3d78888b35d8d41a6c60decc83513c68d9b31f90e16faed4e44cef7bf"
+      },
+      {
+        "name": "windows25-signed-install-transition.json",
+        "sha256": "b2153bac9b8672379835878efe404b8de9b23624e537f14ef458ff6e2e10d5e8"
+      },
+      {
+        "name": "windows25-install-preflight.json",
+        "sha256": "8add3c14aaa9fb6ff5a5c68d0c7d5ec96816214fcec406b677f811551e0a2f55"
+      },
+      {
+        "name": "linux25-signed-install.json",
+        "sha256": "2374dafc6b60e0ee2c4530d11884740334c32f3fa7dbe9e002567bd6fdf89e0b"
+      },
+      {
+        "name": "linux25-cleanup-audit.json",
+        "sha256": "65d9e474bdbee162195fa31130ae0a605c52a4fd444e33d7a19e8e3ac8c6c8b3"
+      },
+      {
+        "name": "linux-cpu-buyer-report.json",
+        "sha256": "69ad5c07769137a361122a3fd461f1c29adfbc09c2980da02c89152ffc4843ef"
+      }
+    ]
+  },
+  "finalLifecycleReports": [
+    {
+      "name": "successor-release-manifest.json",
+      "sha256": "d2eaa9a53be7c33d507b558501b4a89a0baa44772ef9ca4432a53d5d8e78c565"
+    },
+    {
+      "name": "successor-release-signature.minisig",
+      "sha256": "10c0812f632e5092526bd8b6b165468ef82cffea0f501faceb5960a37c533174"
+    },
+    {
+      "name": "final-install-update-recovery-gates.json",
+      "sha256": "55a60ca1891117d920d9d2afc9667098a1551cdf15fbbbc498a8ade8f2caef78"
+    },
+    {
+      "name": "windows26-fresh-install.json",
+      "sha256": "41848b3c7c64022d578f2f6c61e461a24c2a76a665fb18f4205828ffc8ccb6e7"
+    },
+    {
+      "name": "windows-successor-update-ff92c08fa96b.json",
+      "sha256": "2793d6a3b5a62b86b42c4909d83d09d0ba7c69a30b0dacee5ef10444c1eb42e1"
+    },
+    {
+      "name": "windows-cpu-recovery-attempt1.json",
+      "sha256": "4ec5fb249d8cb7ac0de44a5c4a42e7484e085b11b3c2a4f6c0a81ecf1caab62c"
+    },
+    {
+      "name": "windows-cuda-recovery-attempt1.json",
+      "sha256": "26c9c7b109e295759260cef8b511114fa367b292767f89a1c0ad1ff17190b7b7"
+    },
+    {
+      "name": "linux26-fresh-install.json",
+      "sha256": "74fdfd8eda85e4e6a39e59b25961aa12bb984efd385b8274d6d5cf3025da218b"
+    },
+    {
+      "name": "linux-successor-update-report.json",
+      "sha256": "4a309c1c7370bb2b719d8754f2cc9020e5f5285d521886549540f7638206df1a"
+    },
+    {
+      "name": "linux-successor-feed-requests.json",
+      "sha256": "8306c1f205b94332b53a4d8be461415e7203df14593e7fc7082b5a72d8e31b3a"
+    }
+  ]
+}

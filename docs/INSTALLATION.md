@@ -1,6 +1,20 @@
-# Install Excess Worker 0.1.0
+# Install Excess Worker 0.2.0 (release sequence 26)
 
-The [published release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) contains signed Windows x64 and Linux x64 archives with Node included. You do not need npm to install them. Models and inference runtimes are separate downloads. Check [supported configurations](PLATFORMS.md) first.
+The published [0.2.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) contains signed Windows x64 and Linux x64 archives with Node included. You will not need npm to install them. Models and inference runtimes are separate downloads. The published [0.1.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) remains available as an earlier, separate release. Check [supported configurations](PLATFORMS.md) before choosing a model or backend.
+
+## Sequence-26 package identity
+
+Use these sequence-26 archive names and tag-specific installer links for this release. The signed manifest records these exact names, hashes, source and sequence; verify it before running an installer.
+
+```text
+Windows archive: excess-worker-0.2.0-8724162f793d-win-x64.zip
+Linux archive:   excess-worker-0.2.0-8724162f793d-linux-x64.tar.gz
+Source tag:      v0.2.0
+Expected source: 8724162f793d3ec009eb2f64f713a05c29857bd7
+Sequence:        26
+```
+
+The project Minisign key is unchanged from v0.1.0; its sequence-26 tagged source and both installer copies were checked against the same key. Fresh direct Linux and Windows installations passed. The Windows install report verified all 340 files, the expected ready launcher, actual Minisign verification and high-water 26. Preserve the model/runtime and licence consent, user-level controls, drain, revoke, update and recovery guidance below.
 
 ## Download and verify first
 
@@ -8,8 +22,8 @@ Save your platform archive, `release.json` and `release.json.minisig` together i
 
 Install [Minisign from its official project](https://jedisct1.github.io/minisign/) and put it on PATH. Linux installation also needs Python 3. Windows uses Windows PowerShell 5.1. Download and inspect the appropriate offline installer from the trusted tagged source:
 
-- Windows: [install.ps1 at v0.1.0](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.1.0/scripts/worker-install/install.ps1), saved as `install.ps1`.
-- Linux: [install.sh at v0.1.0](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.1.0/scripts/worker-install/install.sh), saved as `install.sh`.
+- Windows: [install.ps1 at the v0.2.0 release tag](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.2.0/scripts/worker-install/install.ps1), saved as `install.ps1`.
+- Linux: [install.sh at the v0.2.0 release tag](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.2.0/scripts/worker-install/install.sh), saved as `install.sh`.
 
 These scripts are obtained through the trusted source repository; they are not separately Minisign-signed release assets. Inspect them before running. They embed the same project key and repeat signature, archive integrity, safe extraction, source identity and downgrade checks. They read local release files and do not fetch or execute a remote installation script.
 
@@ -20,7 +34,7 @@ Run from the directory holding the four downloaded files, as the installing user
 ### Windows x64
 
 ```powershell
-powershell.exe -NoProfile -File .\install.ps1 .\release.json .\release.json.minisig .\excess-worker-0.1.0-2980a6ec2e58-win-x64.zip
+powershell.exe -NoProfile -File .\install.ps1 .\release.json .\release.json.minisig .\excess-worker-0.2.0-8724162f793d-win-x64.zip
 $env:PATH = (Join-Path $env:LOCALAPPDATA 'EXCESS\bin') + ';' + $env:PATH
 excess-worker guide
 excess-worker doctor
@@ -34,7 +48,7 @@ If PowerShell blocks the downloaded script, verify it came from the tagged proje
 
 ```sh
 mkdir -p "${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/excess}"
-sh ./install.sh ./release.json ./release.json.minisig ./excess-worker-0.1.0-2980a6ec2e58-linux-x64.tar.gz
+sh ./install.sh ./release.json ./release.json.minisig ./excess-worker-0.2.0-8724162f793d-linux-x64.tar.gz
 export PATH="${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/excess}/bin:$PATH"
 excess-worker guide
 excess-worker doctor
@@ -68,7 +82,7 @@ The label is your choice; avoid putting a personal name in it. Pairing creates a
 
 ## Choose and install a model
 
-Start with the verified CPU workload:
+Choose a model and inspect its estimate and pinned downloads. Candidate25 has actual Windows CPU/CUDA buyer evidence for Qwen3-4B, Embedding 0.6B, ASR 0.6B and SD-Turbo. The signed sequence25 WSL2 Linux Qwen3-4B CPU buyer job passed under the limits listed in PLATFORMS.md; sequence26 Linux direct installation/update and Windows direct installation/update passed. Sequence26 CPU and CUDA recovery probes also passed on Windows. Buyer execution remains attributed to sequence25, whose payload fingerprints match the released sequence26 packages. Published 0.1.0 evidence applies only to that earlier package.
 
 ```sh
 excess-worker models
@@ -86,7 +100,7 @@ The model/runtime installer uses pinned files and verifies size and hashes. Qwen
 
 ## Supply capacity
 
-Review `excess-worker policy` and apply your chosen resource policy before starting. For the measured Windows CPU configuration, save this as `policy.json`:
+Review `excess-worker policy` and apply your chosen resource policy before starting. For the previously measured Windows CPU configuration, save this as `policy.json`. This setting is an example, not a support claim for an unverified model or machine:
 
 ```json
 {"model":"qwen3-4b","backend":"cpu","threads":2,"maxMemoryMb":4096,"runSeconds":180}
@@ -111,7 +125,7 @@ On Windows, run in the foreground:
 excess-worker run
 ```
 
-On Linux, execution must run in the dedicated bounded systemd user service. For the measured 8 GiB/64-task configuration, create a service override **before** installing/starting it:
+On Linux, execution must run in the dedicated bounded systemd user service. For the published 0.1.0 measured 8 GiB/64-task configuration, create a service override **before** installing/starting it:
 
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/excess-worker.service.d"
@@ -126,7 +140,7 @@ excess-worker service install
 excess-worker service status
 ```
 
-Use this budget only if your machine has sufficient free memory; the recorded test used it alongside a two-thread CPU policy. Review `systemctl --user cat excess-worker.service` to see the effective unit. `service install` enables and starts the service immediately. It does not enable lingering automatically. Check `journalctl --user -u excess-worker.service` locally, keeping state paths and credentials private. Do not run a second foreground worker beside the service or remove required limits to bypass a refusal.
+Use this budget only if your machine has sufficient free memory; the published 0.1.0 test used it alongside a two-thread CPU policy. A signed sequence25 Linux CPU buyer job, a sequence26 fresh direct Linux installation and a sequence26 recovery CPU probe passed in their recorded scopes. Review `systemctl --user cat excess-worker.service` to see the effective unit. `service install` enables and starts the service immediately. It does not enable lingering automatically. Check `journalctl --user -u excess-worker.service` locally, keeping state paths and credentials private. Do not run a second foreground worker beside the service or remove required limits to bypass a refusal.
 
 Use `excess-worker status` and the Supply page to inspect activity. Local offers become eligible through successful runtime probes and coordinator checks; they do not guarantee buyer demand or earnings.
 
@@ -136,6 +150,6 @@ Use `excess-worker status` and the Supply page to inspect activity. Local offers
 
 Revoke the device on the Supply page to remove coordinator access. After outstanding work is handled, `excess-worker unpair` retires the local identity. Keep the state directory private and never include it in an issue or vulnerability report.
 
-Use `excess-worker update --check` to inspect signed update availability. Drain and wait for exit before a manual `excess-worker update`, then restart. Windows automatic installation is disabled. Linux automatic updates are optional through `excess-worker update --auto on` in the supervised service. [Update authentication and recovery](VERIFICATION.md#updates-and-recovery).
+Use `excess-worker update --check` to inspect signed update availability. Drain and wait for exit before a manual `excess-worker update`, then restart. Windows automatic installation is disabled. Linux automatic updates are optional through `excess-worker update --auto on` in the supervised service. The signed sequence26 Linux update/recovery and Windows default-fetch update/tamper/downgrade/rollback/roll-forward checks passed. Fresh direct Windows installation passed with full inventory and launcher checks. Separate Windows CPU and CUDA recovery probes passed on sequences18 and 26; the CUDA probe offloaded 37 Qwen3-4B layers and preserved high-water 26. [Update authentication and recovery](VERIFICATION.md#updates-and-recovery).
 
 For source builds, local packaging and candidate verification, use [BUILD.md](BUILD.md) and [VERIFICATION.md](VERIFICATION.md#technical-release-evidence); these are developer workflows.
