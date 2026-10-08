@@ -1,0 +1,114 @@
+{
+  "format": 1,
+  "report": "candidate25-recorded-execution",
+  "testedSourceCommit": "f07ffd9c6c447ed8f60fd258807a0f7d487796b4",
+  "candidateSequence": 25,
+  "candidateVersion": "0.2.0",
+  "candidateSignedManifestSha256": "d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493",
+  "executionEvidenceSha256": "7efd3ca1c5b040b78fb4d62ab88554b4487acc136649af11914d68f74b99d957",
+  "publicDistributionReady": false,
+  "newBinaryPublished": false,
+  "windows": {
+    "configuration": "Windows 11 x64; RTX 3070 Ti 8192 MiB; NVIDIA driver 596.49; Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo CPU and CUDA; exact route budgets in retained operator reports.",
+    "actualSuccessRoutes": 8,
+    "actualInFlightCancellationRoutes": 8,
+    "routes": [
+      {
+        "routeId": "text-qwen-cpu",
+        "status": "passed"
+      },
+      {
+        "routeId": "text-qwen-cuda",
+        "status": "passed"
+      },
+      {
+        "routeId": "embedding-qwen-cpu",
+        "status": "passed"
+      },
+      {
+        "routeId": "embedding-qwen-cuda",
+        "status": "passed"
+      },
+      {
+        "routeId": "asr-qwen-cpu",
+        "status": "passed"
+      },
+      {
+        "routeId": "asr-qwen-cuda",
+        "status": "passed"
+      },
+      {
+        "routeId": "image-sd-turbo-cpu",
+        "status": "passed"
+      },
+      {
+        "routeId": "image-sd-turbo-cuda",
+        "status": "passed"
+      }
+    ],
+    "drain": "passed",
+    "restart": "passed",
+    "revocation": "passed",
+    "processAndProofRetirement": "passed",
+    "scratchCleanup": "passed",
+    "extraSerialSdTurboCudaSuccesses": 5,
+    "extraSerialResults": "Separately reconciled buffered artifacts, signatures, accounted success and supplier earnings; original repeat harness failure preserved.",
+    "historicalCudaDeliveryCause": "unestablished",
+    "nativeAdmissionFault": "reproduced and fixed in synthetic native fixtures; historical buyer-job causation unestablished",
+    "deliveryStarted": "stream-only marker; false does not diagnose buffered-media non-delivery"
+  },
+  "linux": {
+    "configuration": "Linux x64 WSL2; Qwen3-4B CPU; two threads; 8 GiB systemd user memory maximum; zero swap; 64 tasks; CPU quota200percent; recorded kernel and namespace profile only.",
+    "actualCpuBuyerJobs": 1,
+    "model": "qwen3-4b",
+    "backend": "cpu",
+    "signedOutputAndAccounting": "passed",
+    "supplierEarnings": "passed",
+    "drain": "passed",
+    "restart": "passed",
+    "revocationAndRetirement": "passed",
+    "ownedUnitAndProcessReaping": "passed",
+    "scratchCleanup": "passed",
+    "modelCacheUnchanged": true,
+    "gpuExecutionVerified": false,
+    "gpuStatus": "candidate-unverified",
+    "gpuHardware": null,
+    "gpuDriver": null
+  },
+  "catalogue": {
+    "localModels": 17,
+    "textModels": 13,
+    "mediaModels": 4,
+    "hostedProviderModelsSeparate": 43,
+    "remainingWindowsTextModelsUntested": 12,
+    "fluxCurrentWindowsConfiguration": "CPU unsupported; required 12 GiB VRAM estimate exceeds recorded 8 GiB GPU",
+    "linuxNvidiaModelsUntested": 17
+  },
+  "scope": "Reviewed operator evidence for exact recorded packages and configurations; signed receipts and probes do not independently attest model identity or universal hardware support. Final successor signing, installation, update and recovery gates are pending.",
+  "operatorReportReferences": [
+    {
+      "name": "candidate25-signed.json",
+      "sha256": "2aafeea73145a2886f8e7172be5c08d54f63e4c9e22205b2c3c8e9227254ecf9"
+    },
+    {
+      "name": "windows25-buffered-media-reconciliation.json",
+      "sha256": "25b5b3d1c5e320b7d59ab33cda9a330117ddb4c1c14d975ed1f795e38b95f6c3"
+    },
+    {
+      "name": "windows25-authoritative-delivery.json",
+      "sha256": "fe2df85bd6578c713dcafdaad24cd77bea6d8c07484a196949d2f80cea45b3b4"
+    },
+    {
+      "name": "windows-paired-media-journey-bd214503-1f6d-46bf-81e1-aaa02eff6e35.json",
+      "sha256": "c7efe17c97de538a6fa0df9c62f39c08f6a2e4671a11a59c479971d98ec4c84a"
+    },
+    {
+      "name": "linux-cpu-successor-buyer-attempt5.json",
+      "sha256": "69ad5c07769137a361122a3fd461f1c29adfbc09c2980da02c89152ffc4843ef"
+    },
+    {
+      "name": "linux25-cleanup-audit.json",
+      "sha256": "65d9e474bdbee162195fa31130ae0a605c52a4fd444e33d7a19e8e3ac8c6c8b3"
+    }
+  ]
+}

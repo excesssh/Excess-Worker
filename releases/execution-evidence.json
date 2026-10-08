@@ -1,11 +1,11 @@
 {
-  "format": 1,
-  "testedSourceCommit": "9ef74a78a57eb817483d2d48374787f53bb1a23a",
-  "signedCandidateSequence": 15,
-  "signedManifestSha256": "ac2ca80896b9382c0919dea71dd77c0f8fa0e117e18a7527c9ecc9b3922e7955",
+  "format": 2,
+  "testedSourceCommit": "f07ffd9c6c447ed8f60fd258807a0f7d487796b4",
+  "signedCandidateSequence": 25,
+  "signedManifestSha256": "d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493",
   "platforms": {
     "win32-x64": {
-      "payloadSha256": "e17ea58b2bfdf3a042121d8502f5642b354adb093fcd4c6cd891927886c77e1a",
+      "payloadSha256": "16d7623b5aa97f3011058b6c0a4e22b6e911d7debcbfbabb365f9d88e47e7aee",
       "checks": {
         "signedInstallation": true,
         "cpuInference": true,
@@ -18,16 +18,60 @@
       },
       "gpuInference": true,
       "gpuCancellation": true,
-      "configuration": "Windows11Pro10.0.22631 x64; RTX3070Ti8192MiB driver596.49 WDDM; pinned Qwen3-4B/llama.cppb10809;2threads;6144MiB host/6144MiB combined GPU;37layers;4184MiB combined/3780MiB dedicated peak; CPU separately4096MiB Job Object.",
+      "configuration": "Windows 11 x64; RTX 3070 Ti 8192 MiB; NVIDIA driver 596.49; Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo CPU and CUDA; exact route budgets in retained operator reports.",
       "reports": [
         {
-          "name": "signed-package-source74.json",
-          "sha256": "68752fbc5c18c829e1181903042832f4a3af11af733d0eab880ea893bcfb24f8"
+          "name": "candidate-signed-metadata.json",
+          "sha256": "2aafeea73145a2886f8e7172be5c08d54f63e4c9e22205b2c3c8e9227254ecf9"
+        },
+        {
+          "name": "candidate25-release.json",
+          "sha256": "d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493"
+        },
+        {
+          "name": "candidate25-release.json.minisig",
+          "sha256": "eccb81c07960060fa2bff83160da35f4c8cf9a520ef0cece57a40584d7ea1919"
+        },
+        {
+          "name": "candidate-install-lifecycle.json",
+          "sha256": "dc8168f3d78888b35d8d41a6c60decc83513c68d9b31f90e16faed4e44cef7bf"
+        },
+        {
+          "name": "windows25-signed-install-transition.json",
+          "sha256": "b2153bac9b8672379835878efe404b8de9b23624e537f14ef458ff6e2e10d5e8"
+        },
+        {
+          "name": "windows25-install-preflight.json",
+          "sha256": "8add3c14aaa9fb6ff5a5c68d0c7d5ec96816214fcec406b677f811551e0a2f55"
+        },
+        {
+          "name": "linux25-signed-install.json",
+          "sha256": "2374dafc6b60e0ee2c4530d11884740334c32f3fa7dbe9e002567bd6fdf89e0b"
+        },
+        {
+          "name": "linux25-cleanup-audit.json",
+          "sha256": "65d9e474bdbee162195fa31130ae0a605c52a4fd444e33d7a19e8e3ac8c6c8b3"
+        },
+        {
+          "name": "windows-original-repeat-failed.json",
+          "sha256": "2737e3490ae4d6cefd69b58f4e30f50074e027b14a838bbec538492fb0b5c408"
+        },
+        {
+          "name": "windows-five-job-characterization.json",
+          "sha256": "25b5b3d1c5e320b7d59ab33cda9a330117ddb4c1c14d975ed1f795e38b95f6c3"
+        },
+        {
+          "name": "windows-authoritative-delivery-audit.json",
+          "sha256": "fe2df85bd6578c713dcafdaad24cd77bea6d8c07484a196949d2f80cea45b3b4"
+        },
+        {
+          "name": "windows-fixed-all-eight-routes.json",
+          "sha256": "c7efe17c97de538a6fa0df9c62f39c08f6a2e4671a11a59c479971d98ec4c84a"
         }
       ]
     },
     "linux-x64": {
-      "payloadSha256": "88986863d2a48dc988a16d395e76c56d845dd2c1cb21168b059d8239ade0d3ae",
+      "payloadSha256": "3594b7e22f1180a5da7473572876c697b67f0640c9682398028f09e709d23ade",
       "checks": {
         "signedInstallation": true,
         "cpuInference": true,
@@ -40,11 +84,43 @@
       },
       "gpuInference": false,
       "gpuCancellation": false,
-      "configuration": "WSL2 Linux6.18.40.1 x64 CPU; pinned Qwen3-4B/llama.cppb10809;2threads; dedicated8GiB cgroupv2 user service,swap0,64tasks,CPU200%; GPU unsupported/refused. Fresh application installation, not a fresh OS.",
+      "configuration": "Linux x64 WSL2; Qwen3-4B CPU; two threads; 8 GiB systemd user memory maximum; zero swap; 64 tasks; CPU quota200percent; recorded kernel and namespace profile only.",
       "reports": [
         {
-          "name": "signed-package-source74.json",
-          "sha256": "68752fbc5c18c829e1181903042832f4a3af11af733d0eab880ea893bcfb24f8"
+          "name": "candidate-signed-metadata.json",
+          "sha256": "2aafeea73145a2886f8e7172be5c08d54f63e4c9e22205b2c3c8e9227254ecf9"
+        },
+        {
+          "name": "candidate25-release.json",
+          "sha256": "d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493"
+        },
+        {
+          "name": "candidate25-release.json.minisig",
+          "sha256": "eccb81c07960060fa2bff83160da35f4c8cf9a520ef0cece57a40584d7ea1919"
+        },
+        {
+          "name": "candidate-install-lifecycle.json",
+          "sha256": "dc8168f3d78888b35d8d41a6c60decc83513c68d9b31f90e16faed4e44cef7bf"
+        },
+        {
+          "name": "windows25-signed-install-transition.json",
+          "sha256": "b2153bac9b8672379835878efe404b8de9b23624e537f14ef458ff6e2e10d5e8"
+        },
+        {
+          "name": "windows25-install-preflight.json",
+          "sha256": "8add3c14aaa9fb6ff5a5c68d0c7d5ec96816214fcec406b677f811551e0a2f55"
+        },
+        {
+          "name": "linux25-signed-install.json",
+          "sha256": "2374dafc6b60e0ee2c4530d11884740334c32f3fa7dbe9e002567bd6fdf89e0b"
+        },
+        {
+          "name": "linux25-cleanup-audit.json",
+          "sha256": "65d9e474bdbee162195fa31130ae0a605c52a4fd444e33d7a19e8e3ac8c6c8b3"
+        },
+        {
+          "name": "linux-cpu-buyer-report.json",
+          "sha256": "69ad5c07769137a361122a3fd461f1c29adfbc09c2980da02c89152ffc4843ef"
         }
       ]
     }
