@@ -70,7 +70,7 @@ interface FixtureOptions extends Omit<WindowsControllerOptions, "pins"> {
   readonly nodeSha256: string;
   readonly scratchRoot: string;
   readonly siblingPath: string;
-  readonly scenario: "echo" | "malformed" | "oversized" | "duplicate-id" | "four-inflight" | "five-inflight" | "long-session" | "module-probe" | "hang" | "flood";
+  readonly scenario: "echo" | "malformed" | "oversized" | "duplicate-id" | "four-inflight" | "four-refill" | "nativefixture-loop-top" | "nativefixture-after-flush" | "five-inflight" | "long-session" | "module-probe" | "hang" | "flood";
   readonly pauseOutputMs?: number;
   /** Short operation timeout available only through the explicit fixture seam. */
   readonly operationTimeoutMs?: number;

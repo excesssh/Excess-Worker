@@ -266,7 +266,10 @@ try {
     } else if (process.platform === "win32") {
       const packageDir = resolve(process.argv[1] ?? "", "..", "..", "..", "..");
       const result = await runWindowsWorker({ packageDir, stateDir, installDir, signal: controller.signal });
-      print({ product: "EXCESS", ...await readWorkerStatus(stateDir), controllerCleanup: result.cleaned });
+      print({ product: "EXCESS", ...await readWorkerStatus(stateDir), controllerCleanup: result.cleaned,
+        controllerReaped: result.reaped, controllerExitCode: result.exitCode, controllerTermination: result.termination,
+        controllerErrorCode: result.errorCode, controllerPeakInFlightRequests: result.peakInFlightRequests,
+        controllerPeakInFlightBytes: result.peakInFlightBytes });
       if (!result.cleaned || !result.reaped || result.exitCode !== 0) process.exitCode = 1;
     } else {
     await setWorkerControl(stateDir, "run");

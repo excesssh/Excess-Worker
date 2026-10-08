@@ -35,6 +35,7 @@ internal static class ExcessController
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = FrameLimit, RecursionLimit = 32 };
     private static readonly ManualResetEvent OutputDone = new ManualResetEvent(false);
     private static readonly ManualResetEvent ReadyOutputDone = new ManualResetEvent(false);
+    private static int FixtureLoopPauseUsed, FixtureCompletionPauseUsed;
     private static volatile bool OutputBroken, CleanupUnsafe;
     private static volatile string ErrorCode = "none", StopReason = "none";
     private static volatile string ChildDiagnosticCode = "NONE";
@@ -98,7 +99,7 @@ internal static class ExcessController
         if (fixture)
         {
             Scenario = Text(c, "testScenario");
-            if (Array.IndexOf(new[] { "echo", "malformed", "oversized", "duplicate-id", "four-inflight", "five-inflight", "long-session", "module-probe", "hang", "flood" }, Scenario) < 0) throw new ProtocolException("FIXTURE_MODE_INVALID");
+            if (Array.IndexOf(new[] { "echo", "malformed", "oversized", "duplicate-id", "four-inflight", "four-refill", "nativefixture-loop-top", "nativefixture-after-flush", "five-inflight", "long-session", "module-probe", "hang", "flood" }, Scenario) < 0) throw new ProtocolException("FIXTURE_MODE_INVALID");
             OperationTimeoutMilliseconds = checked((uint)Integer(c, "testOperationTimeoutMilliseconds"));
             if (OperationTimeoutMilliseconds < 100 || OperationTimeoutMilliseconds > 30000) throw new ProtocolException("FIXTURE_MODE_INVALID");
             object responseDelta; long delta = c.TryGetValue("testResponseIdDelta", out responseDelta) ? Convert.ToInt64(responseDelta) : 0;
@@ -229,6 +230,8 @@ internal static class ExcessController
                 {
                     long cost; if (outstandingCosts.TryGetValue(completedId, out cost)) { inFlightBytes -= cost; outstandingCosts.Remove(completedId); pendingReplyTimes.Remove(completedId); outstandingCount--; }
                 }
+                if (fixture && Scenario == "nativefixture-loop-top" && outstandingCount == MaximumConcurrentRequests && Interlocked.CompareExchange(ref FixtureLoopPauseUsed, 1, 0) == 0)
+                { FixturePhase("nativefixture-loop-top-pause"); Thread.Sleep(300); }
                 bool operationExpired = false;
                 foreach (PendingOperation operation in pending.Values) if (operation.Clock.ElapsedMilliseconds > OperationTimeoutMilliseconds) { operationExpired = true; break; }
                 if (!operationExpired) foreach (Stopwatch clock in pendingReplyTimes.Values) if (clock.ElapsedMilliseconds > OperationTimeoutMilliseconds) { operationExpired = true; break; }
@@ -253,10 +256,41 @@ internal static class ExcessController
                     }
                     if (DoneFrameSeen) { RequestStop("protocol-error", "CHILD_FRAME_INVALID"); break; }
                     if (type != "request" || !ValidRequest(frame, lastId)) { RequestStop("protocol-error", "CHILD_FRAME_INVALID"); break; }
-                    long id = Integer(frame, "id"); lastId = id;
-                    if (outstandingCount >= MaximumConcurrentRequests) { RequestStop("protocol-error", "IN_FLIGHT_LIMIT"); break; }
+                    long id = Integer(frame, "id");
                     long requestBytes = queuedFrame.Bytes;
-                    if (requestBytes > FrameLimit || inFlightBytes + requestBytes > MaximumInFlightBytes) { RequestStop("protocol-error", "IN_FLIGHT_BUDGET_EXCEEDED"); break; }
+                    if (requestBytes > FrameLimit) { RequestStop("protocol-error", "IN_FLIGHT_BUDGET_EXCEEDED"); break; }
+                    long admissionCompletedId;
+                    while (childCompleted.TryTake(out admissionCompletedId))
+                    {
+                        long cost;
+                        if (!outstandingCosts.TryGetValue(admissionCompletedId, out cost)) { RequestStop("protocol-error", "CHILD_COMPLETION_UNKNOWN"); break; }
+                        inFlightBytes -= cost; outstandingCosts.Remove(admissionCompletedId); pendingReplyTimes.Remove(admissionCompletedId); outstandingCount--;
+                    }
+                    if (Stop.WaitOne(0)) break;
+                    if (inFlightBytes + requestBytes > MaximumInFlightBytes) { RequestStop("protocol-error", "IN_FLIGHT_BUDGET_EXCEEDED"); break; }
+                    if (outstandingCount >= MaximumConcurrentRequests)
+                    {
+                        // A child may answer a flushed reply before the writer publishes its completion ID.
+                        // Defer one validated frame only when a reply has left the parent-pending set.
+                        if (pending.Count >= outstandingCount) { RequestStop("protocol-error", "IN_FLIGHT_LIMIT"); break; }
+                        if (inFlightBytes + requestBytes > peakInFlightBytes) peakInFlightBytes = inFlightBytes + requestBytes;
+                        while (outstandingCount >= MaximumConcurrentRequests && !Stop.WaitOne(0))
+                        {
+                            if (fixture && session.ElapsedMilliseconds > TimeoutMilliseconds) { RequestStop("timeout"); break; }
+                            bool deferredExpired = false;
+                            foreach (PendingOperation operation in pending.Values) if (operation.Clock.ElapsedMilliseconds > OperationTimeoutMilliseconds) { deferredExpired = true; break; }
+                            if (!deferredExpired) foreach (Stopwatch clock in pendingReplyTimes.Values) if (clock.ElapsedMilliseconds > OperationTimeoutMilliseconds) { deferredExpired = true; break; }
+                            if (deferredExpired) { RequestStop("timeout", "OPERATION_TIMEOUT"); break; }
+                            long finishedId;
+                            if (!childCompleted.TryTake(out finishedId, 25)) continue;
+                            long cost;
+                            if (!outstandingCosts.TryGetValue(finishedId, out cost)) { RequestStop("protocol-error", "CHILD_COMPLETION_UNKNOWN"); break; }
+                            inFlightBytes -= cost; outstandingCosts.Remove(finishedId); pendingReplyTimes.Remove(finishedId); outstandingCount--;
+                        }
+                        if (Stop.WaitOne(0)) break;
+                        if (outstandingCount >= MaximumConcurrentRequests) { RequestStop("protocol-error", "IN_FLIGHT_LIMIT"); break; }
+                    }
+                    lastId = id;
                     pending.Add(id, new PendingOperation(requestBytes)); outstandingCosts.Add(id, requestBytes); outstandingCount++; inFlightBytes += requestBytes;
                     if (outstandingCount > peakInFlightRequests) peakInFlightRequests = outstandingCount;
                     if (inFlightBytes > peakInFlightBytes) peakInFlightBytes = inFlightBytes;
@@ -431,7 +465,10 @@ internal static class ExcessController
             foreach (ReplyFrame reply in replies.GetConsumingEnumerable())
             {
                 writer.WriteLine(reply.Line); writer.Flush();
+                bool pauseCompletion = Mode == "fixture" && Scenario == "nativefixture-after-flush" && Interlocked.CompareExchange(ref FixtureCompletionPauseUsed, 1, 0) == 0;
+                if (pauseCompletion) { FixturePhase("nativefixture-after-flush-pause"); Thread.Sleep(300); }
                 if (!completed.TryAdd(reply.Id, 0)) throw new ProtocolException("CHILD_COMPLETION_QUEUE_FULL");
+                if (pauseCompletion) FixturePhase("nativefixture-flush-published");
             }
         }
         catch { RequestStop("protocol-error", "CHILD_INPUT_FAILED"); }
@@ -494,6 +531,7 @@ internal static class ExcessController
         if (scenario == "oversized") return "process.stdout.write('X'.repeat(1048600)+'\\n');setTimeout(()=>{},30000);";
         if (scenario == "duplicate-id") return "process.stdout.write(JSON.stringify({type:'request',id:1,op:'adapter',payload:{text:'one'}})+'\\n'+JSON.stringify({type:'request',id:1,op:'adapter',payload:{text:'replay'}})+'\\n');setTimeout(()=>{},30000);";
         if (scenario == "module-probe") return @"(async()=>{const fs=require('node:fs'),path=require('node:path'),{pathToFileURL}=require('node:url'),root=process.env.EXCESS_CONTROLLER_PACKAGE,target=path.join(root,'modules','probe.mjs'),missing=path.join(root,'modules','missing.mjs');const steps=[];const mark=(name,run)=>{try{run();steps.push(name+':OK')}catch(error){steps.push(name+':'+(['EACCES','EPERM'].includes(error.code)?'DENIED':error.code==='ENOENT'?'MISSING':'FAILED'))}};mark('cwd',()=>process.cwd());mark('stat',()=>fs.statSync(target));mark('realpath',()=>fs.realpathSync(target));mark('open',()=>{const fd=fs.openSync(target,'r');fs.closeSync(fd)});mark('list',()=>fs.readdirSync(path.dirname(target)));mark('missing-stat',()=>fs.statSync(missing));mark('missing-open',()=>{const fd=fs.openSync(missing,'r');fs.closeSync(fd)});try{await import(pathToFileURL(missing).href);steps.push('missing-import:OK')}catch(error){steps.push('missing-import:'+(['EACCES','EPERM'].includes(error.code)?'DENIED':error.code==='ERR_MODULE_NOT_FOUND'?'MISSING':'FAILED'))}try{await import(pathToFileURL(target).href);steps.push('import:OK')}catch(error){steps.push('import:'+(['EACCES','EPERM'].includes(error.code)?'DENIED':'FAILED'))}process.stdout.write(JSON.stringify({type:'request',id:1,op:'adapter',payload:{text:steps.join(',')}})+'\n');let b='';process.stdin.on('data',chunk=>{b+=chunk.toString();const n=b.indexOf('\n');if(n<0)return;const reply=JSON.parse(b.slice(0,n));if(reply.type!=='response'||reply.id!==1||reply.ok!==true||reply.payload!=='probe-ack')process.exit(3);process.stdout.write(JSON.stringify({type:'done'})+'\n',()=>process.exit(0))})})();";
+        if (scenario == "four-refill" || scenario == "nativefixture-loop-top" || scenario == "nativefixture-after-flush") return "const total=12;const pending=new Set();let next=1,b='',finished=false;const payload={text:'x'.repeat(900000)};function send(){while(next<=total&&pending.size<4){const id=next++;pending.add(id);process.stdout.write(JSON.stringify({type:'request',id,op:'adapter',payload})+'\\n')}}function finish(){if(next>total&&pending.size===0&&!finished){finished=true;process.stdout.write(JSON.stringify({type:'done'})+'\\n',()=>process.exit(0))}}process.stdin.on('data',d=>{b+=d.toString();let n;while((n=b.indexOf('\\n'))>=0){const r=JSON.parse(b.slice(0,n));b=b.slice(n+1);if(r.type!=='response'||!pending.delete(r.id))process.exit(4);send();finish()}});send();";
         if (scenario == "four-inflight" || scenario == "five-inflight") return "const count=" + (scenario == "four-inflight" ? "4" : "5") + ";const pending=new Set(Array.from({length:count},(_,i)=>i+1));for(let id=1;id<=count;id++)process.stdout.write(JSON.stringify({type:'request',id,op:'adapter',payload:{text:'item-'+id}})+'\\n');let b='',finished=false;process.stdin.on('data',d=>{b+=d.toString();let n;while((n=b.indexOf('\\n'))>=0){const r=JSON.parse(b.slice(0,n));b=b.slice(n+1);if(r.type!=='response'||!pending.delete(r.id))process.exit(4)}if(pending.size===0&&!finished){finished=true;process.stdout.write(JSON.stringify({type:'done'})+'\\n',()=>process.exit(0))}});";
         if (scenario == "long-session") return "const count=84,text='x'.repeat(200000),pending=new Set();let id=0,b='';function batch(){while(id<count&&pending.size<4){const nextId=++id;pending.add(nextId);process.stdout.write(JSON.stringify({type:'request',id:nextId,op:'adapter',payload:{text}})+'\\n')}if(id===count&&pending.size===0)process.stdout.write(JSON.stringify({type:'done'})+'\\n',()=>process.exit(0))}process.stdin.on('data',d=>{b+=d.toString();let n;while((n=b.indexOf('\\n'))>=0){const r=JSON.parse(b.slice(0,n));b=b.slice(n+1);if(r.type!=='response'||!pending.delete(r.id))process.exit(4);if(pending.size===0)batch()}});batch();";
         if (scenario == "hang") return "setTimeout(()=>{},30000);";

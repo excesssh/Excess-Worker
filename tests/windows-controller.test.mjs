@@ -275,6 +275,35 @@ test('Windows controller is a bounded, fail-closed host RPC boundary', {
   assert.equal(fourResult.peakInFlightRequests, 4);
   assert.deepEqual(completionOrder, [4, 3, 2, 1]);
 
+  for (const scenario of ['nativefixture-loop-top', 'nativefixture-after-flush']) {
+    const seen = [];
+    let releaseInitialWindow;
+    const initialWindow = new Promise(resolve => { releaseInitialWindow = resolve; });
+    const phaseStart = fixture.phases.length;
+    const refill = await launch(fixture, scenario, async request => {
+      seen.push(request.id);
+      if (seen.length === 4) releaseInitialWindow();
+      await initialWindow;
+      return { accepted: request.id };
+    });
+    const refillResult = await boundedClose(refill, fixture);
+    assert.equal(refillResult.termination, 'none', JSON.stringify(refillResult));
+    assert.equal(refillResult.exitCode, 0);
+    assert.equal(refillResult.reaped, true);
+    assert.equal(refillResult.cleaned, true);
+    assert.equal(refillResult.peakInFlightRequests, 4);
+    assert.ok(refillResult.peakInFlightBytes <= 4 * 1024 * 1024);
+    assert.equal(seen.length, 12);
+    assert.deepEqual(seen, Array.from({ length: 12 }, (_, i) => i + 1));
+    const casePhases = fixture.phases.slice(phaseStart);
+    if (scenario === 'nativefixture-loop-top') {
+      assert.ok(casePhases.includes('nativefixture-loop-top-pause'));
+    } else {
+      assert.ok(casePhases.includes('nativefixture-after-flush-pause'));
+      assert.ok(casePhases.includes('nativefixture-flush-published'));
+    }
+  }
+
   const unknown = await launch(fixture, 'echo', async () => 'pong', { responseIdDelta: 1 });
   const unknownResult = await boundedClose(unknown, fixture);
   assert.equal(unknownResult.termination, 'protocol-error');
