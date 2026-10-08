@@ -100,7 +100,9 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
       :["--model",file("model.gguf"),...sdCommon];
   }
   async function ensure(signal:AbortSignal) {
-    if(processes.process?.alive()&&(entry.kind!=="embedding"||loadedEmbeddingBatch>=embeddingBatch))return;
+    // Each image gets a fresh bounded process. A long probe must not consume
+    // the guardian's execution timer for the next buyer workload.
+    if(processes.process?.alive()&&entry.kind!=="image"&&(entry.kind!=="embedding"||loadedEmbeddingBatch>=embeddingBatch))return;
     await processes.stop();await isolation?.cleanup();isolation=undefined;loadedEmbeddingBatch=0;signal.throwIfAborted();
     const platform=currentPlatform();
     if(!platform)throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");

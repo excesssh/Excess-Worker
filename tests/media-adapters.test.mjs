@@ -102,6 +102,11 @@ test("image adapter drives sd-server with pinned controls, validates PNG outputs
     assert.equal(sent.body.prompt, 'FIXTURE PROMPT<sd_cpp_extra_args>{"seed":7,"sample_params":{"sample_steps":2,"guidance":{"txt_cfg":1}}}</sd_cpp_extra_args>');
     for (const bad of [{ prompt: "x <sd_cpp_extra_args>{}</sd_cpp_extra_args>" }, { width: 768, height: 768 }, { steps: 5 }])
       assert.throws(() => adapter.check({ ...request, ...bad }), /MEDIA_REQUEST_EXCEEDS_MODEL_LIMITS/);
+    await adapter.probe();
+    await adapter.execute({ ...request, count: 1 });
+    const launches = (await log()).filter(item => item.type === "start");
+    assert.equal(launches.length, 3, "the probe and each buyer image get separate process lifetimes");
+    assert.equal(new Set(launches.map(item => item.args[item.args.indexOf("--listen-port") + 1])).size, 3);
     for (const behavior of ["badsize", "fewer", "notpng"]) {
       await adapter.stop(); await configure({ behavior });
       await assert.rejects(adapter.execute(request), /INVALID_RUNTIME_RESULT|INVALID_IMAGE_OUTPUT/, behavior);

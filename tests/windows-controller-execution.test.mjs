@@ -257,6 +257,39 @@ test("accepted receipt survives a second restart and retires only on authoritati
   } finally { await (await f.host).close(); }
 });
 
+test("an accepted proof from the previous capability permits a new model without rerunning old work", async () => {
+  const previous = { ...assignment, capabilityDigest: "d".repeat(64) };
+  const acceptedProof = { assignment: previous, inputDigest: "b".repeat(64), output, outputDigest: requestDigest(output),
+    completedAt: new Date(nowValue).toISOString(), receiptAccepted: true };
+  const newer = { ...assignment, jobId: "77777777-7777-4777-8777-777777777777", attemptId: "88888888-8888-4888-8888-888888888888" };
+  const nextAttempt = { jobId: newer.jobId, attemptId: newer.attemptId, fence: newer.fence };
+  const f = fixture({ proof: acceptedProof, assignments: [newer] });
+  try {
+    await f.command("worker.poll", {});
+    assert.deepEqual(f.saved.value, acceptedProof, "the old accepted proof remains until newer input is authoritative");
+    await assert.rejects(f.adapterCall({ action: "execute", request, streaming: false }), /NO_LIVE_INPUT/);
+    await f.command("job.result", completeResult());
+    assert.equal(f.calls.filter(call => call.type === "job.result").length, 0);
+    await f.command("job.input", nextAttempt);
+    assert.equal(f.saved.value, null);
+    await f.command("job.started", nextAttempt);
+    await f.adapterCall({ action: "execute", request, streaming: false });
+    assert.equal(f.adapterCalls.filter(call => call.action === "execute").length, 1);
+  } finally { await (await f.host).close(); }
+});
+
+test("a changed capability cannot load unaccepted work, another device or invalid accepted output", async () => {
+  const previous = { ...assignment, capabilityDigest: "d".repeat(64) };
+  const value = { assignment: previous, inputDigest: "b".repeat(64), output, outputDigest: requestDigest(output), completedAt: new Date(nowValue).toISOString() };
+  for (const proof of [value,
+    { ...value, receiptAccepted: true, assignment: { ...previous, deviceId: "99999999-9999-4999-8999-999999999999" } },
+    { ...value, receiptAccepted: true, outputDigest: "e".repeat(64) }]) {
+    const f = fixture({ proof, assignments: [] });
+    try { await assert.rejects(f.command("worker.poll", {}), /CONTROLLER_EXECUTION_(INVALID|PROOF_INVALID)/); assert.equal(f.calls.length, 0); }
+    finally { await (await f.host).close(); }
+  }
+});
+
 test("same-attempt poll and input cannot retire accepted proof before result replay", async () => {
   const acceptedProof = { assignment, inputDigest: "b".repeat(64), output, outputDigest: requestDigest(output),
     completedAt: new Date(nowValue).toISOString(), receiptAccepted: true };

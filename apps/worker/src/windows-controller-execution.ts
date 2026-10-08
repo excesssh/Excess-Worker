@@ -172,7 +172,14 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
   const load = async (signal: AbortSignal) => {
     if (!loadPromise) loadPromise = (async () => {
       const value = await options.proofStore.load();
-      return value === null ? null : parseWindowsTextExecutionProof(value, options.deviceId, options.capabilityDigest, now());
+      if (value === null) return null;
+      const stored = object(value);
+      // A host-owned accepted receipt can survive a model change. Validate it
+      // against its original capability and retain it until newer input arrives.
+      // Unaccepted work must still recover under the current capability.
+      const capability = stored.receiptAccepted === true ? object(stored.assignment).capabilityDigest : options.capabilityDigest;
+      if (typeof capability !== "string") invalid();
+      return parseWindowsTextExecutionProof(value, options.deviceId, capability, now());
     })();
     const proof = await loadPromise;
     if (closing || signal.aborted) invalid("CONTROLLER_EXECUTION_CLOSED");

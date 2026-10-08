@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { join, parse, relative, resolve, sep } from "node:path";
@@ -44,6 +44,16 @@ function proof(value: unknown): WindowsTextExecutionProof {
   const media = item.output && typeof item.output === "object" && "kind" in item.output;
   if (Buffer.byteLength(JSON.stringify(item)) > (media ? WINDOWS_MEDIA_PROOF_BYTES : TEXT_LIMITS.maxOutputBytes * 4 + 8192)) fail("CONTROLLER_EXECUTION_PROOF_LIMIT");
   return item as unknown as WindowsTextExecutionProof;
+}
+
+function resultDigest(value: WindowsTextExecutionProof): string {
+  const { receiptAccepted: _receipt, ...result } = value;
+  if (!result.artifacts) return requestDigest(result);
+  // Recovery proofs can contain megabytes of base64 artifact bytes. Compare
+  // their exact encoded bytes separately; protocol messages stay bounded.
+  const artifacts = result.artifacts.map(({ data, ...metadata }) => ({ metadata,
+    encodedDataDigest: createHash("sha256").update("excess:proof-artifact:v1\n").update(data, "utf8").digest("hex") }));
+  return requestDigest({ ...result, artifacts });
 }
 
 /** Host-only recovery data. The parent state directory must already have its
@@ -134,9 +144,7 @@ export async function createWindowsExecutionProofStore(stateDir: string): Promis
         if (previous && previous.assignment.attemptId !== candidate.assignment.attemptId) fail("CONTROLLER_EXECUTION_RECEIPT_PENDING");
         if (previous?.receiptAccepted && !candidate.receiptAccepted) fail("CONTROLLER_EXECUTION_RECEIPT_REGRESSION");
         if (previous) {
-          const { receiptAccepted: _previousReceipt, ...previousResult } = previous;
-          const { receiptAccepted: _candidateReceipt, ...candidateResult } = candidate;
-          if (requestDigest(previousResult) !== requestDigest(candidateResult)) fail("CONTROLLER_EXECUTION_PROOF_CHANGED");
+          if (resultDigest(previous) !== resultDigest(candidate)) fail("CONTROLLER_EXECUTION_PROOF_CHANGED");
         }
         const stage = join(root, ".proof-" + randomUUID() + ".tmp");
         let created = false;

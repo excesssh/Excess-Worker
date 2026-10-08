@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import test from 'node:test';
@@ -79,4 +79,35 @@ test('close drains accepted saves and preserves bounded proof without leftover s
   assert.deepEqual(await readdir(join(root, 'host-execution-proof')), ['proof.json']);
   const again = await createWindowsExecutionProofStore(root);
   assert.equal((await again.load()).receiptAccepted, true); await again.close();
+});
+test('large image proof accepts its receipt across restart and retires without relaxing message limits', async t => {
+  const root = await fixture(t), value = proof(), image = Buffer.alloc(600000);
+  // Synthetic boundary fixture, not an inference result.
+  Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').copy(image);
+  image.writeUInt32BE(512, 16); image.writeUInt32BE(512, 20);
+  Buffer.from('0000000049454e44ae426082', 'hex').copy(image, image.length - 12);
+  const ref = { digest: createHash('sha256').update(image).digest('hex'), bytes: image.length, contentType: 'image/png' };
+  value.output = { kind: 'image', width: 512, height: 512, images: [ref] };
+  value.outputDigest = requestDigest(value.output);
+  value.artifacts = [{ ref, data: image.toString('base64') }];
+  assert.throws(() => requestDigest(value), /Request exceeds limit/);
+  let store = await createWindowsExecutionProofStore(root);
+  await store.save(value); await store.close();
+  store = await createWindowsExecutionProofStore(root);
+  await assert.rejects(store.checkRetirement(value.assignment.deviceId), /RECEIPT_PENDING/);
+  const changedData = structuredClone(value);
+  changedData.artifacts[0].data = 'B' + changedData.artifacts[0].data.slice(1);
+  await assert.rejects(store.save({ ...changedData, receiptAccepted: true }), /PROOF_CHANGED/);
+  const changedRef = structuredClone(value);
+  changedRef.artifacts[0].ref.bytes--;
+  await assert.rejects(store.save({ ...changedRef, receiptAccepted: true }), /PROOF_CHANGED/);
+  const reordered = { ...value, artifacts: [{ data: value.artifacts[0].data, ref }], receiptAccepted: true };
+  await store.save(reordered); await store.close();
+  store = await createWindowsExecutionProofStore(root);
+  assert.equal((await store.load()).receiptAccepted, true);
+  await assert.rejects(store.save(value), /RECEIPT_REGRESSION/);
+  await store.checkRetirement(value.assignment.deviceId);
+  const destination = join(root, 'retired'); await mkdir(destination, { mode: 0o700 });
+  await store.retire(value.assignment.deviceId, destination); await store.close();
+  assert.equal(JSON.parse(await readFile(join(destination, 'host-execution-proof', 'proof.json'), 'utf8')).proof.receiptAccepted, true);
 });
