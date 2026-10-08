@@ -28,6 +28,7 @@ internal static class ExcessController
     private const uint ReadAccess = 0x80000000, WriteAccess = 0x40000000, ShareRead = 1, ShareWrite = 2, OpenExisting = 3, NormalAttribute = 0x80;
     private const uint WaitObject = 0, WaitTimeout = 0x102;
     private static readonly ManualResetEvent Stop = new ManualResetEvent(false);
+    private static readonly object StopGate = new object();
     private static readonly BlockingCollection<string> Output = new BlockingCollection<string>(new ConcurrentQueue<string>(), 4);
     private static readonly BlockingCollection<QueuedFrame> ChildFrames = new BlockingCollection<QueuedFrame>(new ConcurrentQueue<QueuedFrame>(), 4);
     private static readonly BlockingCollection<Dictionary<string, object>> ParentFrames = new BlockingCollection<Dictionary<string, object>>(new ConcurrentQueue<Dictionary<string, object>>(), 4);
@@ -216,13 +217,13 @@ internal static class ExcessController
             {
                 // The hostile fixture starts only after readiness has reached
                 // the parent pipe; optional startup diagnostics cannot erase it.
-                if (!ReadyOutputDone.WaitOne(2000)) { StopReason = "output-backpressure"; Stop.Set(); }
+                if (!ReadyOutputDone.WaitOne(2000)) RequestStop("output-backpressure");
                 for (int i = 0; i < 100000 && !Stop.WaitOne(0); i++) TryOutput("{\"type\":\"pulse\",\"sequence\":" + i.ToString() + "}");
             }
             Stopwatch session = Stopwatch.StartNew();
             while (WaitForSingleObject(process, 0) != WaitObject && !Stop.WaitOne(0))
             {
-                if (fixture && session.ElapsedMilliseconds > TimeoutMilliseconds) { StopReason = "timeout"; Stop.Set(); break; }
+                if (fixture && session.ElapsedMilliseconds > TimeoutMilliseconds) { RequestStop("timeout"); break; }
                 long completedId;
                 while (childCompleted.TryTake(out completedId))
                 {
@@ -231,7 +232,7 @@ internal static class ExcessController
                 bool operationExpired = false;
                 foreach (PendingOperation operation in pending.Values) if (operation.Clock.ElapsedMilliseconds > OperationTimeoutMilliseconds) { operationExpired = true; break; }
                 if (!operationExpired) foreach (Stopwatch clock in pendingReplyTimes.Values) if (clock.ElapsedMilliseconds > OperationTimeoutMilliseconds) { operationExpired = true; break; }
-                if (operationExpired) { ErrorCode = "OPERATION_TIMEOUT"; StopReason = "timeout"; Stop.Set(); break; }
+                if (operationExpired) { RequestStop("timeout", "OPERATION_TIMEOUT"); break; }
                 QueuedFrame queuedFrame;
                 if (ChildFrames.TryTake(out queuedFrame, 25))
                 {
@@ -243,37 +244,37 @@ internal static class ExcessController
                         while (outstandingCount != 0 && completionWait.ElapsedMilliseconds < OperationTimeoutMilliseconds)
                         {
                             long finishedId; if (!childCompleted.TryTake(out finishedId, 25)) continue;
-                            long cost; if (!outstandingCosts.TryGetValue(finishedId, out cost)) { ErrorCode = "CHILD_COMPLETION_UNKNOWN"; break; }
+                            long cost; if (!outstandingCosts.TryGetValue(finishedId, out cost)) { RequestStop("protocol-error", "CHILD_COMPLETION_UNKNOWN"); break; }
                             inFlightBytes -= cost; outstandingCosts.Remove(finishedId); pendingReplyTimes.Remove(finishedId); outstandingCount--;
                         }
                         if (DoneFrameSeen || pending.Count != 0 || outstandingCount != 0)
-                        { if (ErrorCode == "none") ErrorCode = "CHILD_DONE_WITH_PENDING"; StopReason = "protocol-error"; Stop.Set(); break; }
+                        { RequestStop("protocol-error", "CHILD_DONE_WITH_PENDING"); break; }
                         DoneFrameSeen = true; continue;
                     }
-                    if (DoneFrameSeen) { ErrorCode = "CHILD_FRAME_INVALID"; StopReason = "protocol-error"; Stop.Set(); break; }
-                    if (type != "request" || !ValidRequest(frame, lastId)) { ErrorCode = "CHILD_FRAME_INVALID"; StopReason = "protocol-error"; Stop.Set(); break; }
+                    if (DoneFrameSeen) { RequestStop("protocol-error", "CHILD_FRAME_INVALID"); break; }
+                    if (type != "request" || !ValidRequest(frame, lastId)) { RequestStop("protocol-error", "CHILD_FRAME_INVALID"); break; }
                     long id = Integer(frame, "id"); lastId = id;
-                    if (outstandingCount >= MaximumConcurrentRequests) { ErrorCode = "IN_FLIGHT_LIMIT"; StopReason = "protocol-error"; Stop.Set(); break; }
+                    if (outstandingCount >= MaximumConcurrentRequests) { RequestStop("protocol-error", "IN_FLIGHT_LIMIT"); break; }
                     long requestBytes = queuedFrame.Bytes;
-                    if (requestBytes > FrameLimit || inFlightBytes + requestBytes > MaximumInFlightBytes) { ErrorCode = "IN_FLIGHT_BUDGET_EXCEEDED"; StopReason = "protocol-error"; Stop.Set(); break; }
+                    if (requestBytes > FrameLimit || inFlightBytes + requestBytes > MaximumInFlightBytes) { RequestStop("protocol-error", "IN_FLIGHT_BUDGET_EXCEEDED"); break; }
                     pending.Add(id, new PendingOperation(requestBytes)); outstandingCosts.Add(id, requestBytes); outstandingCount++; inFlightBytes += requestBytes;
                     if (outstandingCount > peakInFlightRequests) peakInFlightRequests = outstandingCount;
                     if (inFlightBytes > peakInFlightBytes) peakInFlightBytes = inFlightBytes;
                     string outbound = "{\"type\":\"request\",\"id\":" + id.ToString() + ",\"op\":\"" + Text(frame, "op") + "\",\"payload\":" + Json.Serialize(frame["payload"]) + "}";
-                    if (Encoding.UTF8.GetByteCount(outbound) > FrameLimit) { ErrorCode = "CHILD_FRAME_INVALID"; StopReason = "protocol-error"; Stop.Set(); break; }
+                    if (Encoding.UTF8.GetByteCount(outbound) > FrameLimit) { RequestStop("protocol-error", "CHILD_FRAME_INVALID"); break; }
                     TryOutput(outbound);
                 }
                 Dictionary<string, object> response;
                 while (!Stop.WaitOne(0) && ParentFrames.TryTake(out response))
                 {
                     long id = Integer(response, "id"); PendingOperation operation;
-                    if (!pending.TryGetValue(id, out operation) || !ValidResponse(response, id)) { ErrorCode = "PARENT_RESPONSE_INVALID"; StopReason = "protocol-error"; Stop.Set(); break; }
+                    if (!pending.TryGetValue(id, out operation) || !ValidResponse(response, id)) { RequestStop("protocol-error", "PARENT_RESPONSE_INVALID"); break; }
                     string childResponse = Json.Serialize(response); long responseBytes = Encoding.UTF8.GetByteCount(childResponse);
                     long nextBytes = inFlightBytes - operation.RequestBytes + responseBytes;
-                    if (nextBytes > MaximumInFlightBytes) { ErrorCode = "IN_FLIGHT_BUDGET_EXCEEDED"; StopReason = "protocol-error"; Stop.Set(); break; }
+                    if (nextBytes > MaximumInFlightBytes) { RequestStop("protocol-error", "IN_FLIGHT_BUDGET_EXCEEDED"); break; }
                     pending.Remove(id); inFlightBytes = nextBytes; outstandingCosts[id] = responseBytes; pendingReplyTimes[id] = Stopwatch.StartNew();
                     if (inFlightBytes > peakInFlightBytes) peakInFlightBytes = inFlightBytes;
-                    if (!childReplies.TryAdd(new ReplyFrame(id, childResponse, responseBytes), 0)) { ErrorCode = "CHILD_RESPONSE_QUEUE_FULL"; StopReason = "protocol-error"; Stop.Set(); break; }
+                    if (!childReplies.TryAdd(new ReplyFrame(id, childResponse, responseBytes), 0)) { RequestStop("protocol-error", "CHILD_RESPONSE_QUEUE_FULL"); break; }
                 }
             }
             if (Stop.WaitOne(0)) reaped = TerminateJobAndWait(job, process, StopReason == "timeout" ? 124U : 125U);
@@ -285,8 +286,9 @@ internal static class ExcessController
             QueuedFrame trailing;
             while (ChildFrames.TryTake(out trailing))
             {
+                if (Stop.WaitOne(0)) continue;
                 if (Text(trailing.Value, "type") == "done" && trailing.Value.Count == 1 && !DoneFrameSeen) DoneFrameSeen = true;
-                else { ErrorCode = "CHILD_FRAME_INVALID"; StopReason = "protocol-error"; }
+                else RequestStop("protocol-error", "CHILD_FRAME_INVALID");
             }
             uint childExit = 1; GetExitCodeProcess(process, out childExit);
             if (StopReason == "none" && !DoneFrameSeen && ErrorCode == "none") ErrorCode = childExit != 0 && ChildDiagnosticCode != "NONE" ? ChildDiagnosticCode : "CHILD_COMPLETION_MISSING";
@@ -394,6 +396,19 @@ internal static class ExcessController
         foreach (string file in files) lease.GrantFile(file, sid, file.Equals(NodeExe, StringComparison.OrdinalIgnoreCase) ? FileSystemRights.ReadAndExecute : FileSystemRights.Read);
     }
 
+    private static void RequestStop(string reason, string code = null)
+    {
+        // Shutdown can break pipes and leave queued frames behind. Keep the
+        // first stop diagnosis instead of replacing it with cleanup fallout.
+        lock (StopGate)
+        {
+            if (Stop.WaitOne(0)) return;
+            if (code != null && ErrorCode == "none") ErrorCode = code;
+            StopReason = reason;
+            Stop.Set();
+        }
+    }
+
     private static void ReadChild(StreamReader reader)
     {
         try
@@ -401,12 +416,12 @@ internal static class ExcessController
             string line; var lines = new BoundedLineReader(reader);
             while (lines.ReadLine(FrameLimit, out line))
             {
-                var frame = Parse(line); if (!ChildFrames.TryAdd(new QueuedFrame(frame, Encoding.UTF8.GetByteCount(line)))) { ErrorCode = "CHILD_QUEUE_FULL"; StopReason = "protocol-error"; Stop.Set(); return; }
+                var frame = Parse(line); if (!ChildFrames.TryAdd(new QueuedFrame(frame, Encoding.UTF8.GetByteCount(line)))) { RequestStop("protocol-error", "CHILD_QUEUE_FULL"); return; }
             }
             // EOF is handled by the process watcher; a successful child may close
             // immediately after placing its terminal frame in the bounded queue.
         }
-        catch { ErrorCode = "CHILD_FRAME_INVALID"; StopReason = "protocol-error"; Stop.Set(); }
+        catch { RequestStop("protocol-error", "CHILD_FRAME_INVALID"); }
     }
 
     private static void WriteChildReplies(StreamWriter writer, BlockingCollection<ReplyFrame> replies, BlockingCollection<long> completed)
@@ -419,7 +434,7 @@ internal static class ExcessController
                 if (!completed.TryAdd(reply.Id, 0)) throw new ProtocolException("CHILD_COMPLETION_QUEUE_FULL");
             }
         }
-        catch { ErrorCode = "CHILD_INPUT_FAILED"; StopReason = "protocol-error"; Stop.Set(); }
+        catch { RequestStop("protocol-error", "CHILD_INPUT_FAILED"); }
     }
 
     private static void DrainChildStderr(Stream stream)
@@ -452,13 +467,13 @@ internal static class ExcessController
                 string line;
                 while (ControlLines.ReadLine(FrameLimit, out line))
                 {
-                    if (line == "{\"type\":\"stop\"}") { StopReason = "stop"; Stop.Set(); return; }
+                    if (line == "{\"type\":\"stop\"}") { RequestStop("stop"); return; }
                     var frame = Parse(line);
-                    if (Text(frame, "type") != "response" || !ParentFrames.TryAdd(frame)) { ErrorCode = "PARENT_FRAME_INVALID"; StopReason = "protocol-error"; Stop.Set(); return; }
+                    if (Text(frame, "type") != "response" || !ParentFrames.TryAdd(frame)) { RequestStop("protocol-error", "PARENT_FRAME_INVALID"); return; }
                 }
-                if (!Stop.WaitOne(0)) { StopReason = "parent-eof"; Stop.Set(); }
+                RequestStop("parent-eof");
             }
-            catch { ErrorCode = "PARENT_FRAME_INVALID"; StopReason = "protocol-error"; Stop.Set(); }
+            catch { RequestStop("protocol-error", "PARENT_FRAME_INVALID"); }
         }); thread.IsBackground = true; thread.Name = "controller-parent-control"; thread.Start();
     }
 
@@ -580,7 +595,7 @@ internal static class ExcessController
     private static void TryOutput(string line)
     {
         if (OutputBroken) return;
-        if (!Output.TryAdd(line, 0)) { StopReason = "output-backpressure"; Stop.Set(); }
+        if (!Output.TryAdd(line, 0)) RequestStop("output-backpressure");
     }
     private static void FixturePhase(string phase)
     {
@@ -595,7 +610,7 @@ internal static class ExcessController
         var thread = new Thread(() =>
         {
             try { foreach (string line in Output.GetConsumingEnumerable()) { Console.Out.WriteLine(line); Console.Out.Flush(); if (line.StartsWith("{\"type\":\"ready\",", StringComparison.Ordinal)) ReadyOutputDone.Set(); } }
-            catch { OutputBroken = true; StopReason = "output-unavailable"; Stop.Set(); }
+            catch { OutputBroken = true; RequestStop("output-unavailable"); }
             finally { OutputDone.Set(); }
         }); thread.IsBackground = true; thread.Name = "controller-parent-output"; thread.Start();
     }

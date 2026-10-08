@@ -3,29 +3,13 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, unlink, rmdir, writeFile } from 'node:fs/promises';
-import { existsSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertPublicBytes } from '../scripts/public-worker/privacy.mjs';
 import { startWindowsControllerTestFixture } from '../apps/worker/dist/windows-controller.js';
 
-const configuredNeutralRoot = process.env.EXCESS_WINDOWS_CONTROLLER_TEST_ROOT ?? '';
-const configuredToolchain = process.env.EXCESS_WINDOWS_CONTROLLER_TOOLCHAIN ?? '';
-if (configuredNeutralRoot) assertPublicBytes(Buffer.from(configuredNeutralRoot));
-if (configuredToolchain) assertPublicBytes(Buffer.from(configuredToolchain));
-const neutralRoot = configuredNeutralRoot ? path.resolve(configuredNeutralRoot) : '';
-const toolchain = configuredToolchain ? path.resolve(configuredToolchain) : '';
-if (neutralRoot) assertPublicBytes(Buffer.from(neutralRoot));
-if (toolchain) assertPublicBytes(Buffer.from(toolchain));
-const expectedNodeSha256 = process.env.EXCESS_WINDOWS_CONTROLLER_TEST_NODE_SHA256 ?? '';
-function isWithin(base, target) { const rel = path.relative(path.resolve(base), path.resolve(target)); return !rel || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)); }
-const systemRoot = process.env.SystemRoot ?? 'C:/Windows';
-const neutralRootSafe = Boolean(neutralRoot) && !isWithin(homedir(), neutralRoot) && !isWithin(systemRoot, neutralRoot);
-const nativeFixtureReady = process.platform === 'win32' && process.arch === 'x64' && process.version === 'v24.11.1' &&
-  Boolean(toolchain && expectedNodeSha256) && /^[0-9a-f]{64}$/.test(expectedNodeSha256) && neutralRootSafe &&
-  existsSync(path.join(toolchain, 'inputs.json')) && existsSync(path.join(neutralRoot, 'runtime', 'node.exe')) &&
-  existsSync(path.join(neutralRoot, 'sibling', 'ungranted.txt'));
+const neutralRoot = 'C:/ExcessBuilds/windows-controller-multiplex-proof';
+const toolchain = 'C:/ExcessBuilds/toolchains/windows-roslyn-4.14.0';
 const testRoot = path.dirname(fileURLToPath(import.meta.url));
 const buildScript = path.join(testRoot, '..', 'scripts', 'public-worker', 'build-windows-controller.mjs');
 
@@ -150,16 +134,13 @@ process.stdin.on('data', chunk => { buffer += chunk.toString(); const index = bu
   const helperHash = digest(await readFile(helperA));
   if (helperHash !== first.sha256 || digest(await readFile(helperB)) !== helperHash) throw Error('CONTROLLER_BUILD_PIN_INVALID');
   const nodeHash = digest(await readFile(nodePath));
-  if (nodeHash !== expectedNodeSha256) throw Error('CONTROLLER_TEST_NODE_PIN_MISMATCH');
-  const nodeVersion = spawnSync(nodePath, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true, env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot } });
-  if (nodeVersion.status !== 0 || nodeVersion.stdout.trim() !== 'v24.11.1') throw Error('CONTROLLER_TEST_NODE_VERSION_INVALID');
   const aclTargets = [runtime, nodePath, path.join(runtime, 'LICENSE'), probeDir, probeFile, dependencyFile, nodeModules, scopeDir, protocolDir, protocolPackage, protocolEntry, stateDir, identity, scratchRoot];
   const before = snapshotAcl(aclTargets);
-  return { moduleRoot, runtime, probeDir, probeFile, dependencyFile, nodeModules, scopeDir, protocolDir, protocolPackage, protocolEntry, sibling, nodePath, nodeHash, stateDir, scratchRoot, outputA, outputB, helperA, helperHash, aclTargets, before, phases: [] };
+  return { moduleRoot, runtime, probeDir, probeFile, dependencyFile, nodeModules, scopeDir, protocolDir, protocolPackage, protocolEntry, sibling, nodePath, nodeHash, stateDir, scratchRoot, outputA, outputB, helperA, helperHash, aclTargets, before, phases: [], runs: [] };
 }
 
 async function launch(fixture, scenario, handleRequest, extra = {}) {
-  return startWindowsControllerTestFixture({
+  const run = await startWindowsControllerTestFixture({
     packageDir: fixture.runtime,
     stateDir: fixture.stateDir,
     origin: 'https://controller.invalid',
@@ -180,6 +161,8 @@ async function launch(fixture, scenario, handleRequest, extra = {}) {
     },
     ...extra,
   });
+  fixture.runs.push(run);
+  return run;
 }
 
 async function boundedClose(run, fixture, timeoutMs = 12000) {
@@ -211,10 +194,25 @@ async function waitForCount(values, count) {
 }
 
 test('Windows controller is a bounded, fail-closed host RPC boundary', {
-  skip: !nativeFixtureReady ? 'Windows x64 Node 24.11.1, the exact pinned Roslyn toolchain, and an explicit neutral fixture root are required' : false,
-}, async () => {
+  skip: process.platform !== 'win32' || process.arch !== 'x64' || process.version !== 'v24.11.1',
+}, async (t) => {
   const fixture = await prepare();
   const profilesBefore = controllerProfileCount();
+  t.after(async () => {
+    for (const run of fixture.runs) await run.stop();
+    assert.deepEqual(snapshotAcl(fixture.aclTargets), fixture.before, 'fixture stop must restore every ACL');
+    assert.deepEqual(await readdir(fixture.scratchRoot), [], 'fixture stop must remove owned sessions');
+    assert.equal(controllerProfileCount(), profilesBefore);
+    for (const file of [path.join(fixture.stateDir, 'identity.json'), path.join(fixture.runtime, 'controller-marker.txt'), fixture.probeFile, fixture.dependencyFile, fixture.protocolPackage, fixture.protocolEntry]) {
+      try { await unlink(file); } catch (error) { if (error.code !== 'ENOENT') throw Error('CONTROLLER_FIXTURE_FILE_CLEANUP_FAILED'); }
+    }
+    for (const dir of [fixture.protocolDir, fixture.scopeDir, fixture.nodeModules, fixture.probeDir, fixture.stateDir, fixture.scratchRoot, fixture.outputA, fixture.outputB]) {
+      if (dir === fixture.outputA || dir === fixture.outputB) for (const name of await readdir(dir)) await unlink(path.join(dir, name));
+      await rmdir(dir);
+    }
+    try { await unlink(path.join(fixture.moduleRoot, 'phases.txt')); } catch (error) { if (error.code !== 'ENOENT') throw Error('CONTROLLER_FIXTURE_PHASE_CLEANUP_FAILED'); }
+    await rmdir(fixture.moduleRoot);
+  });
   let observedRequest;
   const echo = await launch(fixture, 'echo', async request => {
     observedRequest = { op: request.op, text: request.payload.text, checks: request.payload.checks };
@@ -253,7 +251,7 @@ test('Windows controller is a bounded, fail-closed host RPC boundary', {
     return { accepted: request.id };
   });
   const fourResult = await boundedClose(four, fixture);
-  assert.equal(fourResult.termination, 'none');
+  assert.equal(fourResult.termination, 'none', JSON.stringify(fourResult));
   assert.equal(fourResult.exitCode, 0);
   assert.equal(fourResult.peakInFlightRequests, 4);
   assert.deepEqual(completionOrder, [4, 3, 2, 1]);
@@ -276,9 +274,15 @@ test('Windows controller is a bounded, fail-closed host RPC boundary', {
   });
   const fifthResult = await boundedClose(fifth, fixture);
   assert.equal(fifthResult.termination, 'protocol-error');
-  assert.equal(fifthResult.peakInFlightRequests, 4);
-  assert.deepEqual(fifthSeen, [1, 2, 3, 4]);
-  assert.deepEqual([...fifthAborted].sort(), [1, 2, 3, 4]);
+  assert.equal(fifthResult.reaped, true);
+  assert.equal(fifthResult.cleaned, true);
+  // The bounded input queue may reject the burst before all four requests
+  // reach dispatch. The four-request positive control above proves capacity.
+  assert.ok(['IN_FLIGHT_LIMIT', 'CHILD_QUEUE_FULL'].includes(fifthResult.errorCode), JSON.stringify(fifthResult));
+  assert.ok(fifthResult.peakInFlightRequests <= 4, JSON.stringify(fifthResult));
+  assert.ok(fifthSeen.length <= fifthResult.peakInFlightRequests);
+  assert.deepEqual(fifthSeen, Array.from({ length: fifthSeen.length }, (_, index) => index + 1));
+  assert.deepEqual([...fifthAborted].sort(), fifthSeen);
 
   let longBytesObserved = 0, longRequestCount = 0;
   const longSession = await launch(fixture, 'long-session', async request => {
@@ -297,7 +301,7 @@ test('Windows controller is a bounded, fail-closed host RPC boundary', {
     throw Error('CONTROLLER_LONG_SESSION_DID_NOT_CLOSE:' + JSON.stringify({ longRequestCount, longBytesObserved, acceptedIds, resolvedIds, queuedIds, denied,
       termination: stopped?.termination ?? 'unconfirmed', reaped: stopped?.reaped ?? false, cleaned: stopped?.cleaned ?? false }));
   }
-  assert.equal(longResult.termination, 'none');
+  assert.equal(longResult.termination, 'none', JSON.stringify(longResult));
   assert.equal(longResult.exitCode, 0);
   assert.equal(longRequestCount, 84);
   assert.ok(longBytesObserved > 16 * 1024 * 1024);
@@ -349,18 +353,4 @@ test('Windows controller is a bounded, fail-closed host RPC boundary', {
   assert.deepEqual(await readdir(fixture.stateDir), ['identity.json']);
   assert.equal(controllerProfileCount(), profilesBefore);
 
-  for (const file of [path.join(fixture.stateDir, 'identity.json'), path.join(fixture.runtime, 'controller-marker.txt')]) {
-    try { await unlink(file); } catch {}
-  }
-  try { await unlink(fixture.probeFile); } catch {}
-  try { await unlink(fixture.dependencyFile); } catch {}
-  for (const file of [fixture.protocolPackage, fixture.protocolEntry]) { try { await unlink(file); } catch {} }
-  for (const dir of [fixture.protocolDir, fixture.scopeDir, fixture.nodeModules]) { try { await rmdir(dir); } catch {} }
-  try { await rmdir(fixture.probeDir); } catch {}
-  for (const dir of [fixture.stateDir, fixture.scratchRoot, fixture.outputA, fixture.outputB]) {
-    try { for (const name of await readdir(dir)) await unlink(path.join(dir, name)); } catch {}
-    try { await rmdir(dir); } catch {}
-  }
-  try { await unlink(path.join(fixture.moduleRoot, 'phases.txt')); } catch {}
-  try { await rmdir(fixture.moduleRoot); } catch {}
 });

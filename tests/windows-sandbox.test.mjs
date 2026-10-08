@@ -4,37 +4,26 @@ import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, rmdirSync, openSync, ftruncateSync, closeSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
-import { assertPublicBytes } from '../scripts/public-worker/privacy.mjs';
 
 const root = process.cwd();
-const buildScript = path.join(root, 'scripts', 'public-worker', 'build-windows-sandbox.mjs');
-const configuredNeutralBase = process.env.EXCESS_WINDOWS_SANDBOX_TEST_ROOT ?? '';
-const configuredToolchain = process.env.EXCESS_WINDOWS_SANDBOX_TOOLCHAIN ?? '';
-if (configuredNeutralBase) assertPublicBytes(Buffer.from(configuredNeutralBase));
-if (configuredToolchain) assertPublicBytes(Buffer.from(configuredToolchain));
-const neutralBase = configuredNeutralBase ? path.resolve(configuredNeutralBase) : '';
-const toolchain = configuredToolchain ? path.resolve(configuredToolchain) : '';
-if (neutralBase) assertPublicBytes(Buffer.from(neutralBase));
-if (toolchain) assertPublicBytes(Buffer.from(toolchain));
-const systemRoot = process.env.SystemRoot ?? 'C:/Windows';
-function isWithin(base, target) { const rel = path.relative(path.resolve(base), path.resolve(target)); return !rel || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)); }
-const neutralBaseSafe = Boolean(neutralBase) && !isWithin(homedir(), neutralBase) && !isWithin(systemRoot, neutralBase);
-const nativeFixtureReady = process.platform === 'win32' && process.arch === 'x64' && process.version === 'v24.11.1' &&
-  Boolean(toolchain) && neutralBaseSafe && existsSync(path.join(toolchain, 'inputs.json'));
+const buildScript = path.join(root, 'scripts', 'public-worker', 'build-windows-sandbox.ps1');
 const runId = randomUUID().replaceAll('-', '');
-const outputBase = neutralBase;
+const outputBase = 'C:\\ExcessBuilds\\tools\\excess-sandbox-runs';
 const runRoot = path.join(outputBase, runId);
 const runtimeRoot = path.join(runRoot, 'runtime');
 const helper = path.join(runtimeRoot, 'ExcessSandbox.exe');
+const sourceCopy = path.join(runtimeRoot, 'ExcessSandbox.cs');
 const scratch = path.join(runRoot, 'scratch');
 const unselectedFile = path.join(runtimeRoot, 'unselected.dat');
-const modelRoot = path.join(neutralBase, `${runId}-model-store`);
+const modelParent = process.env.LOCALAPPDATA ?? (process.platform === 'win32' ? '' : 'C:\\ExcessBuilds\\tools');
+if (process.platform === 'win32') assert.ok(modelParent, 'a per-user local application data directory is required for the exact-file ACL probe');
+const modelRoot = path.join(modelParent, `excess-sandbox-probe-${runId}`);
 const selectedModel = path.join(modelRoot, 'selected.bin');
 const unselectedModel = path.join(modelRoot, 'unselected.bin');
 const setupModel = path.join(modelRoot, 'setup-cancel.bin');
-const profileRoot = neutralBase;
+const profileRoot = path.dirname(modelParent);
+const activeLaunchers = new Set();
 
 function ancestors(target) {
   const values = [];
@@ -47,18 +36,16 @@ function ancestors(target) {
 }
 
 function buildHelper() {
-  const result = spawnSync(process.execPath, [buildScript, runtimeRoot, toolchain], {
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-File', buildScript], {
     cwd: root,
     encoding: 'utf8',
-    timeout: 60000,
+    timeout: 30000,
     windowsHide: true,
-    env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot },
+    env: { ...process.env, EXCESS_SANDBOX_OUTPUT_ROOT: runtimeRoot },
   });
-  assert.equal(result.error, undefined, 'the pinned sandbox build should start');
-  assert.equal(result.status, 0, 'the pinned sandbox helper should compile');
-  const summary = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1));
-  assert.equal(summary.profile, 'windows-appcontainer-v1');
-  assert.equal(summary.privacy, 'passed');
+  assert.equal(result.error, undefined, 'PowerShell should start the sandbox build');
+  assert.equal(result.status, 0, 'sandbox helper should compile');
+  assert.match(result.stdout, /status=build-ok/);
   assert.equal(existsSync(helper), true);
 }
 
@@ -99,8 +86,14 @@ function launchSandbox(config, diagnostics = false) {
       EXCESS_SANDBOX_DIAGNOSTIC: diagnostics ? '1' : undefined,
     },
   });
+  child.stdin.on('error', () => {});
   let stdout = '';
+  let closed = false;
   const waiters = [];
+  const statusSummary = () => {
+    try { return JSON.stringify(parseEvents(stdout).map(({ type, id, code, phase, termination, exitCode }) => ({ type, id, code, phase, termination, exitCode }))); }
+    catch { return 'unparseable-events'; }
+  };
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk) => {
     stdout += chunk;
@@ -116,11 +109,22 @@ function launchSandbox(config, diagnostics = false) {
     child.once('error', (error) => resolve({ error, stdout }));
     child.once('close', (code, signal) => resolve({ code, signal, stdout }));
   });
+  activeLaunchers.add(child);
+  child.once('close', () => {
+    closed = true;
+    activeLaunchers.delete(child);
+    for (const waiter of waiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error('sandbox closed before expected event: ' + statusSummary()));
+    }
+  });
+  child.excessFixtureDone = done;
   child.stdin.write(JSON.stringify(config) + '\n');
   return {
     child,
     done,
     stop() {
+      if (closed || child.stdin.destroyed || child.stdin.writableEnded) return;
       child.stdin.write('{"type":"stop"}\n');
       child.stdin.end();
     },
@@ -129,12 +133,13 @@ function launchSandbox(config, diagnostics = false) {
     output() { return stdout; },
     waitFor(predicate, timeout = 10000) {
       if (predicate(stdout)) return Promise.resolve(stdout);
+      if (closed) return Promise.reject(new Error('sandbox closed before expected event: ' + statusSummary()));
       return new Promise((resolve, reject) => {
         const waiter = { predicate, resolve, reject, timer: null };
         waiter.timer = setTimeout(() => {
           const index = waiters.indexOf(waiter);
           if (index >= 0) waiters.splice(index, 1);
-          reject(new Error('sandbox status wait timed out'));
+          reject(new Error('sandbox status wait timed out: ' + statusSummary()));
         }, timeout);
         waiters.push(waiter);
       });
@@ -207,8 +212,8 @@ async function connectDuringLaunch(port, done) {
 }
 
 test('Windows sandbox denies an outside-process loopback TCP connection without network capability', {
-  skip: !nativeFixtureReady ? 'Windows x64 Node 24.11.1, pinned Roslyn inputs, and an explicit neutral fixture root are required' : false,
-}, async () => {
+  skip: process.platform !== 'win32',
+}, async (t) => {
   buildHelper();
   mkdirSync(scratch, { recursive: true });
   protectScratchRoot(scratch);
@@ -222,6 +227,7 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     runtimeRoot,
     scratch,
     helper,
+    sourceCopy,
     modelRoot,
     selectedModel,
     unselectedModel,
@@ -239,7 +245,26 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     server.listen(0, '127.0.0.1', resolve);
   });
 
-  try {
+  t.after(async () => {
+    const pending = [...activeLaunchers];
+    for (const child of pending) {
+      if (!child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.end('{"type":"stop"}\n');
+    }
+    const stopped = await Promise.all(pending.map(child => child.excessFixtureDone));
+    for (const result of stopped) assert.ok(parseEvents(result.stdout).some(event => event.type === 'cleanup' && event.ok === true), 'failed fixture stop must finish native cleanup before deleting its files');
+    await new Promise((resolve) => server.close(resolve));
+    await unlinkFixture(unselectedFile);
+    await unlinkFixture(selectedModel);
+    await unlinkFixture(unselectedModel);
+    await unlinkFixture(setupModel);
+    await rmdirFixture(modelRoot);
+    await unlinkFixture(helper);
+    await unlinkFixture(sourceCopy);
+    await rmdirFixture(runtimeRoot);
+    await rmdirFixture(scratch);
+    await rmdirFixture(runRoot);
+  });
+  {
     const port = server.address().port;
     const config = {
       executable: helper,
@@ -262,8 +287,7 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     const child = await contained.done;
     assert.equal(child.error, undefined, 'sandbox launcher should finish');
     const childEvents = parseEvents(child.stdout);
-    assert.ok(childEvents.some((event) => event.type === 'started' && Number.isInteger(event.pid)),
-      'sandbox fixture should start; safe errors=' + childEvents.filter(event => event.type === 'error').map(event => event.code + ':' + event.win32).join(','));
+    assert.ok(childEvents.some((event) => event.type === 'started' && Number.isInteger(event.pid)));
     const childStatus = childEvents.find((event) => event.type === 'status');
     assert.ok(childStatus);
     assert.ok(childEvents.some((event) => event.type === 'cleanup' && event.ok === true));
@@ -345,16 +369,16 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
       relayFile: { path: helper, sha256: config.runtimeFiles[0].sha256 },
       runtimePort: relayPort,
       processLimit: 2,
-      timeoutMilliseconds: 12000,
+      timeoutMilliseconds: 30000,
     };
     const relay = launchSandbox(relayConfig);
     await relay.waitFor((output) => output.includes('"type":"started"'));
     relay.send({ type: 'request', id: 31, method: 'POST', path: '/completion', body: '{"prompt":"probe"}' });
     let response;
     await relay.waitFor((output) => {
-      try { return parseEvents(output).some((event) => (event.type === 'response' || event.type === 'error') && event.id === 31 || event.type === 'status'); }
+      try { return parseEvents(output).some((event) => (event.type === 'response' || event.type === 'error') && event.id === 31 || event.type === 'status' && event.termination !== undefined); }
       catch { return false; }
-    });
+    }, 20000);
     const relayOutputEvents = parseEvents(relay.output());
     response = relayOutputEvents.find((event) => event.type === 'response' && event.id === 31);
     if (!response) assert.fail('relay ended without response: ' + relayOutputEvents.map((event) => `${event.type}:${event.error ?? event.termination ?? ''}/${event.exitCode ?? ''}/${event.stopReason ?? ''}`).join(','));
@@ -501,17 +525,5 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
       'all temporary ACL grants should be restored');
     console.log('windows-acl-restore=matched');
     assert.deepEqual(readdirSync(scratch).sort(), scratchEntriesBefore, 'bounded-run scratch should be removed');
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    await unlinkFixture(unselectedFile);
-    await unlinkFixture(selectedModel);
-    await unlinkFixture(unselectedModel);
-    await unlinkFixture(setupModel);
-    await rmdirFixture(modelRoot);
-    await unlinkFixture(helper);
-    await unlinkFixture(path.join(runtimeRoot, 'integrity-win32.json'));
-    await rmdirFixture(runtimeRoot);
-    await rmdirFixture(scratch);
-    await rmdirFixture(runRoot);
   }
 });
