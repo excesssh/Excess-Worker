@@ -75,6 +75,8 @@ These are fresh application directories on the recorded workstation, not fresh o
 
 Complete assembled Windows and Linux archives reproduced byte-for-byte in two clean build directories. See [build scope](BUILD.md#reproducibility-and-release-status) and the [release comparison report](https://github.com/excesssh/Excess-Worker/releases/download/v0.1.0/reproducibility.json). That immutable report was generated before the final installation/publication checks and retains its then-pending publication wording; the final linked publication evidence records their completion. Upstream Node/model/runtime binaries and OS/driver/toolchain dependencies were not independently rebuilt.
 
+**Unpublished Windows candidate evidence.** Sequence 24, source `7a33c1b51a12fea87601e3d81d5a9b1b114588d6`, passed eight actual packaged-worker testnet buyer routes: Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo images, each on CPU and CUDA. These results apply only to the recorded Windows workstation. The first CUDA image attempt expired before delivery began; a same-source retry passed, but its cause remains unresolved. This does not change 0.1.0 support or downloads. [Candidate coverage and limits](windows-media-candidate-coverage.md). [Source-bound candidate evidence](verification/windows-source90.json).
+
 ## Updates and recovery
 
 The [final public update report](verification/published-source77.json) records actual production HTTPS download/install from signed sequence 17 to 18 on Windows and Linux with default TLS, fetch and the pinned key. Complete 339/340-file inventories and Linux executable modes matched. All six GitHub release assets and all feed files publicly downloaded with matching hashes.

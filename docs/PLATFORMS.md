@@ -11,6 +11,19 @@ Current evidence for the [published Excess Worker 0.1.0 release](https://github.
 
 [Exact published-package evidence](verification/published-source77.json) · [installation](INSTALLATION.md) · [release verification](VERIFICATION.md). Fresh default installation, signed HTTPS updates, tamper/downgrade refusal and actual previous-package recovery passed on Windows and Linux. These reports use real project-funded testnet work on the recorded workstation, not independent suppliers or organic demand.
 
+## Unpublished Windows candidate evidence
+
+Sequence 24 from source `7a33c1b51a12fea87601e3d81d5a9b1b114588d6` has the following actual packaged-worker testnet buyer results on Windows 11 x64, RTX 3070 Ti 8 GiB, driver 596.49:
+
+| Model/task | CPU | CUDA |
+| --- | --- | --- |
+| Qwen3-4B / text | Passed | Passed |
+| Qwen3 Embedding 0.6B / embeddings | Passed | Passed |
+| Qwen3 ASR 0.6B / transcription | Passed | Passed |
+| SD-Turbo / images | Passed | Passed on retry; earlier delivery failure unresolved |
+
+These eight routes do not establish other models, machines, drivers or Linux support. Twelve other text entries and FLUX.1 schnell have no Windows buyer-job evidence at this checkpoint. See [candidate coverage](windows-media-candidate-coverage.md) and [exact candidate evidence](verification/windows-source90.json). The signed 0.1.0 packages above remain unchanged.
+
 ## Linux requirements
 
 Source version 0.2.0 adds a **development Linux CUDA profile**, pending actual NVIDIA execution and signed-package gates. It does not change the 0.1.0 configurations above. The candidate restricts one NVIDIA device and selected control calls for fixed trusted inference, keeps the sealed controller and model filesystem/network/credential/process boundaries, enforces hard cgroup CPU/RAM/task limits, and samples whole-device memory through NVML every 250 ms. Cancellation, deadlines and cleanup are required; missing monitoring or limits refuse execution. Shared-driver access and sampling provide no hard VRAM reservation or hardware fault partition. WSL `/dev/dxg` is outside this profile. Runtime pin reproducibility establishes build inputs only. No Linux CUDA model run or buyer job has been verified, and all 17 local entries remain untested on this route; see the [per-model coverage record](linux-cuda-catalogue-coverage.md).
@@ -23,7 +36,7 @@ The published 0.1.0 service generator caps memory at 75% of detected RAM, at mos
 
 Buyers submit bounded inference inputs: text prompts, embedding text, attributed audio or image prompts, with task-specific limits. They do not submit executable code, kernels, models or runtime arguments. Suppliers choose trusted, hash-pinned runtimes and licensed models.
 
-The published 0.1.0 Windows paired worker admits text only. Source 0.2.0 adds typed Windows embedding, transcription and image routes with bounded audio/artifact transfer, assignment-bound execution proofs and validated task billing. Preparatory adapter probes have passed for the recorded CPU/CUDA configurations; exact signed-package buyer jobs and release gates remain pending. See [Windows media candidate coverage](windows-media-candidate-coverage.md) and the [model catalogue](MODEL-CATALOG.md).
+The published 0.1.0 Windows paired worker admits text only. Source 0.2.0 adds typed Windows embedding, transcription and image routes with bounded audio/artifact transfer, assignment-bound execution proofs and validated task billing. Eight candidate24 CPU/CUDA buyer routes now pass on the recorded machine; the first CUDA image delivery failure remains unresolved and successor release gates remain open. See [Windows media candidate coverage](windows-media-candidate-coverage.md) and the [model catalogue](MODEL-CATALOG.md).
 
 Windows CUDA retains read-only file grants, private scratch, credential/environment filtering, network-denied AppContainers, authenticated relay, process limits, deadlines and cleanup. CPU memory commitment uses a hard Job Object limit. GPU control is separate: a 250 ms watchdog sums dedicated and shared WDDM process usage and stops on overshoot or failed monitoring. GPU scheduling priority is idle. Before accepting inference input, llama.cpp routes require full layer-offload evidence and sufficient dedicated residency; image routes require model-weight-based dedicated residency. CPU fallback is refused.
 

@@ -1,0 +1,115 @@
+{
+  "format": 1,
+  "scope": "Operator-recorded unpublished candidate evidence; no independent supplier or hardware attestation",
+  "checkedDate": "2026-10-08",
+  "candidate": {
+    "sourceCommit": "7a33c1b51a12fea87601e3d81d5a9b1b114588d6",
+    "releaseSequence": 24,
+    "version": "0.2.0",
+    "archiveFile": "excess-worker-0.2.0-7a33c1b51a12-win-x64.zip",
+    "archiveBytes": 35591926,
+    "archiveSha256": "53fb0d78aad3a1c001d64e3fea00e0df3c39bb6af4b26d13b0bef2aa7187124a",
+    "releaseManifestSha256": "1391ec68d0f2411bf94eb2d77852ed11b15b3eb597b227aa9f306d780f5cdfaa",
+    "signatureSha256": "3110dd53a76e8ef02b573d8aa5fabed32e14c30839a2ec3cdd7dcb1233dc0d17",
+    "publicKeySha256": "c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6",
+    "signatureVerified": true,
+    "highWaterManifestDigestVerified": true,
+    "installedPackageIdentityVerified": true,
+    "publicDistributionReady": false,
+    "installedInventory": {
+      "fileCount": 340,
+      "checksumEntryCount": 339,
+      "sha256SumsSha256": "6f7d0c86922a5a5a122fe0101bca84184935ef2a6202f748a359b25fd7750caa",
+      "completeInventoryVerified": true
+    },
+    "executionEvidence": "not-claimed"
+  },
+  "hardware": {
+    "os": "Windows 11 Pro 10.0.22631 x64",
+    "gpu": "RTX 3070 Ti",
+    "gpuMemoryGiB": 8,
+    "driver": "596.49",
+    "hostMemoryGiB": 32
+  },
+  "routes": [
+    {
+      "task": "text",
+      "modelId": "qwen3-4b",
+      "backend": "cpu",
+      "lifecycle": "passed"
+    },
+    {
+      "task": "text",
+      "modelId": "qwen3-4b",
+      "backend": "cuda",
+      "lifecycle": "passed"
+    },
+    {
+      "task": "embedding",
+      "modelId": "qwen3-embedding-0.6b",
+      "backend": "cpu",
+      "lifecycle": "passed"
+    },
+    {
+      "task": "embedding",
+      "modelId": "qwen3-embedding-0.6b",
+      "backend": "cuda",
+      "lifecycle": "passed"
+    },
+    {
+      "task": "transcription",
+      "modelId": "qwen3-asr-0.6b",
+      "backend": "cpu",
+      "lifecycle": "passed"
+    },
+    {
+      "task": "transcription",
+      "modelId": "qwen3-asr-0.6b",
+      "backend": "cuda",
+      "lifecycle": "passed"
+    },
+    {
+      "task": "image",
+      "modelId": "sd-turbo",
+      "backend": "cpu",
+      "lifecycle": "passed"
+    },
+    {
+      "task": "image",
+      "modelId": "sd-turbo",
+      "backend": "cuda",
+      "lifecycle": "passed"
+    }
+  ],
+  "retainedReports": [
+    {
+      "sha256": "a762f26a537c1d4f7fdec22518bd89c59154c432654d5d3d7a7a0947b65e5f19",
+      "result": "candidate-only-passed"
+    },
+    {
+      "sha256": "cc467e811eb0e2a2bdb38eea01890a25739be8853b906343ae58f51acc2b697c",
+      "result": "candidate-only-passed"
+    },
+    {
+      "sha256": "ae307c84baf674c017cc6e2f8a64c86b12577a1dbed0728b3e4b49629b410d17",
+      "result": "candidate-only-passed"
+    }
+  ],
+  "retainedFailure": {
+    "route": "sd-turbo/cuda",
+    "inferenceCompletedAtUtc": "2026-10-08T15:39:04.995Z",
+    "renewedLeaseEndsAtUtc": "2026-10-08T15:39:31.691Z",
+    "terminalState": "failed",
+    "terminalCode": "lease_expired",
+    "deliveryStarted": false,
+    "grossUnits": "0",
+    "journalLastPhase": "running",
+    "initialCliCleanup": "failed",
+    "independentRevocationStopAndQuarantine": "passed",
+    "diagnosticRetry": "passed with unchanged product bytes",
+    "cause": "unestablished"
+  },
+  "remainingWindows": "12 other local text models and FLUX.1 schnell lack buyer execution evidence",
+  "linuxCuda": "all 17 local entries untested",
+  "newBinaryPublished": false
+}

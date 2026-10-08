@@ -54,6 +54,8 @@ Choose the model, price, CPU threads, memory budget and operating schedule. Batt
 | Linux x64 CPU | Qwen3-4B on WSL2 with the required bounded systemd user service. |
 | Linux GPU | Unsupported; execution is refused. |
 
+**Unpublished Windows candidate evidence.** Sequence 24, source `7a33c1b51a12fea87601e3d81d5a9b1b114588d6`, passed eight actual packaged-worker testnet buyer routes: Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo images, each on CPU and CUDA. These results apply only to the recorded Windows workstation. The first CUDA image attempt expired before delivery began; a same-source retry passed, but its cause remains unresolved. This does not change 0.1.0 support or downloads. [Candidate coverage and limits](docs/windows-media-candidate-coverage.md).
+
 See [requirements and measured configurations](docs/PLATFORMS.md) before downloading a model. Fresh application installs and actual project-funded testnet buyer jobs verified these configurations; this does not establish compatibility with every operating system, model or GPU. [Release execution evidence](docs/VERIFICATION.md#current-evidence).
 
 ## For developers
