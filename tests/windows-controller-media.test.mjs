@@ -79,6 +79,9 @@ for (const c of cases()) test(`${c.request.kind}: host binds input, output bytes
     assert.deepEqual(output, c.output);
     assert.deepEqual(parseWindowsTextExecutionProof(f.saved.value, f.assignment.deviceId, f.assignment.capabilityDigest, Date.now()).output, output.result);
     assert.equal(JSON.stringify(f.saved.value).includes(c.request.prompt ?? c.request.inputs?.[0] ?? "input_audio"), false);
+    const completedProof = structuredClone(f.saved.value);
+    await f.command("job.renew", f.attempt);
+    assert.deepEqual(f.saved.value, completedProof, "delivery renewal preserves the observed output and completion lease");
     for (const artifact of output.artifacts) {
       const parts = Math.ceil(artifact.data.length / MEDIA_LIMITS.artifactPartBytes);
       const part = { ...f.attempt, ...artifact.ref, parts, part: 0, data: artifact.data.subarray(0, MEDIA_LIMITS.artifactPartBytes).toString("base64") };

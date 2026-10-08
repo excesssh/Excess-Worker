@@ -398,7 +398,10 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
           return response;
         }
         if (type === "job.started" || type === "job.renew") {
-          if (type === "job.started" ? current.phase !== "input" || current.executionEnabled === false : current.phase !== "running") invalid("CONTROLLER_EXECUTION_STATE_INVALID");
+          // Artifact delivery still needs a lease after inference finishes.
+          // The completion proof stays unchanged and the original deadline applies.
+          const pendingDelivery = current.phase === "completed" && !!current.proof && !current.proof.receiptAccepted;
+          if (type === "job.started" ? current.phase !== "input" || current.executionEnabled === false : current.phase !== "running" && !pendingDelivery) invalid("CONTROLLER_EXECUTION_STATE_INVALID");
           exact(data, "attemptId,fence,jobId");
           if (type === "job.started" && options.media && current.input && "kind" in current.input) checkedMediaInputs(current.input, current.inputs ?? new Map());
           live(current, now(), options.runSeconds);
@@ -408,7 +411,7 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
           const value = success(response); if (value === undefined) return response;
           const lease = object(value);
           if (lease.state !== "running" || typeof lease.leaseExpiresAt !== "string") invalid("CONTROLLER_EXECUTION_LEASE_INVALID");
-          const expiry = date(lease.leaseExpiresAt), deadline = Math.min(Date.parse(a.runDeadlineAt), now() + options.runSeconds * 1000);
+          const expiry = date(lease.leaseExpiresAt), deadline = Math.min(Date.parse(a.runDeadlineAt), (active.startedAt ?? now()) + options.runSeconds * 1000);
           if (expiry <= now() || expiry > Date.parse(a.runDeadlineAt) || expiry > deadline ||
               (type === "job.renew" && expiry < (current.leaseExpiresAt ?? 0))) invalid("CONTROLLER_EXECUTION_LEASE_INVALID");
           active.leaseExpiresAt = expiry; active.assignment = { ...active.assignment, leaseExpiresAt: lease.leaseExpiresAt as string };

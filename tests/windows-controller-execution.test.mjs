@@ -27,7 +27,7 @@ function fixture(options = {}) {
       if (payload.action !== "command") return { ok: true, value: null };
       if (payload.type === "worker.poll") return { ok: true, value: { executionEnabled: options.executionEnabled ?? true, assignments: options.assignments ?? [assignment] } };
       if (payload.type === "job.input") return { ok: true, value: { request, requestDigest: requestHash, capabilityDigest, deliveryMode: options.deliveryMode ?? "buffered" } };
-      if (payload.type === "job.started" || payload.type === "job.renew") return { ok: true, value: { state: "running", leaseExpiresAt: assignment.leaseExpiresAt } };
+      if (payload.type === "job.started" || payload.type === "job.renew") return { ok: true, value: { state: "running", leaseExpiresAt: options.lease?.(payload.type) ?? assignment.leaseExpiresAt } };
       if (payload.type === "job.chunk") return { ok: true, value: { accepted: true, sequence: payload.data.sequence, chunkDigest: payload.data.chunkDigest } };
       if (payload.type === "job.result") return options.resultResponse?.() ?? { ok: true, value: { accepted: true } };
       if (payload.type === "job.failed") return { ok: true, value: { accepted: true } };
@@ -51,7 +51,7 @@ function fixture(options = {}) {
     async save(value) { saved.value = structuredClone(value); },
     async clear(id) { if (saved.value?.assignment.attemptId === id) saved.value = null; },
   };
-  const host = createWindowsTextExecutionHost({ coordinator, adapter, proofStore, deviceId, capabilityDigest, runSeconds: 120, now: () => nowValue });
+  const host = createWindowsTextExecutionHost({ coordinator, adapter, proofStore, deviceId, capabilityDigest, runSeconds: options.runSeconds ?? 120, now: options.now ?? (() => nowValue) });
   const signal = new AbortController().signal;
   const command = (type, data = {}) => host.then(h => h.handleCoordinator({ action: "command", type, data }, signal));
   const adapterCall = payload => host.then(h => h.handleAdapter(payload, signal));
@@ -118,6 +118,43 @@ test("child cannot execute a prompt different from the coordinator-bound input",
     await assert.rejects(f.adapterCall({ action: "execute", request: { ...request, prompt: "changed" }, streaming: false }), /CONTROLLER_EXECUTION_PROMPT_MISMATCH/);
     assert.equal(f.adapterCalls.filter(call => call.action === "execute").length, 0);
   } finally { await (await f.host).close(); }
+});
+
+test("completed output can renew its live delivery lease until its receipt is accepted", async () => {
+  let clock = nowValue;
+  const f = fixture({ now: () => clock, lease: type => new Date(nowValue + (type === "job.renew" ? 75_000 : 60_000)).toISOString() });
+  try {
+    await begin(f);
+    await f.adapterCall({ action: "pull", id: "66666666-6666-4666-8666-666666666666", ack: 0 });
+    const originalProof = structuredClone(f.saved.value);
+    clock += 55_000;
+    await assert.rejects(f.command("job.renew", { ...attempt, fence: "2" }), /ATTEMPT_MISMATCH/);
+    assert.equal(f.calls.filter(call => call.type === "job.renew").length, 0);
+    const renewed = await f.command("job.renew", attempt);
+    assert.equal(renewed.value.leaseExpiresAt, new Date(nowValue + 75_000).toISOString());
+    assert.deepEqual(f.saved.value, originalProof, "delivery renewal preserves the proof of completion under its original lease");
+    await assert.rejects(f.adapterCall({ action: "execute", request, streaming: false }), /NO_LIVE_INPUT/);
+    await f.command("job.result", completeResult());
+    assert.equal(f.saved.value.receiptAccepted, true);
+    await assert.rejects(f.command("job.renew", attempt), /STATE_INVALID/);
+    assert.equal(f.calls.filter(call => call.type === "job.renew").length, 1);
+  } finally { await (await f.host).close(); }
+});
+
+test("delivery renewal cannot revive an expired lease or exceed the original local deadline", async () => {
+  for (const scenario of ["expired", "past-local-deadline"]) {
+    let clock = nowValue;
+    const f = fixture({ runSeconds: 60, now: () => clock,
+      lease: type => new Date(nowValue + (type === "job.renew" ? 70_000 : 60_000)).toISOString() });
+    try {
+      await begin(f);
+      await f.adapterCall({ action: "pull", id: "66666666-6666-4666-8666-666666666666", ack: 0 });
+      clock += scenario === "expired" ? 60_000 : 55_000;
+      await assert.rejects(f.command("job.renew", attempt), scenario === "expired" ? /LEASE_EXPIRED/ : /LEASE_INVALID/);
+      assert.equal(f.calls.filter(call => call.type === "job.renew").length, scenario === "expired" ? 0 : 1);
+      assert.notEqual(f.saved.value.receiptAccepted, true);
+    } finally { await (await f.host).close(); }
+  }
 });
 
 test("duplicate concurrent execute is rejected before a second adapter session can start", async () => {
