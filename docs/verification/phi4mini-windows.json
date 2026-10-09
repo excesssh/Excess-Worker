@@ -1,0 +1,269 @@
+{
+  "format": 1,
+  "product": "EXCESS",
+  "kind": "published26-phi4mini-windows-buyer-summary",
+  "recordedAtUtc": "2026-10-09T17:23:37.745Z",
+  "status": "passed",
+  "network": "operator-funded-testnet",
+  "worker": {
+    "sourceCommit": "8724162f793d3ec009eb2f64f713a05c29857bd7",
+    "releaseSequence": 26,
+    "version": "0.2.0",
+    "archiveFile": "excess-worker-0.2.0-8724162f793d-win-x64.zip",
+    "archiveBytes": 35592931,
+    "archiveSha256": "905dd300c6922ffe28b4a83bbbf299a4000aa22b6d61cd3f944a4f2acab16173",
+    "releaseManifestSha256": "d2eaa9a53be7c33d507b558501b4a89a0baa44772ef9ca4432a53d5d8e78c565",
+    "signatureSha256": "10c0812f632e5092526bd8b6b165468ef82cffea0f501faceb5960a37c533174",
+    "publicKeySha256": "c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6",
+    "signatureVerified": true,
+    "highWaterManifestDigestVerified": true,
+    "installedPackageIdentityVerified": true,
+    "publicDistributionReady": true,
+    "installedInventory": {
+      "fileCount": 340,
+      "checksumEntryCount": 339,
+      "sha256SumsSha256": "70a7393fcf03b6284580db34c97e296539eff450b4dbe3cea29e6770b1347844",
+      "completeInventoryVerified": true
+    }
+  },
+  "model": {
+    "id": "phi-4-mini",
+    "parameters": "3.8B",
+    "ggufBytes": 2491874272,
+    "ggufSha256": "88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a",
+    "licence": "MIT",
+    "licenceBytes": 1084,
+    "licenceSha256": "fa8235e5b48faca34e3ca98cf4f694ef08bd216d28b58071a1f85b1d50cb814d"
+  },
+  "configuration": {
+    "platform": "Windows x64",
+    "hostMemoryGiB": 32,
+    "gpu": "RTX 3070 Ti",
+    "gpuMemoryGiB": 8,
+    "workerThreads": 2,
+    "hostMemoryCapMiB": 8192,
+    "cudaMemoryBudgetMiB": 6144,
+    "jobLimitSeconds": 300,
+    "successMaxTokens": 128
+  },
+  "jobs": [
+    {
+      "name": "buyer-text-phi4mini-cuda-success",
+      "atUtc": "2026-10-09T17:22:23.932Z",
+      "status": "passed",
+      "jobId": "7ce07043-3fde-443e-8aeb-c402fd0ec23a",
+      "task": "text",
+      "routeId": "text-phi4mini-cuda",
+      "modelId": "phi-4-mini",
+      "backend": "cuda",
+      "quote": {
+        "capabilityDigest": "87228209345b91d752a738c03c9b1b72ae0e9149136d50f2a8c60410b711d05a",
+        "unitNet": "10",
+        "maxGrossUnits": "1423"
+      },
+      "result": {
+        "meaningful": true,
+        "outputDigest": "2a67363dda789aab8c776fdb8c2f1d52bec4e6d609db47b44f2640c9985b88de",
+        "outputSha256": "9e877b186d2ed4483f5d6fedd0ef72cd059c35306dcb328f4bea13e668c4eec2",
+        "outputBytes": 676,
+        "wordCount": 110,
+        "matchedTerms": [
+          "charts",
+          "lighthouse",
+          "sailors"
+        ],
+        "chunkCount": 16,
+        "firstChunkDevice": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "chunkDigestsVerified": true,
+        "sequenceVerified": true,
+        "chunkSignaturesVerified": false,
+        "provisionalUntilSignedFinal": false,
+        "finalResultSignatureVerified": true,
+        "finalReceiptSignatureVerified": true,
+        "signatureVerified": true,
+        "proofStatus": "verified-hashes-only"
+      },
+      "proof": {
+        "status": "verified-hashes-only",
+        "messageSha256": "8e840c3a0643204d0e6d64409e6636ea9388296d599cc31581cbb5df56262bee",
+        "signatureSha256": "765017257da30197158fa837b852d84ecebc61579f9c7673d2793131c3779254",
+        "publicKeySha256": "55c6d913eb3474c97b7848d21c601db29e5135a1337a8c19956ac4f1e465e2c1"
+      },
+      "accounting": {
+        "grossUnits": "1423",
+        "netUnits": "1280",
+        "feeUnits": "143",
+        "billableUnits": "128",
+        "attemptId": "396e26fd-85a3-4f8c-b527-e8b24971b522",
+        "deviceId": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "fundingSource": "custody"
+      }
+    },
+    {
+      "name": "buyer-text-phi4mini-cuda-cancellation",
+      "atUtc": "2026-10-09T17:22:33.795Z",
+      "status": "passed",
+      "jobId": "622a0e12-3a57-476f-b93e-064d93d4ad39",
+      "task": "text",
+      "routeId": "text-phi4mini-cuda",
+      "quote": {
+        "maxGrossUnits": "5689",
+        "unitNet": "10"
+      },
+      "accounting": {
+        "grossUnits": "89",
+        "netUnits": "80",
+        "feeUnits": "9",
+        "billableUnits": "8",
+        "attemptId": "19f4549b-773b-4bdd-9c44-17e57930bd4b",
+        "deviceId": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "fundingSource": "custody"
+      },
+      "state": "cancelled",
+      "billing": "accounted",
+      "proofStatus": "absent",
+      "receiptSignatureVerified": false,
+      "cancelStream": {
+        "chunkDigestsVerified": true,
+        "chunkSignaturesVerified": false,
+        "provisionalUntilSignedFinal": true,
+        "chunkCount": 1,
+        "acknowledgedSequence": 1,
+        "firstChunkDevice": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "finalResultSignatureVerified": false
+      }
+    },
+    {
+      "name": "buyer-text-phi4mini-cpu-success",
+      "atUtc": "2026-10-09T17:23:24.415Z",
+      "status": "passed",
+      "jobId": "941e8fbc-04f2-4b7b-b4ba-635f2d195bb4",
+      "task": "text",
+      "routeId": "text-phi4mini-cpu",
+      "modelId": "phi-4-mini",
+      "backend": "cpu",
+      "quote": {
+        "capabilityDigest": "87228209345b91d752a738c03c9b1b72ae0e9149136d50f2a8c60410b711d05a",
+        "unitNet": "10",
+        "maxGrossUnits": "1423"
+      },
+      "result": {
+        "meaningful": true,
+        "outputDigest": "31555ac36caa780f73e4b3fb81819ba69cf8c273e1dd20d79e0710c411cf1d84",
+        "outputSha256": "6fad2364b52e93f6c39c29fe838e88fa87d2271afc970c8dc5513086eb18238b",
+        "outputBytes": 644,
+        "wordCount": 111,
+        "matchedTerms": [
+          "charts",
+          "lighthouse",
+          "sailors"
+        ],
+        "chunkCount": 16,
+        "firstChunkDevice": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "chunkDigestsVerified": true,
+        "sequenceVerified": true,
+        "chunkSignaturesVerified": false,
+        "provisionalUntilSignedFinal": false,
+        "finalResultSignatureVerified": true,
+        "finalReceiptSignatureVerified": true,
+        "signatureVerified": true,
+        "proofStatus": "verified-hashes-only"
+      },
+      "proof": {
+        "status": "verified-hashes-only",
+        "messageSha256": "4c6b6d12038314148be45f1331557a2f57c4574c1e805e98f381367298f20a77",
+        "signatureSha256": "e59823fc6d656eefd09436bb3f4bf6cbbadb9b1fbbbb6c8301e7ea4777b2fa2d",
+        "publicKeySha256": "55c6d913eb3474c97b7848d21c601db29e5135a1337a8c19956ac4f1e465e2c1"
+      },
+      "accounting": {
+        "grossUnits": "1423",
+        "netUnits": "1280",
+        "feeUnits": "143",
+        "billableUnits": "128",
+        "attemptId": "2ada750e-2ff4-43ee-b585-a196997f2dc0",
+        "deviceId": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "fundingSource": "custody"
+      }
+    },
+    {
+      "name": "buyer-text-phi4mini-cpu-cancellation",
+      "atUtc": "2026-10-09T17:23:34.870Z",
+      "status": "passed",
+      "jobId": "50230492-7d96-4d16-a48e-afd8fc6d5772",
+      "task": "text",
+      "routeId": "text-phi4mini-cpu",
+      "quote": {
+        "maxGrossUnits": "5689",
+        "unitNet": "10"
+      },
+      "accounting": {
+        "grossUnits": "89",
+        "netUnits": "80",
+        "feeUnits": "9",
+        "billableUnits": "8",
+        "attemptId": "6af9fa37-5332-4463-90e0-17819b5a141d",
+        "deviceId": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "fundingSource": "custody"
+      },
+      "state": "cancelled",
+      "billing": "accounted",
+      "proofStatus": "absent",
+      "receiptSignatureVerified": false,
+      "cancelStream": {
+        "chunkDigestsVerified": true,
+        "chunkSignaturesVerified": false,
+        "provisionalUntilSignedFinal": true,
+        "chunkCount": 1,
+        "acknowledgedSequence": 1,
+        "firstChunkDevice": "56565de0-78a9-48c2-8358-6ab97ee70066",
+        "finalResultSignatureVerified": false
+      }
+    }
+  ],
+  "lifecycle": {
+    "pairing": "passed",
+    "successByRoute": {
+      "text-phi4mini-cuda": "passed",
+      "text-phi4mini-cpu": "passed"
+    },
+    "cancellationByRoute": {
+      "text-phi4mini-cuda": "passed",
+      "text-phi4mini-cpu": "passed"
+    },
+    "accountingByRoute": {
+      "text-phi4mini-cuda": {
+        "success": "passed",
+        "cancellation": "passed"
+      },
+      "text-phi4mini-cpu": {
+        "success": "passed",
+        "cancellation": "passed"
+      }
+    },
+    "drainByRoute": {
+      "text-phi4mini-cuda": "passed",
+      "text-phi4mini-cpu": "passed"
+    },
+    "restartByRoute": {
+      "text-phi4mini-cuda": "not-needed",
+      "text-phi4mini-cpu": "passed"
+    },
+    "drain": "passed",
+    "restart": "passed",
+    "revocation": "passed",
+    "localRetirement": "passed",
+    "processShutdown": "passed",
+    "proofRetirement": "passed",
+    "scratchCleanup": "passed",
+    "sharedDeviceRevocation": "passed",
+    "sharedProofRetirement": "passed",
+    "awaitedProcessCleanup": "passed"
+  },
+  "retainedSourceReportSha256": "57b952f6e91afdb22aacd0cf9f32dc278ee0c350085cddf06b89814e446ba056",
+  "summaryScope": "Extracted execution record; raw retained report is unchanged. Recorded signature checks are harness observations; this summary is not a signature or hardware attestation.",
+  "limitations": [
+    "No per-chunk device signatures exist. Cancellation prefixes are digest-checked, acknowledged and provisional; cancelled jobs have no signed final output.",
+    "No Linux or other GPU configuration is verified by this Windows record.",
+    "Operator-funded testnet execution does not establish organic demand, mainnet payment or independent security review."
+  ]
+}

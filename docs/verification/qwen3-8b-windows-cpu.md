@@ -11,7 +11,7 @@ Recorded 8 October 2026. This is operator-funded testnet verification, not organ
 | Configuration | Windows 11 x64, 32 GiB host; two threads, 10 GiB host cap, 300-second job limit |
 | Success | Useful 116-token explanation of lighthouse navigation; final worker signature verified |
 | Success accounting | 1,289 gross = 1,160 supplier net + 129 fee |
-| Cancellation | Eight acknowledged output tokens; SDK-verified signed prefix, terminal cancellation |
+| Cancellation | Eight acknowledged output tokens; SDK-verified digest-checked provisional prefix, terminal accounted cancellation; no final output signature |
 | Cancellation accounting | 89 gross = 80 supplier net + 9 fee |
 
 The complete signed-package inventory, previously established anonymous Minisign key, release signature, archive digest and model/runtime installation pins were checked before pairing or execution. A new scoped device completed the jobs on the existing testnet. Supplier earnings matched both jobs. Drain and fresh restart, coordinator revocation, CLI local retirement, awaited process termination, proof retirement and owned scratch cleanup passed.

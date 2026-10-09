@@ -13,7 +13,7 @@ Recorded 8 October 2026. This is operator-funded testnet verification, not organ
 | Configuration | Windows 11 x64, 32 GiB host; two threads, 11 GiB host cap, 300-second job limit |
 | Buyer success | 80 useful billed output tokens; 65-word lighthouse-navigation answer; stream order/digests, final worker signature and receipt verified |
 | Success settlement | 889 gross = 800 supplier net + 89 fee |
-| Cancellation | Eight acknowledged output tokens; signed prefix verified and terminal cancellation. No final result signature or receipt. |
+| Cancellation | Eight acknowledged output tokens; digest-checked provisional prefix and terminal accounted cancellation. No final result signature. |
 | Cancellation settlement | 89 gross = 80 supplier net + 9 fee |
 
 The package identity, release signature, archive digest and model/runtime installation pins were verified before pairing or execution. The recorded model hash and size identify the existing pinned GGUF; model contents are not included here.
