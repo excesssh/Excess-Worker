@@ -1,6 +1,6 @@
 # Supported configurations
 
-The first table records the [published Excess Worker 0.1.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) as historical evidence. It does not describe sequence 26. Candidate25 Windows and Linux CPU buyer evidence is listed separately below. The signed sequence-26 manifest and two-build equality report identify the prepared packages. Fresh direct installation passed on both platforms. Packages are Windows x64 and Linux x64; claims stay scoped to measured configurations. Older reports under `docs/verification/` do not override current evidence.
+The first table records the [published Excess Worker 0.1.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) as historical evidence. It does not describe sequence 26. Candidate25 Windows and Linux CPU buyer evidence, plus the separately scoped sequence-26 Linux WSL CPU routes, are listed below. The signed sequence-26 manifest and two-build equality report identify the prepared packages. Fresh direct installation passed on both platforms. Packages are Windows x64 and Linux x64; claims stay scoped to measured configurations. Older reports under `docs/verification/` do not override current evidence.
 
 The Windows CPU/CUDA release gates passed on the recorded machine and package; this release can ship independently of Linux GPU capacity. Linux direct installation and update/recovery also passed. Keep Linux CUDA candidate-unverified until actual Linux NVIDIA buyer execution passes.
 
@@ -29,6 +29,19 @@ The eight candidate25 routes do not establish other models, machines, drivers or
 ## Linux WSL2 CPU candidate evidence
 
 A Qwen3-4B CPU buyer job passed on the signed sequence25 Linux package (source `f07ffd9c6c447ed8f60fd258807a0f7d487796b4`, manifest SHA-256 `d8d516c72e06126957c8f5f05fe0c99ba7b40fc18bb874373ee9b8d8d8fd0493`). The recorded environment was WSL2 Linux 6.18.40.1, regular UID 1000, two CPU threads, an 8 GiB cgroup v2 memory limit, zero swap, 64 tasks and CPU 200% (buyer report SHA-256 `69ad5c07769137a361122a3fd461f1c29adfbc09c2980da02c89152ffc4843ef`). The sequence 26 build report matched executable, native, dependency, launcher and licence payload fingerprints against the prepared sequence25 execution evidence. A fresh direct signed sequence 26 Linux install passed with 343 fully hashed files, executable modes checked, high-water 26 and zero owned runtime processes (report SHA-256 `74fdfd8eda85e4e6a39e59b25961aa12bb984efd385b8274d6d5cf3025da218b`). A separate signed sequence 26 update/recovery report passed a Qwen3-4B CPU probe. These results establish only the recorded WSL2 CPU route and Linux install/update checks; they do not establish other Linux distributions or GPU execution.
+
+## Published sequence-26 Linux WSL CPU evidence
+
+Two sequence-26 CPU buyer routes passed on the signed published Excess Worker 0.2.0 package: Qwen3 Embedding 0.6B and Qwen3 ASR 0.6B. Both ran as Linux x64 workloads under WSL in the recorded environment. The retained route harness set and read back a worker runSeconds cap of 300 seconds per job using two worker threads. The enclosing systemd user-service cgroup v2 limits were MemoryMax=8G, MemorySwapMax=0, TasksMax=64, CPUQuota=200%, RuntimeMaxSec=600 and TimeoutStopSec=15. The post-restart probe verified the same service limits.
+
+| Model | Backend and task | Recorded result |
+| --- | --- | --- |
+| Qwen3 Embedding 0.6B | CPU embeddings | Passed with a meaningful result, valid output proof and separately reconciled buyer accounting. |
+| Qwen3 ASR 0.6B | CPU transcription | Passed with a meaningful result, valid output proof and separately reconciled buyer accounting. |
+
+The pinned route harness issued a drain before each worker stop, including after the restart probe, awaited process closure, and required the owned service unit to stop and its cgroup to empty before the report passed. The reports directly record worker exit code 0, the post-restart service profile matching the initial limits, device revocation, local unpair, unchanged model-store contents and removed run scratch. The worker result signature covers the verified output only; it does not cover accounting. Buyer accounting was checked separately.
+
+This evidence is limited to these two models on Linux x64 under WSL. It does not establish native bare-metal Linux or general distribution support, other catalogue routes, Linux GPU execution, hardware identity or honest inference. No successful Linux Qwen3-8B result is claimed here. See the [sequence-26 Linux CPU evidence record](verification/linux-cpu-sequence26.md) for package pins, report digests and the scope of the retained records.
 
 ## Sequence-26 Windows update and CPU recovery evidence
 

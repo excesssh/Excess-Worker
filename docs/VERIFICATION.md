@@ -95,6 +95,10 @@ The historical [0.1.0 execution evidence](https://github.com/excesssh/Excess-Wor
 
 For local development builds and candidate verification, use [BUILD.md](BUILD.md) and the current source's release tooling. A closed development candidate is not a public release.
 
+## Published sequence 26 Linux WSL CPU buyer evidence
+
+The signed published 0.2.0 package completed actual CPU buyer routes for Qwen3 Embedding 0.6B and Qwen3 ASR 0.6B on Linux x64 under WSL. The [scoped execution record](verification/linux-cpu-sequence26.md) binds the package identity, bounded service profile, useful signed outputs, separately checked accounting and recorded lifecycle cleanup. This evidence does not establish bare-metal Linux, general Linux distribution compatibility, other model routes, Linux GPU execution, hardware identity or honest inference. No successful Linux Qwen3-8B result is included.
+
 ## Published sequence 26 Qwen3-8B CPU buyer evidence
 
 The installed published 0.2.0 Windows package passed a real Qwen3-8B CPU buyer lifecycle on 8 October 2026, separately from candidate25 payload reuse. The [execution record](verification/qwen3-8b-windows-cpu.md) identifies the exact package, resources, useful output, signatures, cancellation, accounting and cleanup. This adds no GPU or Linux claim and does not replace an independent security review.

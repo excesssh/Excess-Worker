@@ -82,7 +82,7 @@ The label is your choice; avoid putting a personal name in it. Pairing creates a
 
 ## Choose and install a model
 
-Choose a model and inspect its estimate and pinned downloads. Candidate25 has actual Windows CPU/CUDA buyer evidence for Qwen3-4B, Embedding 0.6B, ASR 0.6B and SD-Turbo. The signed sequence25 WSL2 Linux Qwen3-4B CPU buyer job passed under the limits listed in PLATFORMS.md; sequence26 Linux direct installation/update and Windows direct installation/update passed. Sequence26 CPU and CUDA recovery probes also passed on Windows. Buyer execution remains attributed to sequence25, whose payload fingerprints match the released sequence26 packages. Published 0.1.0 evidence applies only to that earlier package.
+Choose a model and inspect its estimate and pinned downloads. Candidate25 has actual Windows CPU/CUDA buyer evidence for Qwen3-4B, Embedding 0.6B, ASR 0.6B and SD-Turbo. The signed sequence25 WSL2 Linux Qwen3-4B CPU buyer job passed under the limits listed in PLATFORMS.md; sequence26 Linux direct installation/update and Windows direct installation/update passed. Sequence26 CPU and CUDA recovery probes also passed on Windows. Those candidate25 buyer results remain attributed to sequence25, whose payload fingerprints match the released sequence26 packages. Published 0.1.0 evidence applies only to that earlier package. The sequence-26 Linux WSL CPU buyer routes cover Qwen3 Embedding 0.6B and Qwen3 ASR 0.6B; see the [sequence-26 evidence and platform limits](verification/linux-cpu-sequence26.md). These routes do not establish native Linux or GPU support.
 
 ```sh
 excess-worker models
