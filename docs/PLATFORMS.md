@@ -32,16 +32,17 @@ A Qwen3-4B CPU buyer job passed on the signed sequence25 Linux package (source `
 
 ## Published sequence-26 Linux WSL CPU evidence
 
-Two sequence-26 CPU buyer routes passed on the signed published Excess Worker 0.2.0 package: Qwen3 Embedding 0.6B and Qwen3 ASR 0.6B. Both ran as Linux x64 workloads under WSL in the recorded environment. The retained route harness set and read back a worker runSeconds cap of 300 seconds per job using two worker threads. The enclosing systemd user-service cgroup v2 limits were MemoryMax=8G, MemorySwapMax=0, TasksMax=64, CPUQuota=200%, RuntimeMaxSec=600 and TimeoutStopSec=15. The post-restart probe verified the same service limits.
+Three CPU buyer routes passed on the signed published Excess Worker 0.2.0 package: Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and Qwen3-8B. They ran on Linux x64 under WSL in the recorded environments, with two worker threads, an 8 GiB memory maximum and zero swap. The evidence is limited to those WSL CPU routes.
 
 | Model | Backend and task | Recorded result |
 | --- | --- | --- |
-| Qwen3 Embedding 0.6B | CPU embeddings | Passed with a meaningful result, valid output proof and separately reconciled buyer accounting. |
-| Qwen3 ASR 0.6B | CPU transcription | Passed with a meaningful result, valid output proof and separately reconciled buyer accounting. |
+| Qwen3 Embedding 0.6B | CPU embeddings | Passed with a meaningful result, verified output proof and separately reconciled buyer accounting. |
+| Qwen3 ASR 0.6B | CPU transcription | Passed with a meaningful result, verified output proof and separately reconciled buyer accounting. |
+| Qwen3-8B | CPU inference | Full-success route returned a meaningful 128-token response with output-signature and proof verification recorded; a separate prefix-cancel route acknowledged 8 tokens and ended with accounted cancellation, without a final-result signature. See the [Qwen3-8B route record](verification/qwen3-8b-linux-wsl-cpu.md). |
 
-The pinned route harness issued a drain before each worker stop, including after the restart probe, awaited process closure, and required the owned service unit to stop and its cgroup to empty before the report passed. The reports directly record worker exit code 0, the post-restart service profile matching the initial limits, device revocation, local unpair, unchanged model-store contents and removed run scratch. The worker result signature covers the verified output only; it does not cover accounting. Buyer accounting was checked separately.
+The embedding and ASR route record reports drain-before-stop, process closure, empty service cgroup, post-restart limits, revocation, local unpair and scratch cleanup. The Qwen3-8B observer record also marks both full lifecycles and cleanup as passed. Its accounting is reported separately from the output signature; the observer records actual API/SDK checks and buyer and supplier wallet readbacks. The [sanitized observer-record JSON](verification/qwen3-8b-linux-wsl-cpu.json) preserves flags and digests, but it is not independent public receipt validation.
 
-This evidence is limited to these two models on Linux x64 under WSL. It does not establish native bare-metal Linux or general distribution support, other catalogue routes, Linux GPU execution, hardware identity or honest inference. No successful Linux Qwen3-8B result is claimed here. See the [sequence-26 Linux CPU evidence record](verification/linux-cpu-sequence26.md) for package pins, report digests and the scope of the retained records.
+This evidence is limited to the named models on Linux x64 under WSL. It does not establish bare-metal Linux or general distribution support, other catalogue routes, Linux GPU execution, hardware identity or honest inference. The output and report hashes are reference pins, not independent receipt-signature or hardware proof. See the [embedding and ASR evidence record](verification/linux-cpu-sequence26.md) and the [Qwen3-8B evidence record](verification/qwen3-8b-linux-wsl-cpu.md).
 
 ## Sequence-26 Windows update and CPU recovery evidence
 

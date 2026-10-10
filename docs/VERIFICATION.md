@@ -97,9 +97,9 @@ For local development builds and candidate verification, use [BUILD.md](BUILD.md
 
 ## Published sequence 26 Linux WSL CPU buyer evidence
 
-The signed published 0.2.0 package completed actual CPU buyer routes for Qwen3 Embedding 0.6B and Qwen3 ASR 0.6B on Linux x64 under WSL. The [scoped execution record](verification/linux-cpu-sequence26.md) binds the package identity, bounded service profile, useful signed outputs, separately checked accounting and recorded lifecycle cleanup. This evidence does not establish bare-metal Linux, general Linux distribution compatibility, other model routes, Linux GPU execution, hardware identity or honest inference. No successful Linux Qwen3-8B result is included.
+The signed published 0.2.0 package completed CPU buyer routes for Qwen3 Embedding 0.6B and Qwen3 ASR 0.6B on Linux x64 under WSL; their [scoped execution record](verification/linux-cpu-sequence26.md) covers the bounded service profile, useful signed outputs, separately checked accounting and lifecycle cleanup. A separate [Qwen3-8B Linux WSL CPU record](verification/qwen3-8b-linux-wsl-cpu.md) reports a full-success route and an accounted prefix-cancel route on the same published sequence-26 package. Together these records cover only the named WSL CPU routes; they do not establish bare-metal Linux, general Linux distribution compatibility, other model routes, Linux GPU execution, hardware identity or honest inference.
 
-## Published sequence 26 Qwen3-8B CPU buyer evidence
+## Published sequence 26 Qwen3-8B Windows CPU buyer evidence
 
 The installed published 0.2.0 Windows package passed a real Qwen3-8B CPU buyer lifecycle on 8 October 2026, separately from candidate25 payload reuse. The [execution record](verification/qwen3-8b-windows-cpu.md) identifies the exact package, resources, useful output, signatures, cancellation, accounting and cleanup. This adds no GPU or Linux claim and does not replace an independent security review.
 

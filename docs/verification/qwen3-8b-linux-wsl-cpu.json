@@ -1,0 +1,90 @@
+{
+  "recordFormat": "excess-published26-qwen3-8b-linux-wsl-cpu-observer-v1",
+  "release": {
+    "product": "Excess Worker",
+    "version": "0.2.0",
+    "sequence": 26,
+    "sourceCommit": "8724162f793d3ec009eb2f64f713a05c29857bd7",
+    "archive": {
+      "name": "excess-worker-0.2.0-8724162f793d-linux-x64.tar.gz",
+      "sizeBytes": 44538592,
+      "sha256": "446a98d1fb14fcc568c8a8856ff5e59fd1c2e1d19a4cdb58021134c5dcb3c268"
+    },
+    "manifestSha256": "d2eaa9a53be7c33d507b558501b4a89a0baa44772ef9ca4432a53d5d8e78c565",
+    "minisignSignatureSha256": "10c0812f632e5092526bd8b6b165468ef82cffea0f501faceb5960a37c533174",
+    "establishedPublicKeySha256": "c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6"
+  },
+  "executionScope": {
+    "platform": "Linux x64 under WSL",
+    "backend": "CPU",
+    "workerThreads": 2,
+    "memoryMaxBytes": 8589934592,
+    "memorySwapMaxBytes": 0,
+    "gpuExecutionVerified": false,
+    "scope": "Recorded WSL CPU environment only"
+  },
+  "modelAndRuntime": {
+    "model": "Qwen3-8B",
+    "routeId": "qwen3-8b",
+    "modelBackend": "CPU",
+    "modelFileCount": 1,
+    "capabilityDigest": "bd95d1b913e2d322832950cd643c54984b3db80e7dccf897a0a551bae4ed4e0b",
+    "runtimeFileCount": 60,
+    "runtimePinnedFileCount": 2,
+    "runtimeReadbackSource": "signed-worker-cli-install-model-readback"
+  },
+  "checkpointSha256": "783415ccf2bbc5933d7d8109b6a01a9fa88d91d0766101e2605fd7349be27bac",
+  "routes": [
+    {
+      "role": "fullSuccess",
+      "reportSha256": "9ec314fc3fcb2acdebc02e4c0764579e664a7d45f795d01d1d85c795d2934b60",
+      "status": "passed",
+      "meaningfulOutput": true,
+      "outputTokens": 128,
+      "outputSignatureVerifiedByObserver": true,
+      "outputProofVerifiedByObserver": true,
+      "rawOutputSha256": "70942d9bc914b0c1ad3ef68451310cdc05dd49e8f7ea9d0e86c44c8cffca52c0",
+      "signedOutputDigest": "b7df8de77de89f66cbde5df27d42621f422149c5645ceb7e08684c15f732e2db",
+      "signatureScope": "Verified output only; excludes accounting",
+      "accounting": {
+        "grossUnits": 143,
+        "netUnits": 128,
+        "feeUnits": 15,
+        "buyerAvailableDecreaseUnits": 143,
+        "supplierNetDeltaUnits": 128,
+        "buyerHoldReleased": true,
+        "buyerAndSupplierWalletReadbacksVerifiedByObserver": true
+      },
+      "lifecycleCleanupPassedByObserver": true
+    },
+    {
+      "role": "prefixCancel",
+      "reportSha256": "7abc4393554b9f1dd247605521c0566d56aa915c4b656f09cff80a3d81207433",
+      "status": "passed",
+      "acknowledgedSequence": 1,
+      "acknowledgedOutputTokens": 8,
+      "finalResultSignaturePresent": false,
+      "finalResultSignatureVerified": false,
+      "cancellationProofPresent": false,
+      "accounting": {
+        "grossUnits": 9,
+        "netUnits": 8,
+        "feeUnits": 1,
+        "buyerAvailableDecreaseUnits": 9,
+        "supplierNetDeltaUnits": 8,
+        "unusedHoldReleasedUnits": 134,
+        "buyerAndSupplierWalletReadbacksVerifiedByObserver": true
+      },
+      "lifecycleCleanupPassedByObserver": true
+    }
+  ],
+  "outputBodyPresent": false,
+  "interpretation": {
+    "recordType": "Sanitized observer-record summary; underlying route reports remain private.",
+    "verificationScope": "The observer recorded actual API/SDK checks and separate buyer and supplier wallet readbacks.",
+    "publicDigestsIndependentlyValidateReceipt": false,
+    "hardwareIdentityAttested": false,
+    "honestInferenceAttested": false,
+    "note": "The hashes and flags are reference pins and observer-recorded results; this JSON is not independent public receipt validation or hardware proof. The output body is omitted."
+  }
+}
