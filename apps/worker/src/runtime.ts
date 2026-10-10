@@ -114,7 +114,7 @@ async function writePrivateFile(path: string, data: Buffer, context?: StateWrite
 
 /** Retires this computer's device identity so it can be paired again: after revoking it on the Supply page, or to move it to
  * another wallet or exchange. Refuses while the worker runs or while a finished job's result still waits for the exchange
- * (it may still be paid). The identity, attempt journal and any local result files move to a dated folder under
+ * (it may still be paid). The identity, attempt journal, verified stopped status and any local result files move to a dated folder under
  * retired/; nothing is deleted. */
 export async function unpairDevice(stateDir: string): Promise<{ retired: string | null; deviceId: string | null; origin: string | null }> {
   const dir = resolve(stateDir), release = await acquireRuntimeLock(dir);
@@ -134,6 +134,17 @@ export async function unpairDevice(stateDir: string): Promise<{ retired: string 
     const names = (await readdir(dir)).filter(name => ["identity.json", "attempts.jsonl", "journal-owner.json"].includes(name) ||
       /\.result\.json$/.test(name) || /\.artifact\.[0-9a-f]{64}\.bin$/.test(name));
     const deviceId = typeof identity?.deviceId === "string" ? identity.deviceId : null, origin = typeof identity?.origin === "string" ? identity.origin : null;
+    const statusPath = join(dir, "status.json");
+    try {
+      const statusInfo = await lstat(statusPath);
+      if (!statusInfo.isFile() || statusInfo.size > 16 * 1024) throw Error("WORKER_STATUS_RETIREMENT_UNVERIFIED");
+      const status = JSON.parse(await readFile(statusPath, "utf8")) as { version?: unknown; state?: unknown; deviceId?: unknown };
+      if (!deviceId || status.version !== 1 || !["stopped", "revoked", "error"].includes(String(status.state)) || status.deviceId !== deviceId)
+        throw Error("WORKER_STATUS_RETIREMENT_UNVERIFIED");
+      names.push("status.json");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     let hasProof = false;
     try { await lstat(join(dir, "host-execution-proof")); hasProof = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }

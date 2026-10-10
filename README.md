@@ -8,6 +8,8 @@ Run selected AI models on your computer and supply inference capacity through [E
 
 The published [0.1.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0), its anonymous project key and its evidence remain unchanged and available as historical release records.
 
+**Service status (10 October 2026): the hosted Excess exchange is offline.** Pairing, marketplace access, buyer jobs and earnings require that service and are currently unavailable. Worker packages and source remain available here; local use still requires an installed model and follows the limits documented below.
+
 **[Verify your download →](docs/VERIFICATION.md#verify-your-download)** Establish the trusted project key, verify the release signature, then check your archive before installing. [0.2.0 release files](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) · [Installation guide](docs/INSTALLATION.md)
 
 ## Trust and machine protection

@@ -90,11 +90,14 @@ excess-worker use qwen3-4b --cpu
 excess-worker model-plan
 ```
 
-Review the displayed model/runtime plan, licences, disk space and hardware requirements. Only after accepting both downloads and licences, run:
+Review the displayed model/runtime plan, licences, disk space and hardware requirements. Only after accepting both downloads and licences, run the installer. On Linux with the published 0.2.0 sequence-26 package:
 
 ```sh
+umask 077
 excess-worker install-model qwen3-4b --accept-download --accept-licenses
 ```
+
+The restrictive umask keeps newly created model directories private. It does not repair an existing writable model directory; use a fresh private model directory or wait for a signed package containing the current source correction. That correction is not released and is not included in the published 0.2.0 archives. On Windows, run the installer command without `umask`.
 
 The model/runtime installer uses pinned files and verifies size and hashes. Qwen3-4B's model alone is about 2.5 GB; budget additional room for runtime files and staging. On Windows the native runtime requires the pinned system Visual C++ Redistributable prerequisite checked by the model installer; it is not bundled with the worker. See [model pins and import](MODELS.md) and [the measured Windows CUDA policy](PLATFORMS.md#windows-cuda-policy) before choosing GPU execution. Catalog fit estimates do not establish execution support.
 

@@ -5,7 +5,7 @@ import { spawn,execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { mkdtemp,mkdir,writeFile,rm,readdir,readFile } from "node:fs/promises";
+import { mkdtemp,mkdir,writeFile,rm,readdir,readFile,lstat,chmod,symlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve,join,dirname,basename } from "node:path";
 import { requestDigest } from "../packages/protocol/dist/index.js";
@@ -13,6 +13,7 @@ import { ARTIFACTS,TEXT_CAPABILITY,capabilityDigest,parseTextRequest,parseTextRe
 import { readSafeZip } from "../packages/adapters/dist/zip.js";
 import { boundedJson } from "../packages/adapters/dist/runtime.js";
 import { startSupervisedProcess } from "../packages/adapters/dist/process.js";
+import { installComponent,verifyModelFiles } from "../packages/adapters/dist/install.js";
 
 // These deliberately tiny ZIP/process fixtures are not runtime or hardware evidence.
 function fixtureZip(files) {
@@ -45,7 +46,7 @@ test("adapter manifest is immutable, exact and import-only; requests and outputs
   }
   assert.deepEqual(parseTextRequest({prompt:"hello",maxTokens:8,seed:42}),{prompt:"hello",maxTokens:8,seed:42});
   assert.equal(parseTextRequest({prompt:"p".repeat(16384),maxTokens:2048,seed:1}).maxTokens,2048);
-  for(const input of [{prompt:"hello",maxTokens:2049,seed:1},{prompt:"💡".repeat(4097),maxTokens:8,seed:1},{prompt:"hello",maxTokens:8,seed:1,command:"calc.exe"},{prompt:"hello",maxTokens:8,seed:2147483648}])assert.throws(()=>parseTextRequest(input),/INVALID_TEXT_REQUEST/);
+  for(const input of [{prompt:"hello",maxTokens:2049,seed:1},{prompt:"ðŸ’¡".repeat(4097),maxTokens:8,seed:1},{prompt:"hello",maxTokens:8,seed:1,command:"calc.exe"},{prompt:"hello",maxTokens:8,seed:2147483648}])assert.throws(()=>parseTextRequest(input),/INVALID_TEXT_REQUEST/);
   assert.deepEqual(parseTextResult({text:"ready",generatedTokens:1,finishReason:"stop"}),{text:"ready",generatedTokens:1,finishReason:"stop"});
   assert.equal(parseTextResult({text:"x".repeat(65536),generatedTokens:2048,finishReason:"length"}).generatedTokens,2048);
   for(const input of [{text:"",generatedTokens:0,finishReason:"stop"},{text:"x",generatedTokens:2049,finishReason:"stop"},{text:"x".repeat(65537),generatedTokens:1,finishReason:"stop"},{text:"x",generatedTokens:1,finishReason:"unknown"},{text:"x",generatedTokens:1,finishReason:"stop",url:"file:///secret"}])assert.throws(()=>parseTextResult(input),/INVALID_TEXT_RESULT/);
@@ -80,6 +81,46 @@ test("installer fails before download without consent and rejects corrupt local 
   const adapter=createTextAdapter(dir,{threads:1,maxMemoryMb:1024,timeoutMs:2000});
   await assert.rejects(adapter.probe(),/INSTALLED_ARTIFACT_MISMATCH|UNSUPPORTED_ADAPTER_PLATFORM/);
   await adapter.stop();await adapter.stop();
+}));
+test("Linux component stores are owner-private and installer rejects linked store roots",async t=>temporary(async dir=>{
+  if(process.platform!=="linux"){t.skip("Linux directory ownership and mode contract");return;}
+  const root=join(dir,"store"),payload=Buffer.from("private component fixture"),source=join(dir,"fixture.gguf");
+  await mkdir(root,{mode:0o700});await writeFile(source,payload);
+  const artifact={name:"fixture.gguf",bytes:payload.length,sha256:createHash("sha256").update(payload).digest("hex"),url:"https://example.test/fixture.gguf"};
+  const install=async target=>installComponent(root,target,[artifact],null,async()=>undefined,{},AbortSignal.timeout(5000),undefined,new Map([[artifact.name,source]]));
+  const models=join(root,"models"),model=join(models,"fixture");
+  await install(model);
+  for(const path of [models,model]){const info=await lstat(path);assert.equal(info.uid,process.getuid());assert.equal(info.mode&0o777,0o700);}
+  assert.equal(await verifyModelFiles(root,"fixture",[artifact]),join(model,artifact.name));
+  await chmod(models,0o755);
+  assert.equal(await verifyModelFiles(root,"fixture",[artifact]),join(model,artifact.name),"read-only checks allow owner-private legacy modes");
+  await chmod(models,0o775);
+  await assert.rejects(verifyModelFiles(root,"fixture",[artifact]),/INSTALL_DIRECTORY_INVALID/);
+  await install(model);
+  assert.equal(await verifyModelFiles(root,"fixture",[artifact]),join(model,artifact.name));
+  const runtimes=join(root,"runtimes"),runtime=join(runtimes,"cpu"),archiveSource=join(dir,"runtime.zip");
+  const archiveBytes=fixtureZip([["bin/engine","RUNTIME FIXTURE",0o100755]]);
+  await writeFile(archiveSource,archiveBytes);
+  const archive={name:"runtime.zip",bytes:archiveBytes.length,sha256:createHash("sha256").update(archiveBytes).digest("hex"),url:"https://example.test/runtime.zip"};
+  const oldUmask=process.umask(0o002);
+  try {
+    await installComponent(root,runtime,[archive],{maxInputBytes:1024*1024,maxTotalBytes:1024*1024,maxEntryBytes:512*1024},
+      async()=>undefined,{},AbortSignal.timeout(5000),undefined,new Map([[archive.name,archiveSource]]));
+  } finally {process.umask(oldUmask);}
+  const nestedRuntime=join(runtime,"runtime"),nestedBin=join(nestedRuntime,"bin");
+  for(const path of [runtimes,runtime,nestedRuntime,nestedBin]){const info=await lstat(path);assert.equal(info.uid,process.getuid());assert.equal(info.mode&0o777,0o700);}
+  await chmod(nestedBin,0o775);
+  await installComponent(root,runtime,[archive],{maxInputBytes:1024*1024,maxTotalBytes:1024*1024,maxEntryBytes:512*1024},
+    async()=>undefined,{},AbortSignal.timeout(5000),undefined,new Map([[archive.name,archiveSource]]));
+  assert.equal((await lstat(nestedBin)).mode&0o777,0o700,"install repairs nested runtime directories before verification");
+  await chmod(runtimes,0o775);await chmod(runtime,0o775);
+  await installComponent(root,runtime,[archive],{maxInputBytes:1024*1024,maxTotalBytes:1024*1024,maxEntryBytes:512*1024},
+    async()=>undefined,{},AbortSignal.timeout(5000),undefined,new Map([[archive.name,archiveSource]]));
+  for(const path of [runtimes,runtime]){const info=await lstat(path);assert.equal(info.uid,process.getuid());assert.equal(info.mode&0o777,0o700);}
+  const outside=join(dir,"outside"),linkedRoot=join(dir,"linked-root");
+  await mkdir(outside);await mkdir(linkedRoot);await symlink(outside,join(linkedRoot,"models"));
+  await assert.rejects(installComponent(linkedRoot,join(linkedRoot,"models","fixture"),[artifact],null,async()=>undefined,{},AbortSignal.timeout(5000),undefined,new Map([[artifact.name,source]])),/INSTALL_PATH_LINK_FORBIDDEN/);
+  assert.deepEqual(await readdir(outside),[]);
 }));
 test("Visual C++ runtime files are copied beside the server only with their pinned bytes",async t=>temporary(async dir=>{
   const system32=join(process.env.SystemRoot??"C:\\Windows","System32");

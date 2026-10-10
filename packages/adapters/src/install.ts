@@ -1,6 +1,6 @@
 import { createHash,randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { copyFile,link,lstat,mkdir,open,readFile,readdir,realpath,rename,rm,stat,statfs,writeFile } from "node:fs/promises";
+import { constants,createReadStream } from "node:fs";
+import { copyFile,link,lstat,mkdir,open,readFile,readdir,realpath,rename,rm,stat,statfs,writeFile,type FileHandle } from "node:fs/promises";
 import { basename,dirname,isAbsolute,join,parse,relative,resolve,sep } from "node:path";
 import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,MEDIA_CATALOG,MODEL_CATALOG,RUNTIME_REDIST,catalogEntry,currentPlatform,runtimeArtifacts,serverExecutable,type Artifact,type Backend,type Platform,type RedistFile } from "./manifest.js";
 import { scanSafeZip,DEFAULT_ZIP_LIMITS,type ZipEntry,type ZipLimits } from "./zip.js";
@@ -64,6 +64,45 @@ export async function noLinks(path:string):Promise<void> {
     catch(error) {if(errorCode(error)!=="ENOENT")throw error;}
   }
 }
+async function ownedPrivateDirectory(path:string,repair:boolean):Promise<void> {
+  await noLinks(path);
+  if(process.platform!=="linux")return;
+  let handle:FileHandle|undefined;
+  try {
+    handle=await open(path,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
+    const before=await handle.stat(),uid=process.getuid?.();
+    if(!before.isDirectory()||uid===undefined||before.uid!==uid)throw new AdapterError("INSTALL_DIRECTORY_INVALID");
+    if(repair&&(before.mode&0o777)!==0o700)await handle.chmod(0o700);
+    const after=await handle.stat(),current=await lstat(path);
+    if(!after.isDirectory()||after.dev!==before.dev||after.ino!==before.ino||after.uid!==uid||(after.mode&0o022)!==0||
+        current.isSymbolicLink()||!current.isDirectory()||current.dev!==after.dev||current.ino!==after.ino)throw new AdapterError("INSTALL_DIRECTORY_INVALID");
+  } catch(error) {
+    if(error instanceof AdapterError)throw error;
+    if(!repair&&errorCode(error)==="ENOENT")throw error;
+    throw new AdapterError("INSTALL_DIRECTORY_INVALID",{cause:error});
+  } finally {await handle?.close();}
+}
+async function createOwnedPrivateDirectory(path:string):Promise<void> {
+  await noLinks(path);
+  await mkdir(path,{recursive:true,mode:0o700});
+  await ownedPrivateDirectory(path,true);
+}
+async function prepareComponentDirectories(root:string,target:string):Promise<void> {
+  const base=resolve(root),parent=resolve(dirname(target)),rel=relative(base,parent);
+  if(!rel||rel===".."||rel.startsWith(".."+sep)||isAbsolute(rel))throw new AdapterError("INSTALL_PATH_ESCAPE");
+  const parts=rel.split(sep).filter(Boolean);
+  if(!["models","runtimes","sd-runtimes"].includes(parts[0]??""))throw new AdapterError("INSTALL_PATH_INVALID");
+  let current=base;
+  for(const part of parts){current=join(current,part);await createOwnedPrivateDirectory(current);}
+}
+async function repairOwnedPrivateTree(path:string):Promise<void> {
+  await ownedPrivateDirectory(path,true);
+  for(const entry of await readdir(path,{withFileTypes:true})) {
+    const child=join(path,entry.name);
+    if(entry.isSymbolicLink())throw new AdapterError("INSTALL_PATH_LINK_FORBIDDEN");
+    if(entry.isDirectory())await repairOwnedPrivateTree(child);
+  }
+}
 export function inside(root:string,name:string):string {
   const target=resolve(root,name),rel=relative(root,target);
   if(!rel||rel.startsWith(".."+sep)||rel===".."||isAbsolute(rel))throw new AdapterError("INSTALL_PATH_ESCAPE");
@@ -86,6 +125,7 @@ export async function hashFile(path:string,expectedBytes:number):Promise<string>
 export interface RuntimeSpec {directory:string;artifacts:readonly Artifact[];server:string;limits:ZipLimits;redist:readonly RedistFile[];platform:Platform}
 export async function verifyRuntimeFilesAt(spec:RuntimeSpec):Promise<{serverPath:string;runtimeRoot:string;runtimeFiles:readonly VerifiedRuntimeFile[]}> {
   const {directory,platform,limits}=spec,server=fileKey(platform,spec.server);
+  await ownedPrivateDirectory(dirname(directory),false);await ownedPrivateDirectory(directory,false);
   await noLinks(directory);
   const expected=new Map<string,{bytes:number;sha256:string}>();let servers=0;
   for(const artifact of spec.artifacts) {
@@ -135,7 +175,7 @@ function textRuntimeSpec(root:string,backend:Backend):RuntimeSpec {
 }
 /** Re-hashes every pinned file in a model folder and returns the path of the first one: the GGUF, or a split model's first part. */
 export async function verifyModelFiles(root:string,modelId:string,artifacts:readonly Artifact[]):Promise<string> {
-  const directory=modelDirectory(root,modelId);await noLinks(directory);
+  const directory=modelDirectory(root,modelId);await ownedPrivateDirectory(dirname(directory),false);await ownedPrivateDirectory(directory,false);await noLinks(directory);
   for(const artifact of artifacts)if(await hashFile(inside(directory,artifact.name),artifact.bytes)!==artifact.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
   return inside(directory,artifacts[0]!.name);
 }
@@ -247,8 +287,8 @@ async function place(source:string,path:string,artifact:Artifact,owned:boolean):
  * maps artifact names to local files already checked against their pins (imports), which are linked or copied instead. */
 export async function installComponent(root:string,target:string,artifacts:readonly Artifact[],limits:ZipLimits|null,verify:()=>Promise<unknown>,
   record:Record<string,unknown>,signal:AbortSignal,onProgress?:(value:InstallProgress)=>void,provided?:ReadonlyMap<string,string>,fetcher?:Fetcher):Promise<void> {
-  try {await lstat(target);await verify();return;}catch(error){if(errorCode(error)!=="ENOENT")throw error;}
-  await mkdir(dirname(target),{recursive:true});await noLinks(dirname(target));
+  await prepareComponentDirectories(root,target);
+  try {await lstat(target);await repairOwnedPrivateTree(target);await verify();return;}catch(error){if(errorCode(error)!=="ENOENT")throw error;}
   // downloads/<sha256> is the supplier's own offline cache and is kept; the installer's downloads wait in downloads/pending
   // and move into the component once it installs.
   const cache=join(root,"downloads"),pending=join(cache,"pending"),sources=new Map<string,{path:string;owned:boolean}>();
@@ -265,19 +305,19 @@ export async function installComponent(root:string,target:string,artifacts:reado
     throw new AdapterError(signal.aborted?"ARTIFACT_DOWNLOAD_ABORTED":"ARTIFACT_INSTALL_FAILED",{cause:error});
   }
   const stage=target+".install-"+randomUUID();
-  await mkdir(stage,{mode:0o700});
+  await mkdir(stage,{mode:0o700});await ownedPrivateDirectory(stage,true);
   // Linux runtime files must be executable by their owner; nobody else gets access on either platform.
   const mode=process.platform==="win32"?0o600:0o700;
   try {
     for(const artifact of artifacts) {
-      const path=inside(stage,artifact.name);await mkdir(dirname(path),{recursive:true});
+      const path=inside(stage,artifact.name);await mkdir(dirname(path),{recursive:true,mode:0o700});
       await place(sources.get(artifact.name)!.path,path,artifact,sources.get(artifact.name)!.owned);
     }
     if(limits)for(const artifact of artifacts.filter(item=>isArchive(item.name))) {
       const writes:Promise<void>[]=[];
       scanArchive(artifact.name,await readFile(inside(stage,artifact.name)),limits,entry=>{
         const path=inside(join(stage,"runtime"),entry.name);
-        writes.push(mkdir(dirname(path),{recursive:true}).then(()=>writeFile(path,entry.data,{flag:"wx",mode})));
+        writes.push(mkdir(dirname(path),{recursive:true,mode:0o700}).then(()=>writeFile(path,entry.data,{flag:"wx",mode})));
       });
       await Promise.all(writes);
     }

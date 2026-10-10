@@ -108,16 +108,21 @@ async function fixture() {
   return { dir, a, state, connection, adapter, calls, heartbeats, counts, probes, start, journal, scratch, complete: result => complete(result) };
 }
 
-test("controller runtime completes a fixture job using typed state only and never creates its virtual filesystem", async () => {
+test("controller runtime completes a fixture job using typed state only and never creates its virtual filesystem", { timeout: 10_000 }, async t => {
   const f = await fixture(), stateDir = join(f.dir, "never-created-controller-state"), files = new Map(), reads = [];
+  // This tests typed state, not execution timing. Keep scheduler contention from
+  // expiring the synthetic job before the test continuation completes it.
+  const controllerPolicy = { ...policy, runSeconds: 60 };
   const stateWriter = {
     replace: async (name, bytes) => { files.set(name, Buffer.from(bytes)); },
     appendJournal: async bytes => { files.set("attempts.jsonl", Buffer.concat([files.get("attempts.jsonl") ?? Buffer.alloc(0), bytes])); },
     removeOutput: async name => { files.delete(name); }, markShutdownUnverified: async () => { throw Error("UNEXPECTED_FIXTURE_SHUTDOWN_FAILURE"); },
   };
   const stateReader = {
-    readPolicy: async () => { reads.push("policy"); return policy; },
-    readControl: async () => { reads.push("control"); return f.state.acceptedResult ? "stop" : "run"; },
+    readPolicy: async () => { reads.push("policy"); return controllerPolicy; },
+    // A failed assignment must stop too, so the acceptance assertion reports
+    // the failure instead of leaving the fixture polling indefinitely.
+    readControl: async () => { reads.push("control"); return f.state.assigned ? "run" : "stop"; },
     readOffers: async () => { reads.push("offers"); return []; }, readAutoPrices: async () => new Map(),
     readJournalOwner: async () => files.get("journal-owner.json") ?? null,
     readJournal: async () => files.get("attempts.jsonl") ?? null,
@@ -127,7 +132,7 @@ test("controller runtime completes a fixture job using typed state only and neve
     openSnapshot: async () => { throw Error("UNUSED_FIXTURE_SNAPSHOT"); }, readSnapshot: async () => { throw Error("UNUSED_FIXTURE_SNAPSHOT"); },
     closeSnapshot: async () => {}, close: async () => {},
   };
-  const worker = f.start({ stateDir, policy: undefined, stateReader, stateWriter });
+  const worker = f.start({ stateDir, policy: undefined, stateReader, stateWriter, signal: t.signal });
   await waitFor(() => f.counts.executions === 1); f.complete(output);
   assert.equal((await worker).state, "stopped");
   assert.equal(f.state.acceptedResult, true);
@@ -349,13 +354,35 @@ test("unpair retires the identity and journal for a new pairing, never while the
   const lock = await acquireRuntimeLock(f.dir);
   await assert.rejects(unpairDevice(f.dir), /already running/);
   await lock();
+  await writeFile(join(f.dir, "status.json"), JSON.stringify({ version: 1, state: "stopped", deviceId: f.a.deviceId,
+    reason: "stopped_locally", updatedAt: new Date().toISOString() }), { mode: 0o600 });
   const retired = await unpairDevice(f.dir);
   assert.deepEqual([retired.deviceId, retired.origin], [f.a.deviceId, "https://exchange.test"]);
-  assert.deepEqual((await readdir(retired.retired)).sort(), [f.a.attemptId + ".result.json", "attempts.jsonl", "identity.json", "journal-owner.json", "host-execution-proof"].sort());
+  assert.deepEqual((await readdir(retired.retired)).sort(), [f.a.attemptId + ".result.json", "attempts.jsonl", "identity.json", "journal-owner.json", "status.json", "host-execution-proof"].sort());
   assert.equal(JSON.parse(await readFile(join(retired.retired, 'host-execution-proof/proof.json'), 'utf8')).proof.receiptAccepted, true);
   await assert.rejects(access(join(f.dir, 'host-execution-proof')), { code: 'ENOENT' });
   for (const name of ["identity.json", "attempts.jsonl", "journal-owner.json"]) await assert.rejects(access(join(f.dir, name)), { code: "ENOENT" });
   assert.equal((await unpairDevice(f.dir)).retired, null, "nothing left to unpair");
+});
+
+test("unpair refuses to retire a running status or unrelated state controls", async () => {
+  const f = await fixture();
+  await writeFile(join(f.dir, "identity.json"), JSON.stringify({ version: 1, origin: "https://exchange.test", deviceId: f.a.deviceId }), { mode: 0o600 });
+  const runningStatus = JSON.stringify({ version: 1, state: "running", deviceId: f.a.deviceId,
+    reason: "job_running", updatedAt: new Date().toISOString() });
+  await writeFile(join(f.dir, "status.json"), runningStatus, { mode: 0o600 });
+  await writeFile(join(f.dir, "control.json"), JSON.stringify({ mode: "run" }), { mode: 0o600 });
+
+  await assert.rejects(unpairDevice(f.dir), /WORKER_STATUS_RETIREMENT_UNVERIFIED/);
+  assert.equal(await readFile(join(f.dir, "status.json"), "utf8"), runningStatus);
+  await access(join(f.dir, "identity.json"));
+  await access(join(f.dir, "control.json"));
+  await assert.rejects(access(join(f.dir, "retired")), { code: "ENOENT" });
+  await writeFile(join(f.dir, "status.json"), JSON.stringify({ version: 1, state: "revoked", deviceId: f.a.deviceId,
+    reason: "device_revoked_or_unauthorized", updatedAt: new Date().toISOString() }), { mode: 0o600 });
+  const retired = await unpairDevice(f.dir);
+  assert.deepEqual((await readdir(retired.retired)).sort(), ["identity.json", "status.json"]);
+  await access(join(f.dir, "control.json"));
 });
 
 test('unpair refuses a proof for another device without moving either identity or recovery evidence', async () => {
