@@ -2,11 +2,14 @@ import { gunzipSync } from "node:zlib";
 import { AdapterError } from "./manifest.js";
 import type { ZipEntry,ZipLimits } from "./zip.js";
 
-// Reviewed tar.gz subset for the pinned llama.cpp Linux builds: ustar regular files, directories and symlinks under a
-// single top-level folder, which is stripped. A symlink must name a file in the archive; it is materialized as a copy of
-// that file, so an installed runtime never contains links. Hard links, devices, long-name and pax records are refused.
-export function scanSafeTarGz(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEntry)=>void):void {
+// Reviewed tar.gz subset for pinned Linux builds. The default layout requires one top-level folder and strips it; the
+// explicit flat layout accepts only root-level regular files. In the default layout, a symlink must name a file in the
+// archive and is materialized as a copy, so installed runtimes never contain links. Hard links, devices, long-name and
+// pax records are refused in both layouts.
+export type SafeTarGzLayout="single-root"|"flat-regular-files";
+export function scanSafeTarGz(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEntry)=>void,layout:SafeTarGzLayout="single-root"):void {
   const bad=():never=>{throw new AdapterError("UNSAFE_RUNTIME_ARCHIVE");};
+  if(layout!=="single-root"&&layout!=="flat-regular-files")return bad();
   if(input.length<32||input.length>limits.maxInputBytes)return bad();
   let tar=Buffer.alloc(0);
   try {tar=gunzipSync(input,{maxOutputLength:limits.maxTotalBytes+4*1024*1024});}catch{return bad();}
@@ -29,10 +32,12 @@ export function scanSafeTarGz(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEn
     if(next>tar.length||!name||name.length>240||name.startsWith("/")||name.includes("\\"))return bad();
     const segments=name.replace(/\/$/,"").split("/");
     if(!segments.every((segment,index)=>segmentOk(segment)||limits.allowExcessWorkerScope===true&&index===3&&segment==="@excess"&&segments[1]==="app"&&segments[2]==="node_modules"))return bad();
-    if(root===undefined)root=segments[0];else if(segments[0]!==root)return bad();
-    const relativeName=segments.slice(1).join("/");
+    if(layout==="flat-regular-files") {
+      if(segments.length!==1||name.endsWith("/"))return bad();
+    } else if(root===undefined)root=segments[0];else if(segments[0]!==root)return bad();
+    const relativeName=layout==="flat-regular-files"?segments[0]!:segments.slice(1).join("/");
     if(type==="5") {
-      if(size!==0)return bad();
+      if(size!==0||layout==="flat-regular-files")return bad();
     } else {
       if(!relativeName||names.has(relativeName))return bad();
       names.add(relativeName);
@@ -41,6 +46,7 @@ export function scanSafeTarGz(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEn
         if(size>limits.maxEntryBytes||total>limits.maxTotalBytes)return bad();
         files.set(relativeName,Buffer.from(tar.subarray(dataAt,dataAt+size)));
       } else if(type==="2") {
+        if(layout==="flat-regular-files")return bad();
         if(limits.allowExcessWorkerScope===true)return bad();
         const target=text(at+157,100);
         if(size!==0||!segmentOk(target))return bad();
@@ -50,7 +56,7 @@ export function scanSafeTarGz(input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEn
     }
     at=next;
   }
-  if(!ended||root===undefined||files.size===0)return bad();
+  if(!ended||(layout==="single-root"&&root===undefined)||files.size===0)return bad();
   for(const [name,data] of files)onEntry({name,data});
   for(const [name,target] of links) {
     let resolved=target;

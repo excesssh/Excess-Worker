@@ -51,6 +51,26 @@ test("tar.gz reader strips the top-level folder and materializes same-folder sym
   assert.deepEqual(entries,[["llama-server","SERVER FIXTURE"],["libllama.so.0.4.0","LIBRARY FIXTURE"],["libllama.so.0","LIBRARY FIXTURE"],["libllama.so","LIBRARY FIXTURE"]]);
 });
 
+test("explicit flat tar.gz layout accepts only root-level regular files and preserves their names",()=>{
+  const input=archive([["llama-server",{data:"SERVER FIXTURE"}],["libggml-cuda.so",{data:"CUDA LIBRARY FIXTURE"}]]);
+  assert.throws(()=>read(input),/UNSAFE_RUNTIME_ARCHIVE/);
+  const entries=[];
+  scanSafeTarGz(input,LIMITS,entry=>entries.push([entry.name,entry.data.toString()]),"flat-regular-files");
+  assert.deepEqual(entries,[["llama-server","SERVER FIXTURE"],["libggml-cuda.so","CUDA LIBRARY FIXTURE"]]);
+});
+
+test("flat tar.gz layout refuses rooted, nested, directory, link, special and duplicate entries",()=>{
+  const refuse=entries=>assert.throws(()=>scanSafeTarGz(archive(entries),LIMITS,()=>{},"flat-regular-files"),/UNSAFE_RUNTIME_ARCHIVE/);
+  refuse([["root/server",{data:"x"}]]);
+  refuse([["lib/server",{data:"x"}],["other.so",{data:"y"}]]);
+  refuse([["runtime/",{type:"5"}],["server",{data:"x"}]]);
+  refuse([["server",{data:"x"}],["link",{type:"2",link:"server"}]]);
+  refuse([["server",{data:"x"}],["hard",{type:"1",link:"server"}]]);
+  refuse([["device",{type:"3"}]]);
+  refuse([["../outside",{data:"x"}]]);
+  refuse([["server",{data:"x"}],["server",{data:"y"}]]);
+});
+
 test("tar.gz reader refuses traversal, escaping or dangling links, special files, mixed roots and corruption",()=>{
   const refuse=(entries,options)=>assert.throws(()=>read(archive(entries,options)),/UNSAFE_RUNTIME_ARCHIVE/);
   refuse([["root/../outside",{data:"x"}]]);

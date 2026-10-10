@@ -2,9 +2,9 @@ import { createHash,randomUUID } from "node:crypto";
 import { constants,createReadStream } from "node:fs";
 import { copyFile,link,lstat,mkdir,open,readFile,readdir,realpath,rename,rm,stat,statfs,writeFile,type FileHandle } from "node:fs/promises";
 import { basename,dirname,isAbsolute,join,parse,relative,resolve,sep } from "node:path";
-import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,MEDIA_CATALOG,MODEL_CATALOG,RUNTIME_REDIST,catalogEntry,currentPlatform,runtimeArtifacts,serverExecutable,type Artifact,type Backend,type Platform,type RedistFile } from "./manifest.js";
+import { AdapterError,BACKENDS,DEFAULT_MODEL_ID,MEDIA_CATALOG,MODEL_CATALOG,RUNTIME_REDIST,catalogEntry,currentPlatform,runtimeArtifacts,sdRuntimeArtifacts,serverExecutable,type Artifact,type Backend,type Platform,type RedistFile } from "./manifest.js";
 import { scanSafeZip,DEFAULT_ZIP_LIMITS,type ZipEntry,type ZipLimits } from "./zip.js";
-import { scanSafeTarGz } from "./tar.js";
+import { scanSafeTarGz,type SafeTarGzLayout } from "./tar.js";
 
 const hosts=new Set(["github.com","release-assets.githubusercontent.com","objects.githubusercontent.com","raw.githubusercontent.com","huggingface.co","us.aws.cdn.hf.co","cas-bridge.xethub.hf.co"]);
 const MiB=1024*1024,GiB=1024*MiB;
@@ -33,8 +33,16 @@ export function limitsFor(platform:Platform,backend:Backend):ZipLimits {
   return limits;
 }
 const isArchive=(name:string)=>name.endsWith(".zip")||name.endsWith(".tar.gz");
-function scanArchive(name:string,input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEntry)=>void):void {
-  if(name.endsWith(".zip"))scanSafeZip(input,limits,onEntry);else scanSafeTarGz(input,limits,onEntry);
+const FLAT_LINUX_CUDA_TAR_PINS=new Set([...runtimeArtifacts("cuda","linux-x64"),...sdRuntimeArtifacts("cuda","linux-x64")]
+  .filter(artifact=>artifact.name.endsWith(".tar.gz"))
+  .map(artifact=>JSON.stringify([artifact.name,artifact.bytes,artifact.sha256,artifact.url])));
+/** Exact Linux CUDA manifest pins only; not re-exported from the package entry point. */
+export function tarLayoutForPinnedRuntime(platform:Platform,artifact:Artifact):SafeTarGzLayout {
+  return platform==="linux-x64"&&FLAT_LINUX_CUDA_TAR_PINS.has(JSON.stringify([artifact.name,artifact.bytes,artifact.sha256,artifact.url]))
+    ?"flat-regular-files":"single-root";
+}
+function scanArchive(artifact:Artifact,input:Buffer,limits:ZipLimits,onEntry:(entry:ZipEntry)=>void,layout:SafeTarGzLayout="single-root"):void {
+  if(artifact.name.endsWith(".zip"))scanSafeZip(input,limits,onEntry);else scanSafeTarGz(input,limits,onEntry,layout);
 }
 // Windows file names are case-insensitive, so runtime files are compared case-insensitively there only.
 const fileKey=(platform:Platform,name:string)=>platform==="win32-x64"?name.toLowerCase():name;
@@ -131,12 +139,12 @@ export async function verifyRuntimeFilesAt(spec:RuntimeSpec):Promise<{serverPath
   for(const artifact of spec.artifacts) {
     if(await hashFile(inside(directory,artifact.name),artifact.bytes)!==artifact.sha256)throw new AdapterError("INSTALLED_ARTIFACT_MISMATCH");
     if(!isArchive(artifact.name))continue;
-    scanArchive(artifact.name,await readFile(inside(directory,artifact.name)),limits,entry=>{
+    scanArchive(artifact,await readFile(inside(directory,artifact.name)),limits,entry=>{
       const key=fileKey(platform,entry.name);
       if(expected.has(key))throw new AdapterError("UNSAFE_RUNTIME_ARCHIVE");
       if(key.split("/").at(-1)===server)servers++;
       expected.set(key,{bytes:entry.data.length,sha256:createHash("sha256").update(entry.data).digest("hex")});
-    });
+    },tarLayoutForPinnedRuntime(platform,artifact));
   }
   const serverEntries=[...expected.keys()].filter(name=>name.split("/").at(-1)===server);
   if(servers!==1||serverEntries.length!==1)throw new AdapterError("RUNTIME_SERVER_MISSING");
@@ -315,10 +323,11 @@ export async function installComponent(root:string,target:string,artifacts:reado
     }
     if(limits)for(const artifact of artifacts.filter(item=>isArchive(item.name))) {
       const writes:Promise<void>[]=[];
-      scanArchive(artifact.name,await readFile(inside(stage,artifact.name)),limits,entry=>{
+      const flatCudaTar=record.platform==="linux-x64"&&record.backend==="cuda";
+      scanArchive(artifact,await readFile(inside(stage,artifact.name)),limits,entry=>{
         const path=inside(join(stage,"runtime"),entry.name);
         writes.push(mkdir(dirname(path),{recursive:true,mode:0o700}).then(()=>writeFile(path,entry.data,{flag:"wx",mode})));
-      });
+      },flatCudaTar?tarLayoutForPinnedRuntime("linux-x64",artifact):"single-root");
       await Promise.all(writes);
     }
     await writeFile(inside(stage,"install.json"),JSON.stringify({version:2,...record,installedAt:new Date().toISOString(),artifacts},null,2)+"\n",{flag:"wx",mode:0o600});

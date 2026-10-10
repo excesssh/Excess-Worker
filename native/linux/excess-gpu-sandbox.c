@@ -35,15 +35,26 @@ static uint64_t monotonic_ms(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &now)) fail();
     return (uint64_t)now.tv_sec*1000 + (uint64_t)now.tv_nsec/1000000;
 }
-static uint64_t rss(pid_t child) {
-    char path[64], line[256]; uint64_t value = 0;
-    if (snprintf(path, sizeof(path), "/proc/%d/status", child) >= (int)sizeof(path)) fail();
-    FILE *file = fopen(path, "r"); if (!file) return UINT64_MAX;
-    while (fgets(line, sizeof(line), file)) {
-        unsigned long long kib;
-        if (sscanf(line, "VmRSS: %llu kB", &kib) == 1) value = kib*1024;
+static int cgroup_memory(uint64_t *value) {
+    /* hidepid=2 deliberately hides a non-dumpable runtime's proc status.
+     * Sample the controller's read-only kernel cgroup instead. This includes
+     * service siblings and charged cache, so it conservatively overcounts
+     * runtime memory; it must never be presented as per-process RSS. */
+    struct statfs filesystem;
+    int fd = open("/gpu-budget/memory.current", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return 0;
+    char text[128];
+    ssize_t got = read(fd, text, sizeof(text));
+    int valid = !fstatfs(fd, &filesystem) && filesystem.f_type == 0x63677270;
+    if (close(fd) || !valid || got <= 0 || got >= (ssize_t)sizeof(text)) return 0;
+    uint64_t parsed = 0; ssize_t at = 0;
+    while (at < got && text[at] >= '0' && text[at] <= '9') {
+        unsigned int digit = (unsigned int)(text[at++] - '0');
+        if (parsed > (UINT64_MAX - digit) / 10) return 0;
+        parsed = parsed * 10 + digit;
     }
-    fclose(file); return value;
+    if (!at || (at < got && (text[at++] != '\n' || at != got))) return 0;
+    *value = parsed; return 1;
 }
 static int memory(gpu_memory *value) {
     return gpu_info(device, value) == 0 && value->total > 0 && value->used <= value->total && value->free <= value->total;
@@ -125,14 +136,15 @@ int main(int argc, char **argv) {
         pid_t waited = waitpid(child, &status, WNOHANG);
         if (waited == child) { reaped = 1; fault = "RUNTIME_EXITED"; break; }
         if (waited < 0) { fault = "RUNTIME_CLEANUP_FAILED"; break; }
-        gpu_memory current; uint64_t resident = rss(child);
-        if (!memory(&current) || resident == UINT64_MAX) { fault = "GPU_MONITOR_FAILED"; break; }
+        gpu_memory current; uint64_t resident;
+        if (!cgroup_memory(&resident)) { fault = "GPU_RAM_MONITOR_FAILED"; break; }
+        if (!memory(&current)) { fault = "GPU_MEMORY_MONITOR_FAILED"; break; }
         if (resident > peak) peak = resident;
         if (resident > ram_limit) { fault = "RUNTIME_MEMORY_LIMIT"; break; }
         if (current.used > gpu_limit) { fault = "GPU_MEMORY_BUDGET_EXCEEDED"; break; }
         if (monotonic_ms()-started > seconds*1000) { fault = "RUNTIME_TIMEOUT"; break; }
         uint64_t local = current.used > baseline.used ? current.used-baseline.used : 0;
-        printf("{\"type\":\"status\",\"peakWorkingSetBytes\":%llu,\"gpuMemoryBytes\":%llu,\"gpuLocalBytes\":%llu,\"gpuNonLocalBytes\":%llu,\"gpuOffloadedLayers\":%u,\"gpuTotalLayers\":%u}\n",
+        printf("{\"type\":\"status\",\"peakWorkingSetBytes\":0,\"peakCgroupMemoryBytes\":%llu,\"gpuMemoryBytes\":%llu,\"gpuLocalBytes\":%llu,\"gpuNonLocalBytes\":%llu,\"gpuOffloadedLayers\":%u,\"gpuTotalLayers\":%u}\n",
             (unsigned long long)peak, current.used, (unsigned long long)local,
             current.used-local, layers, total_layers ? total_layers : 1); fflush(stdout);
         struct pollfd fds[] = { { .fd = diagnostics[0], .events = POLLIN }, { .fd = 0, .events = POLLIN | POLLHUP } };

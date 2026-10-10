@@ -10,6 +10,8 @@ The published [0.1.0 release](https://github.com/excesssh/Excess-Worker/releases
 
 **Service status (10 October 2026): the hosted Excess exchange is offline.** Pairing, marketplace access, buyer jobs and earnings require that service and are currently unavailable. Worker packages and source remain available here; local use still requires an installed model and follows the limits documented below.
 
+**Linux CUDA issue in 0.2.0:** the published installer rejects the pinned CUDA runtime archives. Source corrections are under verification, and confined Linux CUDA execution remains unverified. Use a recorded CPU configuration while following the [Linux CUDA status](docs/verification/linux-cuda-status.md); no replacement GPU binary has been released.
+
 **[Verify your download →](docs/VERIFICATION.md#verify-your-download)** Establish the trusted project key, verify the release signature, then check your archive before installing. [0.2.0 release files](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) · [Installation guide](docs/INSTALLATION.md)
 
 ## Trust and machine protection

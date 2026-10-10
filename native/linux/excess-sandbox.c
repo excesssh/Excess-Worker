@@ -66,7 +66,7 @@ static void syscalls(void) {
         DENY(__NR_mount), DENY(__NR_umount2), DENY(__NR_pivot_root), DENY(__NR_chroot),
         DENY(__NR_bpf), DENY(__NR_perf_event_open), DENY(__NR_keyctl), DENY(__NR_add_key), DENY(__NR_request_key),
         DENY(__NR_open_by_handle_at), DENY(__NR_pidfd_getfd), DENY(__NR_unshare), DENY(__NR_setns),
-        DENY(__NR_fork), DENY(__NR_vfork), DENY(__NR_io_uring_setup),
+        DENY(__NR_fork), DENY(__NR_vfork), DENY(__NR_io_uring_setup), DENY(__NR_socketpair),
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_clone3, 0, 1),
         BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|ENOSYS),
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_clone, 0, 4),
@@ -102,6 +102,9 @@ static void syscalls(void) {
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, 0, 1, 0),
         BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS, offsetof(struct seccomp_data, args[1])),
+        /* NVIDIA 580 NV_ESC_NUMA_INFO, exact read/write query encoding and
+         * 560-byte structure. NV_ESC_SET_NUMA_STATUS remains denied. */
+        GPU_IOCTL(0xc23046d7),
         BPF_STMT(BPF_ALU|BPF_AND|BPF_K, 0xffff),
         GPU_IOCTL(0x4627), GPU_IOCTL(0x4628), GPU_IOCTL(0x4629), GPU_IOCTL(0x462a), GPU_IOCTL(0x462b), GPU_IOCTL(0x4634),
         GPU_IOCTL(0x464e), GPU_IOCTL(0x464f), GPU_IOCTL(0x4652), GPU_IOCTL(0x4654), GPU_IOCTL(0x4657), GPU_IOCTL(0x4658), GPU_IOCTL(0x4659), GPU_IOCTL(0x465e),
@@ -123,6 +126,15 @@ static void syscalls(void) {
 #undef GPU_IOCTL
 #endif
 }
+#ifdef EXCESS_GPU_PROFILE
+static void gpu_metadata_rules(int rules) {
+    /* Driver initialization reads only its own process metadata and these
+     * non-secret kernel discovery values; never grant a general proc tree. */
+    const char *paths[] = { "/proc/self/maps", "/proc/self/status", "/proc/devices", "/proc/sys/vm/mmap_min_addr" };
+    for (size_t n = 0; n < sizeof(paths)/sizeof(paths[0]); n++)
+        path_rule(rules, paths[n], LANDLOCK_ACCESS_FS_READ_FILE);
+}
+#endif
 int main(int argc, char **argv) {
     int abi = syscall(SYS_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
     if (argc == 2 && !strcmp(argv[1], "--check")) {
@@ -148,7 +160,7 @@ int main(int argc, char **argv) {
 #ifdef EXCESS_GPU_PROFILE
     /* CUDA reserves a large sparse address space. The enclosing dedicated
        cgroup provides the hard aggregate RAM ceiling; the trusted supervisor
-       additionally samples this process's RSS and the entire device budget. */
+       additionally samples aggregate cgroup memory and the entire device budget. */
     (void)mem;
     if (setrlimit(RLIMIT_CPU, &cpu) || setrlimit(RLIMIT_NOFILE, &files) || setrlimit(RLIMIT_CORE, &core)) fail();
 #else
@@ -184,6 +196,7 @@ int main(int argc, char **argv) {
     path_rule(rules, "/dev/urandom", LANDLOCK_ACCESS_FS_READ_FILE);
 #ifdef EXCESS_GPU_PROFILE
     /* No render nodes, other GPU ordinals, UVM tooling or general /dev grant. */
+    gpu_metadata_rules(rules);
     const char *gpu_devices[] = { "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm" };
     for (size_t n = 0; n < sizeof(gpu_devices)/sizeof(gpu_devices[0]); n++)
         path_rule(rules, gpu_devices[n], LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_IOCTL_DEV);

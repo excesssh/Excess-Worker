@@ -11,6 +11,8 @@ import { resolve,join,dirname,basename } from "node:path";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 import { ARTIFACTS,TEXT_CAPABILITY,capabilityDigest,parseTextRequest,parseTextResult,textInstallationPlan,installTextAdapter,installRuntimeRedist,RUNTIME_REDIST,verifyInstallation,createTextAdapter } from "../packages/adapters/dist/index.js";
 import { readSafeZip } from "../packages/adapters/dist/zip.js";
+import { runtimeArtifacts,sdRuntimeArtifacts } from "../packages/adapters/dist/manifest.js";
+import { tarLayoutForPinnedRuntime } from "../packages/adapters/dist/install.js";
 import { boundedJson } from "../packages/adapters/dist/runtime.js";
 import { startSupervisedProcess } from "../packages/adapters/dist/process.js";
 import { installComponent,verifyModelFiles } from "../packages/adapters/dist/install.js";
@@ -59,6 +61,17 @@ test("worker ZIP scope is explicit, exact and does not widen runtime download na
   for(const denied of ["root/app/node_modules/@other/a.js","root/else/node_modules/@excess/a.js","root/app/@excess/a.js",
     "root/app/node_modules/@excess/../outside.js","root/app/node_modules/@excess/CON.js"])
     assert.throws(()=>readSafeZip(fixtureZip([[denied,"x"]]),{...limits,allowExcessWorkerScope:true}),/UNSAFE_RUNTIME_ARCHIVE/);
+});
+
+test("flat tar layout is enabled only for exact pinned Linux CUDA archives",()=>{
+  const archives=[...runtimeArtifacts("cuda","linux-x64"),...sdRuntimeArtifacts("cuda","linux-x64")].filter(item=>item.name.endsWith(".tar.gz"));
+  const unique=[...new Map(archives.map(item=>[item.sha256,item])).values()];
+  assert.equal(unique.length,3);
+  for(const artifact of unique)assert.equal(tarLayoutForPinnedRuntime("linux-x64",artifact),"flat-regular-files");
+  assert.equal(tarLayoutForPinnedRuntime("linux-x64",runtimeArtifacts("cpu","linux-x64").find(item=>item.name.endsWith(".tar.gz"))),"single-root");
+  assert.equal(tarLayoutForPinnedRuntime("win32-x64",unique[0]),"single-root");
+  assert.equal(tarLayoutForPinnedRuntime("linux-x64",{...unique[0],sha256:"0".repeat(64)}),"single-root");
+  assert.equal(tarLayoutForPinnedRuntime("linux-x64",{...unique[0],url:"https://example.test/runtime.tar.gz"}),"single-root");
 });
 
 test("reviewed ZIP reader rejects traversal, Windows aliases, links, duplicate names and oversized expansion",()=>{
