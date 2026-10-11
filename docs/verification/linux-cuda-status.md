@@ -16,4 +16,6 @@ Source verification at `58f6a3e9dc4e87afbaf05ebc8ea2c2a3771e10d5` passes [the st
 
 No Linux CUDA buyer execution, cancellation, settlement or receipt lifecycle is verified for this corrected source. Do not treat catalogue availability, completed downloads, device detection or a software test as that evidence. No changed GPU binary has been published, and previous releases, signed manifests and assets remain unchanged.
 
+The prepared next package is version 0.2.1, release sequence 27. It is still a local, unpublished candidate: this status document records no Linux GPU buyer execution, cancellation or lifecycle result for it. Packaging the v2 helper is not a Linux GPU support claim. The published 0.2.0 assets remain unchanged.
+
 See [recorded platform evidence](../../README.md#your-machine-your-controls), [security boundaries](../../SECURITY.md#model-runtime-boundaries) and the [remaining coverage checklist](remaining-work-checklist.md).
