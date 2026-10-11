@@ -78,7 +78,7 @@ jobs:
           EXCESS_RELEASE_SEQUENCE: '3'
         run: |
           node scripts/package-worker.mjs --platform linux-x64 --native-dir .cache/ci-linux-native --require-native --out .cache/ci-linux-package
-          version=$(node -p "JSON.parse(require('fs').readFileSync('apps/worker/package.json')).version")
+          version=$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")
           printf 'EXCESS_LINUX_CONTROLLER_PACKAGE_DIR=%s/.cache/ci-linux-package/excess-worker-%s-linux-x64\n' "$GITHUB_WORKSPACE" "$version" >> "$GITHUB_ENV"
           printf 'EXCESS_LINUX_CONTROLLER_PACKAGE_ARCHIVE=%s/.cache/ci-linux-package/excess-worker-%s-linux-x64.tar.gz\n' "$GITHUB_WORKSPACE" "$version" >> "$GITHUB_ENV"
       - name: Run Linux kernel and package boundary fixtures

@@ -12,7 +12,7 @@ import { requiresLinuxGpuSandbox } from "../scripts/public-worker/linux-gpu-pack
 
 const packageDir = process.env.EXCESS_LINUX_CONTROLLER_PACKAGE_DIR;
 const archivePath = process.env.EXCESS_LINUX_CONTROLLER_PACKAGE_ARCHIVE;
-const version = JSON.parse(await readFile(new URL("../apps/worker/package.json", import.meta.url), "utf8")).version;
+const version = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
 const folder = `excess-worker-${version}-linux-x64`;
 const nativeRel = "app/node_modules/@excess/adapters/native/";
 const nativeFiles = [
