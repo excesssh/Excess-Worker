@@ -1,20 +1,20 @@
-# Install Excess Worker 0.2.0 (release sequence 26)
+# Install Excess Worker 0.2.1 (release sequence 28)
 
-The published [0.2.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) contains signed Windows x64 and Linux x64 archives with Node included. You will not need npm to install them. Models and inference runtimes are separate downloads. The published [0.1.0 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) remains available as an earlier, separate release. Check [supported configurations](PLATFORMS.md) before choosing a model or backend.
+The published [0.2.1 release](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.1) contains signed Windows x64 and Linux x64 archives with Node included. You will not need npm to install them. Models and inference runtimes are separate downloads. The published [0.2.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) and [0.1.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) releases remain available as earlier, separate releases. Check [supported configurations](PLATFORMS.md) before choosing a model or backend.
 
-## Sequence-26 package identity
+## Sequence-28 package identity
 
-Use these sequence-26 archive names and tag-specific installer links for this release. The signed manifest records these exact names, hashes, source and sequence; verify it before running an installer.
+Use these sequence-28 archive names and tag-specific installer links for this release. The signed manifest records these exact names, hashes, source and sequence; verify it before running an installer.
 
 ```text
-Windows archive: excess-worker-0.2.0-8724162f793d-win-x64.zip
-Linux archive:   excess-worker-0.2.0-8724162f793d-linux-x64.tar.gz
-Source tag:      v0.2.0
-Expected source: 8724162f793d3ec009eb2f64f713a05c29857bd7
-Sequence:        26
+Windows archive: excess-worker-0.2.1-302772c0759d-win-x64.zip
+Linux archive:   excess-worker-0.2.1-302772c0759d-linux-x64.tar.gz
+Source tag:      v0.2.1
+Expected source: 302772c0759d0d62451b7df6ec87b10c7682158c
+Sequence:        28
 ```
 
-The project Minisign key is unchanged from v0.1.0; its sequence-26 tagged source and both installer copies were checked against the same key. Fresh direct Linux and Windows installations passed. The Windows install report verified all 340 files, the expected ready launcher, actual Minisign verification and high-water 26. Preserve the model/runtime and licence consent, user-level controls, drain, revoke, update and recovery guidance below.
+The project Minisign key is unchanged from v0.1.0 and v0.2.0; its sequence-28 tagged source and both installer copies were checked against the same key. Fresh direct installations of the downloaded published files passed with the tagged installers: Windows verified all 339 package files and Linux all 342, each with the managed launcher, actual Minisign verification and high-water 28. Preserve the model/runtime and licence consent, user-level controls, drain, revoke, update and recovery guidance below.
 
 ## Download and verify first
 
@@ -22,8 +22,8 @@ Save your platform archive, `release.json` and `release.json.minisig` together i
 
 Install [Minisign from its official project](https://jedisct1.github.io/minisign/) and put it on PATH. Linux installation also needs Python 3. Windows uses Windows PowerShell 5.1. Download and inspect the appropriate offline installer from the trusted tagged source:
 
-- Windows: [install.ps1 at the v0.2.0 release tag](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.2.0/scripts/worker-install/install.ps1), saved as `install.ps1`.
-- Linux: [install.sh at the v0.2.0 release tag](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.2.0/scripts/worker-install/install.sh), saved as `install.sh`.
+- Windows: [install.ps1 at the v0.2.1 release tag](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.2.1/scripts/worker-install/install.ps1), saved as `install.ps1`.
+- Linux: [install.sh at the v0.2.1 release tag](https://raw.githubusercontent.com/excesssh/Excess-Worker/v0.2.1/scripts/worker-install/install.sh), saved as `install.sh`.
 
 These scripts are obtained through the trusted source repository; they are not separately Minisign-signed release assets. Inspect them before running. They embed the same project key and repeat signature, archive integrity, safe extraction, source identity and downgrade checks. They read local release files and do not fetch or execute a remote installation script.
 
@@ -34,7 +34,7 @@ Run from the directory holding the four downloaded files, as the installing user
 ### Windows x64
 
 ```powershell
-powershell.exe -NoProfile -File .\install.ps1 .\release.json .\release.json.minisig .\excess-worker-0.2.0-8724162f793d-win-x64.zip
+powershell.exe -NoProfile -File .\install.ps1 .\release.json .\release.json.minisig .\excess-worker-0.2.1-302772c0759d-win-x64.zip
 $env:PATH = (Join-Path $env:LOCALAPPDATA 'EXCESS\bin') + ';' + $env:PATH
 excess-worker guide
 excess-worker doctor
@@ -48,7 +48,7 @@ If PowerShell blocks the downloaded script, verify it came from the tagged proje
 
 ```sh
 mkdir -p "${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/excess}"
-sh ./install.sh ./release.json ./release.json.minisig ./excess-worker-0.2.0-8724162f793d-linux-x64.tar.gz
+sh ./install.sh ./release.json ./release.json.minisig ./excess-worker-0.2.1-302772c0759d-linux-x64.tar.gz
 export PATH="${EXCESS_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/excess}/bin:$PATH"
 excess-worker guide
 excess-worker doctor
@@ -153,6 +153,10 @@ Use `excess-worker status` and the Supply page to inspect activity. Local offers
 
 Revoke the device on the Supply page to remove coordinator access. After outstanding work is handled, `excess-worker unpair` retires the local identity. Keep the state directory private and never include it in an issue or vulnerability report.
 
-Use `excess-worker update --check` to inspect signed update availability. Drain and wait for exit before a manual `excess-worker update`, then restart. Windows automatic installation is disabled. Linux automatic updates are optional through `excess-worker update --auto on` in the supervised service. The signed sequence26 Linux update/recovery and Windows default-fetch update/tamper/downgrade/rollback/roll-forward checks passed. Fresh direct Windows installation passed with full inventory and launcher checks. Separate Windows CPU and CUDA recovery probes passed on sequences18 and 26; the CUDA probe offloaded 37 Qwen3-4B layers and preserved high-water 26. [Update authentication and recovery](VERIFICATION.md#updates-and-recovery).
+Use `excess-worker update --check` to inspect signed update availability. Drain and wait for exit before a manual `excess-worker update`, then restart. Windows automatic installation is disabled. Linux automatic updates are optional through `excess-worker update --auto on` in the supervised service.
+
+**Updating Linux 0.2.0 to 0.2.1:** the 0.2.0 updater accepts only the earlier Linux GPU helper profile, so `excess-worker update` refuses the 0.2.1 Linux package and leaves 0.2.0 unchanged. Drain and wait for exit, then download, verify and install 0.2.1 with the [Linux installer command](#linux-x64) using the same install location (and the same `--prefix`, if you used one). The installer upgrades in place and records high-water 28. Windows 0.2.0 installations update normally with `excess-worker update`.
+
+For sequence 28, a local signed HTTPS feed verified the Windows default-fetch update from 0.2.0 (high-water 26 to 28, with the updated launcher started), downgrade refusal and tampered-archive refusal. On Linux, downgrade and tampered-archive refusal passed, and an in-place installer upgrade from 0.2.0 reached high-water 28. The earlier signed sequence26 Linux update/recovery and Windows default-fetch update/tamper/downgrade/rollback/roll-forward checks passed. Fresh direct Windows installation passed with full inventory and launcher checks. Separate Windows CPU and CUDA recovery probes passed on sequences18 and 26; the CUDA probe offloaded 37 Qwen3-4B layers and preserved high-water 26. [Update authentication and recovery](VERIFICATION.md#updates-and-recovery).
 
 For source builds, local packaging and candidate verification, use [BUILD.md](BUILD.md) and [VERIFICATION.md](VERIFICATION.md#technical-release-evidence); these are developer workflows.
