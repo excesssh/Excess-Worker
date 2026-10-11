@@ -25,7 +25,7 @@ const controllerSourceSha256=hash(controllerSource);
 const files = [], comparisons = [], isolation = {}; let version, sequence, releasedAt, releaseReady;
 await mkdir(out,{recursive:true});
 for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linux-x64','linux-x64','.tar.gz']]) {
-  const workerVersion = JSON.parse(await readFile('apps/worker/package.json','utf8')).version;
+  const workerVersion = JSON.parse(await readFile('package.json','utf8')).version;
   const folder = 'excess-worker-'+workerVersion+'-'+suffix;
   const [left,right] = await Promise.all([readFile(join(first,folder+extension)),readFile(join(second,folder+extension))]);
   assertPublicBytes(left); assertPublicBytes(right);

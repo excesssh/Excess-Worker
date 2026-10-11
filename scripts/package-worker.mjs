@@ -21,7 +21,7 @@ const linux=platform==="linux-x64";
 const out=resolve(option("--out")??join(root,".cache","package")),zip=!args.includes("--no-zip"),nodeLicense=option("--node-license");
 if(!linux&&(process.platform!=="win32"||process.arch!=="x64"))throw new Error("PACKAGE_REQUIRES_WINDOWS_X64");
 if(process.version!=="v24.11.1")throw new Error("PACKAGE_REQUIRES_PINNED_NODE_24_11_1");
-const version=JSON.parse(await readFile(join(root,"apps/worker/package.json"),"utf8")).version;
+const version=JSON.parse(await readFile(join(root,"package.json"),"utf8")).version;
 if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))throw Error("PACKAGE_VERSION_INVALID");
 const packageNeedsLinuxGpuSandbox=linux&&requiresLinuxGpuSandbox(version);
 const releaseSequence=Number(process.env.EXCESS_RELEASE_SEQUENCE??1);
