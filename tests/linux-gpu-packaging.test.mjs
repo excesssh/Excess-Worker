@@ -8,6 +8,7 @@ import { LINUX_GPU_PROFILE, readLinuxGpuSandbox, requiresLinuxGpuSandbox } from 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 test('v0.2 Linux packaging requires the exact scanned CUDA helper and integrity pin', async () => {
+  assert.equal(LINUX_GPU_PROFILE,'linux-cuda-device-budget-v2','embedded-preload artifacts use a distinct pin profile');
   assert.equal(requiresLinuxGpuSandbox('0.1.9'), false);
   assert.equal(requiresLinuxGpuSandbox('0.2.0'), true);
   assert.equal(requiresLinuxGpuSandbox('0.2.0-rc.1'), true);

@@ -26,7 +26,7 @@ node scripts/public-worker/build-linux-controller.mjs .cache/native-linux
 node scripts/public-worker/build-linux-egress-peer.mjs .cache/native-linux
 ```
 
-The helpers are `excess-sandbox` (`linux-landlock-v1`), `excess-controller` (`linux-controller-namespaces-v1`), `excess-egress-peer` (`linux-af-unix-peercred-v1`) and `excess-gpu-sandbox` (`linux-cuda-device-budget-v1`). Each builder writes a SHA-256 integrity file. Builds use compiler hardening and path mapping, but the system GCC and C library are local dependencies; the build is not hermetic. Building the GPU helper does not establish NVIDIA execution evidence.
+The helpers are `excess-sandbox` (`linux-landlock-v1`), `excess-controller` (`linux-controller-namespaces-v1`), `excess-egress-peer` (`linux-af-unix-peercred-v1`) and `excess-gpu-sandbox` (`linux-cuda-device-budget-v2` in current source; the published 0.2.0 helper remains v1). Each builder writes a SHA-256 integrity file. Builds use compiler hardening and path mapping, but the system GCC and C library are local dependencies; the build is not hermetic. Building the GPU helper does not establish NVIDIA execution evidence.
 
 The controller requires a non-root x64 process, user and network namespace support, Landlock ABI 6 or newer, seccomp, and a dedicated cgroup v2 user service named `excess-worker.service`. The controller verifies finite memory, zero swap, task-count and CPU limits from that outside cgroup and refuses to start if they are missing. The default service is capped at 75% of detected memory, at most 12 GiB, with swap disabled, at most 128 tasks and at most 200% CPU. See [native build inputs](NATIVE-BUILD.md) and [platform status](PLATFORMS.md).
 

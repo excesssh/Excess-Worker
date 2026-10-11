@@ -125,7 +125,7 @@ def validate_gpu_package(package, stage, seen, platform):
         stop('Linux GPU helper integrity metadata is missing or invalid')
     helper_rel = 'app/node_modules/@excess/adapters/native/excess-gpu-sandbox'
     pin_rel = 'app/node_modules/@excess/adapters/native/integrity-gpu.json'
-    if gpu.get('profile') != 'linux-cuda-device-budget-v1' or gpu.get('file') != helper_rel or gpu.get('integrityFile') != pin_rel or not re.fullmatch('[0-9a-f]{64}', str(gpu.get('sha256',''))):
+    if gpu.get('profile') not in ('linux-cuda-device-budget-v1', 'linux-cuda-device-budget-v2') or gpu.get('file') != helper_rel or gpu.get('integrityFile') != pin_rel or not re.fullmatch('[0-9a-f]{64}', str(gpu.get('sha256',''))):
         stop('Linux GPU helper integrity metadata is invalid')
     execution = package.get('execution')
     if not isinstance(execution,dict) or not isinstance(execution.get('gpuVerified'),bool): stop('Linux GPU package evidence status is missing')

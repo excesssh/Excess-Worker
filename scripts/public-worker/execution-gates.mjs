@@ -22,9 +22,9 @@ const schemaV1 = z.strictObject({
   platforms: z.strictObject({ 'win32-x64': platform, 'linux-x64': platform }),
 });
 const gpuScope = z.strictObject({
-  profile: z.literal('linux-cuda-device-budget-v1'), backend: z.literal('cuda'),
+  profile: z.literal('linux-cuda-device-budget-v2'), backend: z.literal('cuda'),
   gpuCount: z.literal(1), device: z.literal(0),
-  gpu: z.string().regex(/(?:H100|H200)/).max(256),
+  gpu: z.string().regex(/(?:H100|H200|B300)/).max(256),
   driver: z.string().regex(/^[0-9.]+$/), cuda: z.literal('12.9'),
   kernel: z.string().min(1).max(128), landlockAbi: z.number().int().min(6),
   memoryMonitoring: z.literal('whole-device-nvml'),

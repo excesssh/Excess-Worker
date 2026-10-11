@@ -13,7 +13,7 @@ import { PROMPT_FORMATS } from "./prompt-format.js";
 import { isolateRuntime, type RuntimeIsolation } from "./isolation.js";
 
 export interface AdapterOptions {threads:number;maxMemoryMb:number;maxGpuMemoryMb?:number;timeoutMs:number;modelId?:string;backend?:Backend}
-export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number;maxGpuMemoryMb?:number;peakGpuMemoryMb?:number;peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"windows-cuda-budget-v1"|"linux-cuda-device-budget-v1";gpuMemoryScope?:"whole-device"}
+export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number;maxGpuMemoryMb?:number;peakGpuMemoryMb?:number;peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"windows-cuda-budget-v1"|"linux-cuda-device-budget-v2";gpuMemoryScope?:"whole-device"}
 export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<AdapterProbe>;execute(request:unknown,options?:{signal?:AbortSignal;onChunk?:ChunkCallback}):Promise<TextResult>;stop():Promise<void>;
   /** Memory the loaded runtime already holds (its peak resident size), or 0 when no runtime is running. A job runs in that
    * process, so this memory counts toward the job's allowance rather than against the machine's free memory. */
@@ -193,7 +193,7 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       return {ok:true,capabilityDigest:entry.capabilityDigest,backend,modelId:entry.id,model:entry.capability.model,runtime:entry.capability.runtime,threads:options.threads,maxMemoryMb:options.maxMemoryMb,
         probedAt:new Date().toISOString(),generatedTokens:result.generatedTokens,peakRssMb:Math.ceil(runtime.peakRssBytes()/1048576),nativePid,guardianPid,
         ...(launch.isolate&&backend==="cuda"?{maxGpuMemoryMb:options.maxGpuMemoryMb!,peakGpuMemoryMb:Math.ceil(runtime.peakGpuMemoryBytes()/1048576),peakDedicatedGpuMemoryMb:Math.ceil(runtime.peakDedicatedGpuMemoryBytes()/1048576),gpuOffloadedLayers:runtime.gpuOffloadedLayers(),
-          ...(currentPlatform()==="linux-x64"?{gpuBoundary:"linux-cuda-device-budget-v1" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{})};
+          ...(currentPlatform()==="linux-x64"?{gpuBoundary:"linux-cuda-device-budget-v2" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{})};
     },
   };
 }

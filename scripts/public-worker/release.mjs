@@ -53,14 +53,14 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
       manifest.releaseGate!=='verified-execution'||manifest.releaseSigning!=='anonymous-minisign'||manifest.codeSigned!==false||
       platform==='win32-x64'&&manifest.windowsPublisher!=='no-trusted-authenticode-signature')throw Error('CANDIDATE_EXECUTION_EVIDENCE_INVALID');
     const gpuClaim=requireGpu?(verified.gpuVerified
-      ?' + linux-cuda-device-budget-v1 verified only for the recorded configuration'
-      :' + linux-cuda-device-budget-v1 candidate/unverified'):'';
+      ?' + linux-cuda-device-budget-v2 verified only for the recorded configuration'
+      :' + linux-cuda-device-budget-v2 candidate/unverified'):'';
     isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and '+expectedProfile:'windows-appcontainer-controller-v1 and '+expectedProfile)+
       (verified.gpuVerified&&platform==='win32-x64'?' + windows-cuda-budget-v1':'')+gpuClaim+': '+verified.configuration;
   }else{
     if(manifest.execution.cpuVerified!==false||manifest.execution.gpuVerified!==false||manifest.controller?.verified!==false||manifest.verification!==undefined)
       throw Error('CANDIDATE_NATIVE_BOUNDARY_INVALID');
-    const gpuClaim=requireGpu?' + linux-cuda-device-budget-v1 candidate/unverified':'';
+    const gpuClaim=requireGpu?' + linux-cuda-device-budget-v2 candidate/unverified':'';
     isolation[platform]=(platform==='linux-x64'?'linux-controller-namespaces-v1 and '+expectedProfile:'windows-appcontainer-controller-v1 and '+expectedProfile)+
       gpuClaim+': local candidate; packaged execution gates incomplete';
   }
@@ -88,7 +88,7 @@ for (const [platform,suffix,extension] of [['win32-x64','win-x64','.zip'],['linu
       const integrity=JSON.parse(pinA.toString('utf8'));
       const expectedStatus=ready&&manifest.execution.gpuVerified===true?'verified-configuration-only':'candidate-unverified';
       if(!gpu||Object.keys(gpu).sort().join(',')!=='file,integrityFile,profile,sha256,status'||gpu.file!==helperPath||gpu.integrityFile!==pinPath||
-        gpu.profile!=='linux-cuda-device-budget-v1'||gpu.sha256!==hash(gpuA)||gpu.status!==expectedStatus||!gpuA.equals(gpuB)||!pinA.equals(pinB)||
+        gpu.profile!=='linux-cuda-device-budget-v2'||gpu.sha256!==hash(gpuA)||gpu.status!==expectedStatus||!gpuA.equals(gpuB)||!pinA.equals(pinB)||
         Object.keys(integrity).sort().join(',')!=='profile,sha256'||integrity.profile!==gpu.profile||integrity.sha256!==gpu.sha256)
         throw Error('CANDIDATE_GPU_BOUNDARY_INVALID');
     } else if(manifest.gpu!==undefined) throw Error('CANDIDATE_GPU_BOUNDARY_INVALID');

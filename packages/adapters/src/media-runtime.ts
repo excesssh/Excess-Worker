@@ -19,7 +19,7 @@ export interface MediaArtifact {ref:ArtifactRef;data:Buffer}
 export interface MediaOutput {result:MediaResult;artifacts:MediaArtifact[]}
 export interface MediaProbe {ok:true;kind:MediaKind;capabilityDigest:string;backend:Backend;modelId:string;model:string;runtime:string;threads:number;maxMemoryMb:number;
   probedAt:string;generatedTokens:0;elapsedMs:number;peakRssMb:number;nativePid?:number;guardianPid?:number;maxGpuMemoryMb?:number;peakGpuMemoryMb?:number;
-  peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"linux-cuda-device-budget-v1"|"windows-cuda-budget-v1";gpuMemoryScope?:"whole-device"}
+  peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"linux-cuda-device-budget-v2"|"windows-cuda-budget-v1";gpuMemoryScope?:"whole-device"}
 export interface MediaAdapter {
   readonly kind:MediaKind;
   /** Validates a request against the model's own limits before a job is started. */
@@ -260,7 +260,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
         peakRssMb:Math.ceil(runtime.peakRssBytes()/MiB),nativePid,guardianPid,
         ...(launch.isolate&&backend==="cuda"?{maxGpuMemoryMb:options.maxGpuMemoryMb!,peakGpuMemoryMb:Math.ceil(runtime.peakGpuMemoryBytes()/MiB),
           peakDedicatedGpuMemoryMb:Math.ceil(runtime.peakDedicatedGpuMemoryBytes()/MiB),gpuOffloadedLayers:runtime.gpuOffloadedLayers(),
-          ...(currentPlatform()==="linux-x64"?{gpuBoundary:"linux-cuda-device-budget-v1" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{})};
+          ...(currentPlatform()==="linux-x64"?{gpuBoundary:"linux-cuda-device-budget-v2" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{})};
     },
   };
 }

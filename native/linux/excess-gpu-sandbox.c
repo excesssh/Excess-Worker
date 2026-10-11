@@ -1,5 +1,9 @@
 #define _GNU_SOURCE
+#include <linux/memfd.h>
+#include <elf.h>
+#include <sys/resource.h>
 #define EXCESS_GPU_PROFILE 1
+#include "cuda-threadname-blob.h"
 #define main excess_runtime_main
 #include "excess-sandbox.c"
 #undef main
@@ -22,6 +26,43 @@ static gpu_device device;
 static volatile sig_atomic_t stopped;
 static pid_t supervisor_pid;
 static int child_created;
+static int install_threadname_memfd(void) {
+    if (excess_cuda_threadname_blob_size < sizeof(Elf64_Ehdr) ||
+        excess_cuda_threadname_blob_size > 1024UL*1024UL) return -1;
+    Elf64_Ehdr image;
+    memcpy(&image, excess_cuda_threadname_blob, sizeof(image));
+    if (memcmp(image.e_ident, ELFMAG, SELFMAG) || image.e_ident[EI_CLASS] != ELFCLASS64 ||
+        image.e_ident[EI_DATA] != ELFDATA2LSB || image.e_ident[EI_VERSION] != EV_CURRENT ||
+        image.e_type != ET_DYN || image.e_machine != EM_X86_64 || image.e_version != EV_CURRENT ||
+        image.e_ehsize != sizeof(Elf64_Ehdr)) return -1;
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) || limit.rlim_cur <= EXCESS_GPU_PRELOAD_FD) return -1;
+    errno = 0;
+    if (fcntl(EXCESS_GPU_PRELOAD_FD, F_GETFD) >= 0 || errno != EBADF) return -1;
+    int fd = (int)syscall(SYS_memfd_create, "excess-cuda-threadname", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (fd < 0) return -1;
+    size_t at = 0;
+    while (at < excess_cuda_threadname_blob_size) {
+        ssize_t wrote = write(fd, excess_cuda_threadname_blob + at, excess_cuda_threadname_blob_size - at);
+        if (wrote < 0 && errno == EINTR) continue;
+        if (wrote <= 0) { close(fd); return -1; }
+        at += (size_t)wrote;
+    }
+    if (fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL)) { close(fd); return -1; }
+    if (fd != EXCESS_GPU_PRELOAD_FD) {
+        if (dup3(fd, EXCESS_GPU_PRELOAD_FD, 0) < 0) { close(fd); return -1; }
+        close(fd);
+    } else if (fcntl(fd, F_SETFD, 0)) { close(fd); return -1; }
+    int seals = fcntl(EXCESS_GPU_PRELOAD_FD, F_GET_SEALS);
+    struct stat st;
+    if (seals < 0 || (seals & (F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL)) !=
+        (F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) ||
+        fstat(EXCESS_GPU_PRELOAD_FD, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size != (off_t)excess_cuda_threadname_blob_size) {
+        close(EXCESS_GPU_PRELOAD_FD); return -1;
+    }
+    return 0;
+}
 void excess_gpu_preflight_failure(void) {
     if (getpid() == supervisor_pid && !child_created) {
         /* No inference child or temporary model handle exists on this path. */
@@ -103,7 +144,7 @@ int main(int argc, char **argv) {
     phase = 40;
     if (argc == 2 && !strcmp(argv[1], "--check")) {
         if (syscall(SYS_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION) < 6) fail();
-        puts("linux-cuda-device-budget-v1"); return 0;
+        puts("linux-cuda-device-budget-v2"); return 0;
     }
     /* helper <GPU bytes> followed by the unchanged CPU helper argument shape. */
     if (argc < 10 || getuid() == 0 || geteuid() == 0) fail();
@@ -115,8 +156,11 @@ int main(int argc, char **argv) {
     require_cgroup(ram_limit);
     init_gpu(); gpu_memory baseline;
     if (!memory(&baseline) || gpu_limit > baseline.total || baseline.used > gpu_limit) fail();
-    int diagnostics[2]; if (pipe2(diagnostics, O_CLOEXEC) || fcntl(diagnostics[0], F_SETFL, O_NONBLOCK)) fail();
-    pid_t parent = getpid(), child = fork(); if (child < 0) fail();
+    if (install_threadname_memfd()) fail();
+    int diagnostics[2]; if (pipe2(diagnostics, O_CLOEXEC) || fcntl(diagnostics[0], F_SETFL, O_NONBLOCK)) {
+        close(EXCESS_GPU_PRELOAD_FD); fail();
+    }
+    pid_t parent = getpid(), child = fork(); if (child < 0) { close(EXCESS_GPU_PRELOAD_FD); fail(); }
     if (!child) {
         close(diagnostics[0]);
         if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent || dup2(diagnostics[1], 2) < 0) fail();
@@ -126,6 +170,7 @@ int main(int argc, char **argv) {
         return excess_runtime_main(argc-1, argv+1);
     }
     child_created = 1;
+    close(EXCESS_GPU_PRELOAD_FD);
     close(diagnostics[1]); signal(SIGTERM, stop_signal); signal(SIGINT, stop_signal);
     if (prctl(PR_SET_PDEATHSIG, SIGTERM) || getppid() == 1) stopped = 1;
     printf("{\"type\":\"started\",\"pid\":%d}\n", child); fflush(stdout);

@@ -19,7 +19,7 @@ const nativeFiles = [
   ["excess-sandbox", "integrity.json", "linux-landlock-v1"],
   ["excess-controller", "integrity-controller.json", "linux-controller-namespaces-v1"],
   ["excess-egress-peer", "integrity-egress-peer.json", "linux-af-unix-peercred-v1"],
-  ...(requiresLinuxGpuSandbox(version) ? [["excess-gpu-sandbox", "integrity-gpu.json", "linux-cuda-device-budget-v1"]] : []),
+  ...(requiresLinuxGpuSandbox(version) ? [["excess-gpu-sandbox", "integrity-gpu.json", "linux-cuda-device-budget-v2"]] : []),
 ];
 const executableFiles = ["excess-worker", "node/bin/node", ...nativeFiles.map(([helper]) => nativeRel + helper)];
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");

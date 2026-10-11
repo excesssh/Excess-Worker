@@ -110,10 +110,11 @@ function packageFiles(platform, sequence = 2, ready = true, options = {}) {
     const helperPath = "app/node_modules/@excess/adapters/native/excess-gpu-sandbox";
     const integrityPath = "app/node_modules/@excess/adapters/native/integrity-gpu.json";
     const helper = Buffer.from("linux gpu helper fixture"), helperHash = digest(helper);
-    const pin = options.gpuMode === "pin" ? { profile: "linux-cuda-device-budget-v1", sha256: "f".repeat(64) } : { profile: "linux-cuda-device-budget-v1", sha256: helperHash };
+    const gpuProfile = options.gpuMode === "profile" ? "linux-cuda-device-budget-v3" : options.gpuProfile ?? "linux-cuda-device-budget-v1";
+    const pin = options.gpuMode === "pin" ? { profile: gpuProfile, sha256: "f".repeat(64) } : { profile: gpuProfile, sha256: helperHash };
     files[helperPath] = helper;
     files[integrityPath] = Buffer.from(JSON.stringify(pin));
-    manifest.gpu = { profile: "linux-cuda-device-budget-v1", file: helperPath, integrityFile: integrityPath, sha256: helperHash,
+    manifest.gpu = { profile: gpuProfile, file: helperPath, integrityFile: integrityPath, sha256: helperHash,
       status: options.gpuMode === "claim" ? "verified-configuration-only" : "candidate-unverified" };
   }
   const pkg = Buffer.from(JSON.stringify(manifest));
@@ -142,11 +143,11 @@ async function fixtureRoot() {
 }
 
 test("signed release package installs for Windows and Linux and records only variable based launchers", async () => {
-  for (const platform of ["win32-x64", "linux-x64"]) {
+  for (const [platform, gpuProfile] of [["win32-x64", null], ["linux-x64", "linux-cuda-device-budget-v1"], ["linux-x64", "linux-cuda-device-budget-v2"]]) {
     const root = await fixtureRoot();
     try {
       const folder = "excess-worker-1.1.0-" + (platform === "win32-x64" ? "win-x64" : "linux-x64");
-      const files = packageFiles(platform);
+      const files = packageFiles(platform, 2, true, { gpuProfile });
       const archive = platform === "win32-x64"
         ? zipArchive(Object.fromEntries(Object.entries(files).map(([name, data]) => [folder + "/" + name, data])))
         : tarArchive(folder, files);
@@ -164,7 +165,7 @@ test("signed release package installs for Windows and Linux and records only var
          const gpuHelper = join(app, "app/node_modules/@excess/adapters/native/excess-gpu-sandbox");
          const gpuPin = join(app, "app/node_modules/@excess/adapters/native/integrity-gpu.json");
          if (process.platform !== "win32") assert.equal((await lstat(gpuHelper)).mode & 0o777, 0o755, "the CUDA helper remains executable after authenticated update installation");
-         assert.equal(JSON.parse(await readFile(gpuPin, "utf8")).profile, "linux-cuda-device-budget-v1");
+         assert.equal(JSON.parse(await readFile(gpuPin, "utf8")).profile, gpuProfile);
        }
       assert.deepEqual(feed.calls, ["https://fixture.example/downloads/release.json", "https://fixture.example/downloads/release.json.minisig",
         "https://fixture.example/downloads/" + feed.manifest.files[0].file]);
@@ -187,7 +188,7 @@ test("legacy v0.1 Linux packages without a CUDA helper remain installable", asyn
 test("tampered archives, invalid signatures, package identity mismatch, closed release gates, and tar links leave install state untouched", async () => {
   const platform = "linux-x64", folder = "excess-worker-1.1.0-linux-x64", files = packageFiles(platform);
   const goodArchive = tarArchive(folder, files);
-  for (const mode of ["hash", "signature", "package", "gate", "link", "gpu-missing", "gpu-pin", "gpu-claim"]) {
+  for (const mode of ["hash", "signature", "package", "gate", "link", "gpu-missing", "gpu-pin", "gpu-claim", "gpu-profile"]) {
     const root = await fixtureRoot();
     try {
       const archive = mode === "gate" ? tarArchive(folder, packageFiles(platform, 2, false)) : mode === "link" ? tarArchive(folder, files, { symlink: true }) :

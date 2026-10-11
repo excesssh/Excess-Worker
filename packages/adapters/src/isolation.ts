@@ -29,7 +29,7 @@ export async function isolateRuntime(executable: string, args: readonly string[]
     throw new AdapterError("GPU_MEMORY_POLICY_REQUIRED");
   const base = fileURLToPath(new URL("../native/", import.meta.url));
   const helper = join(base, gpu ? "excess-gpu-sandbox" : "excess-sandbox");
-  const profile = gpu ? "linux-cuda-device-budget-v1" : "linux-landlock-v1";
+  const profile = gpu ? "linux-cuda-device-budget-v2" : "linux-landlock-v1";
   try {
     const pin = JSON.parse(await readFile(join(base, gpu ? "integrity-gpu.json" : "integrity.json"), "utf8")) as { profile?: unknown; sha256?: unknown };
     const hash = createHash("sha256").update(await readFile(helper)).digest("hex");

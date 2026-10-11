@@ -14,9 +14,14 @@
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#ifdef EXCESS_GPU_PROFILE
+#include <linux/memfd.h>
+#define EXCESS_GPU_PRELOAD_FD 200
+#endif
 #ifndef LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET
 #define LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET (1ULL << 0)
 #define LANDLOCK_SCOPE_SIGNAL (1ULL << 1)
@@ -53,8 +58,8 @@ static void path_rule(int rules, const char *path, uint64_t rights) {
 #define DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, (n), 0, 1), BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM)
 #define MAX_MODELS 32
 static void syscalls(void) {
-    /* Deny process inspection, kernel control, child processes, UDP and Unix sockets.
-       Threads remain available. clone3 gets ENOSYS so libc uses the checked clone path. */
+    /* Deny process inspection, kernel control, child processes and UDP.
+       Threads remain available. clone3 gets ENOSYS so libc uses clone. */
     struct sock_filter filter[] = {
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS, offsetof(struct seccomp_data, arch)),
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, AUDIT_ARCH_X86_64, 1, 0),
@@ -74,6 +79,25 @@ static void syscalls(void) {
         BPF_JUMP(BPF_JMP|BPF_JSET|BPF_K, CLONE_THREAD, 1, 0),
         BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
         BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+#ifdef EXCESS_GPU_PROFILE
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_socket, 0, 15),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS, offsetof(struct seccomp_data, args[0])),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, AF_INET, 8, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, AF_INET6, 7, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, AF_UNIX, 0, 9),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS, offsetof(struct seccomp_data, args[1])),
+        BPF_STMT(BPF_ALU|BPF_AND|BPF_K, 0xf),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SOCK_SEQPACKET, 1, 0),
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS, offsetof(struct seccomp_data, args[1])),
+        BPF_STMT(BPF_ALU|BPF_AND|BPF_K, 0xf),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SOCK_STREAM, 1, 0),
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+#else
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_socket, 0, 7),
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS, offsetof(struct seccomp_data, args[0])),
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, 2, 1, 0),
@@ -83,6 +107,7 @@ static void syscalls(void) {
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, 1, 1, 0),
         BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
         BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+#endif
     };
     struct sock_fprog program = { .len = sizeof(filter) / sizeof(filter[0]), .filter = filter };
     if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program)) fail();
@@ -105,6 +130,8 @@ static void syscalls(void) {
         /* NVIDIA 580 NV_ESC_NUMA_INFO, exact read/write query encoding and
          * 560-byte structure. NV_ESC_SET_NUMA_STATUS remains denied. */
         GPU_IOCTL(0xc23046d7),
+        /* Exact observed UVM operation numbers; encoded variants stay denied. */
+        GPU_IOCTL(23), GPU_IOCTL(24),
         BPF_STMT(BPF_ALU|BPF_AND|BPF_K, 0xffff),
         GPU_IOCTL(0x4627), GPU_IOCTL(0x4628), GPU_IOCTL(0x4629), GPU_IOCTL(0x462a), GPU_IOCTL(0x462b), GPU_IOCTL(0x4634),
         GPU_IOCTL(0x464e), GPU_IOCTL(0x464f), GPU_IOCTL(0x4652), GPU_IOCTL(0x4654), GPU_IOCTL(0x4657), GPU_IOCTL(0x4658), GPU_IOCTL(0x4659), GPU_IOCTL(0x465e),
@@ -133,6 +160,18 @@ static void gpu_metadata_rules(int rules) {
     const char *paths[] = { "/proc/self/maps", "/proc/self/status", "/proc/devices", "/proc/sys/vm/mmap_min_addr" };
     for (size_t n = 0; n < sizeof(paths)/sizeof(paths[0]); n++)
         path_rule(rules, paths[n], LANDLOCK_ACCESS_FS_READ_FILE);
+}
+
+static void gpu_preload_policy(void) {
+    const int required = F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL;
+    int seals = fcntl(EXCESS_GPU_PRELOAD_FD, F_GET_SEALS);
+    int flags = fcntl(EXCESS_GPU_PRELOAD_FD, F_GETFD);
+    if (seals < 0 || (seals & required) != required || flags < 0 || (flags & FD_CLOEXEC)) fail();
+    char path[64];
+    if (snprintf(path, sizeof(path), "/proc/self/fd/%d", EXCESS_GPU_PRELOAD_FD) >= (int)sizeof(path)) fail();
+    /* Anonymous memfds cannot receive Landlock path rules. The helper creates
+     * only these authenticated bytes; immutable seals and fd retention apply. */
+    if (setenv("LD_PRELOAD", path, 1) || unsetenv("LD_AUDIT")) fail();
 }
 #endif
 int main(int argc, char **argv) {
@@ -192,7 +231,11 @@ int main(int argc, char **argv) {
     const char *libraries[] = { "/usr/lib", "/lib", "/lib64", "/etc/ld.so.cache", "/proc/cpuinfo", "/proc/meminfo", "/sys/devices/system/cpu" };
     for (size_t n = 0; n < sizeof(libraries)/sizeof(libraries[0]); n++) if (!access(libraries[n], F_OK)) path_rule(rules, libraries[n], read);
     path_rule(rules, "/lib64/ld-linux-x86-64.so.2", LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_EXECUTE);
-    path_rule(rules, "/dev/null", LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_WRITE_FILE);
+    path_rule(rules, "/dev/null", LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_WRITE_FILE
+#ifdef EXCESS_GPU_PROFILE
+        | LANDLOCK_ACCESS_FS_TRUNCATE
+#endif
+    );
     path_rule(rules, "/dev/urandom", LANDLOCK_ACCESS_FS_READ_FILE);
 #ifdef EXCESS_GPU_PROFILE
     /* No render nodes, other GPU ordinals, UVM tooling or general /dev grant. */
@@ -201,6 +244,7 @@ int main(int argc, char **argv) {
     for (size_t n = 0; n < sizeof(gpu_devices)/sizeof(gpu_devices[0]); n++)
         path_rule(rules, gpu_devices[n], LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_IOCTL_DEV);
     if (!access("/proc/driver/nvidia", F_OK)) path_rule(rules, "/proc/driver/nvidia", read);
+    gpu_preload_policy();
 #endif
     for (uint64_t n = 0; n < count; n++) path_rule(rules, argv[6+n], read);
     for (uint64_t n = 0; n < model_count; n++) path_rule(rules, model_proc[n], LANDLOCK_ACCESS_FS_READ_FILE);
@@ -217,6 +261,11 @@ int main(int argc, char **argv) {
         if (fd > first && syscall(SYS_close_range, first, fd-1, 0)) fail();
         first = fd + 1;
     }
+#ifdef EXCESS_GPU_PROFILE
+    if (first > EXCESS_GPU_PRELOAD_FD) fail();
+    if (first < EXCESS_GPU_PRELOAD_FD && syscall(SYS_close_range, first, EXCESS_GPU_PRELOAD_FD-1, 0)) fail();
+    first = EXCESS_GPU_PRELOAD_FD + 1;
+#endif
     if (syscall(SYS_close_range, first, ~0U, 0)) fail();
     for (int at = command + 1; at < argc; at++) for (uint64_t n = 0; n < model_count; n++)
         if (!strcmp(argv[at], argv[model_paths_at+n])) argv[at] = model_alias[n];

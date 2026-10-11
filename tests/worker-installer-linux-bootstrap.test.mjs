@@ -58,7 +58,7 @@ function makeRelease(archive, { version, commit, sequence }) {
   }));
 }
 
-function packageFiles({ version, commit, sequence, ready = true, packageCommit = commit, candidate = false, gpuMode = "valid" }) {
+function packageFiles({ version, commit, sequence, ready = true, packageCommit = commit, candidate = false, gpuMode = "valid", gpuProfile = "linux-cuda-device-budget-v1" }) {
   const packageManifest = { product: "EXCESS", package: "worker", publicDistributionReady: ready,
     ...(candidate?{releaseGate:'isolated-hardware-execution-pending',licensesIncluded:true}:{}),
     releaseSequence: sequence, version, sourceCommit: packageCommit, platform: "linux-x64",
@@ -73,15 +73,15 @@ function packageFiles({ version, commit, sequence, ready = true, packageCommit =
     const helperPath = "app/node_modules/@excess/adapters/native/excess-gpu-sandbox";
     const integrityPath = "app/node_modules/@excess/adapters/native/integrity-gpu.json";
     files[helperPath] = helper;
-    files[integrityPath] = Buffer.from(JSON.stringify({ profile: "linux-cuda-device-budget-v1", sha256: gpuMode === "pin" ? "f".repeat(64) : helperHash }));
-    packageManifest.gpu = { profile: "linux-cuda-device-budget-v1", file: helperPath, integrityFile: integrityPath, sha256: helperHash, status: "candidate-unverified" };
+    files[integrityPath] = Buffer.from(JSON.stringify({ profile: gpuProfile, sha256: gpuMode === "pin" ? "f".repeat(64) : helperHash }));
+    packageManifest.gpu = { profile: gpuProfile, file: helperPath, integrityFile: integrityPath, sha256: helperHash, status: "candidate-unverified" };
   }
   files["manifest.json"] = Buffer.from(JSON.stringify(packageManifest));
   return files;
 }
 
-test("Linux standalone installer executes signed fixture install, upgrade, rollback and rejection cases in WSL", {
-  skip: process.platform !== "win32" || process.env.EXCESS_RUN_WSL_INSTALLER_TESTS !== "1",
+test("Linux standalone installer executes signed install, upgrade, rollback and rejection fixtures", {
+  skip: process.platform !== "linux" && (process.platform !== "win32" || process.env.EXCESS_RUN_WSL_INSTALLER_TESTS !== "1"),
 }, async () => {
   const signer = createSigner(), input = {};
   function add(name, bytes) { input[name] = Buffer.from(bytes).toString("base64"); }
@@ -95,15 +95,15 @@ test("Linux standalone installer executes signed fixture install, upgrade, rollb
     add(manifest, release); add(sig, signature); add(`cases/${name}/${filename}`, archiveBytes);
     input[`cases/${name}/filename.txt`] = Buffer.from(filename).toString("base64");
   }
-  function signedCase(name, { version = "1.1.0", commit = firstCommit, sequence = 2, ready = true, packageCommit = commit, symlink = false, candidate = false, gpuMode = "valid" } = {}) {
-    const folder = `excess-worker-${version}-linux-x64`, archive = tarArchive(folder, packageFiles({ version, commit, sequence, ready, packageCommit,candidate,gpuMode }), symlink);
+  function signedCase(name, { version = "1.1.0", commit = firstCommit, sequence = 2, ready = true, packageCommit = commit, symlink = false, candidate = false, gpuMode = "valid", gpuProfile = "linux-cuda-device-budget-v1" } = {}) {
+    const folder = `excess-worker-${version}-linux-x64`, archive = tarArchive(folder, packageFiles({ version, commit, sequence, ready, packageCommit,candidate,gpuMode,gpuProfile }), symlink);
     const release = makeRelease(archive, { version, commit, sequence }), signature = signer.sign(release);
     addCase(name, archive, release, signature);
     return { archive, release, signature };
   }
   const first = signedCase("first");
   const secondCommit = "abcdef0123456789abcdef0123456789abcdef01";
-  signedCase("second", { version: "1.2.0", commit: secondCommit, sequence: 3 });
+  signedCase("second", { version: "1.2.0", commit: secondCommit, sequence: 3, gpuProfile: "linux-cuda-device-budget-v2" });
   const thirdCommit = "1111111123456789abcdef0123456789abcdef01";
   signedCase("third", { version: "1.3.0", commit: thirdCommit, sequence: 4 });
   const fourthCommit = "2222222234567890abcdef0123456789abcdef01";
@@ -121,14 +121,16 @@ test("Linux standalone installer executes signed fixture install, upgrade, rollb
   signedCase("identity", { packageCommit: "f".repeat(40) });
   signedCase("gpu-missing", { gpuMode: "missing" });
   signedCase("gpu-pin", { gpuMode: "pin" });
+  signedCase("gpu-profile", { gpuProfile: "linux-cuda-device-budget-v3" });
   const legacy = signedCase("legacy-v01", { version: "0.1.1", sequence: 2 });
 
   const payload = JSON.stringify(input);
   const wrapper = `set -eu
+locker=; older_pid=; newer_pid=
 tools=$(mktemp -d /tmp/excess-worker-linux-installer.XXXXXX)
 case "$tools" in /tmp/excess-worker-linux-installer.*) ;; *) exit 90 ;; esac
 step=prepare
-trap 'status=$?; if [ "$status" -ne 0 ]; then printf "linux-fixture-failed-at:%s:%s\\n" "$step" "$status"; for n in third fourth; do [ ! -f "$tools/status-$n" ] || { printf "status-%s:" "$n"; cat "$tools/status-$n"; }; [ ! -f "$tools/output-$n" ] || grep -F "EXCESS worker install:" "$tools/output-$n" || true; done; fi; case "$tools" in /tmp/excess-worker-linux-installer.*) rm -rf -- "$tools" ;; esac' EXIT HUP INT TERM
+trap 'status=$?; touch "$tools/release-lock"; for pid in $locker $older_pid $newer_pid; do kill "$pid" 2>/dev/null || true; done; for pid in $locker $older_pid $newer_pid; do wait "$pid" 2>/dev/null || true; done; if [ "$status" -ne 0 ]; then printf "linux-fixture-failed-at:%s:%s\\n" "$step" "$status"; for n in third fourth; do [ ! -f "$tools/status-$n" ] || { printf "status-%s:" "$n"; cat "$tools/status-$n"; }; [ ! -f "$tools/output-$n" ] || grep -F "EXCESS worker install:" "$tools/output-$n" || true; done; fi; case "$tools" in /tmp/excess-worker-linux-installer.*) rm -rf -- "$tools" ;; esac' EXIT HUP INT TERM
 cd "$tools"
 apt-get download minisign=0.11-1 >/dev/null
 expected=854c5f9dddaa99a02915f8cacd41e03442cb6cda25f7bbc53c0a3d297bcd064f
@@ -194,9 +196,9 @@ step=assert-blocked-installs
 grep -F -q '1.2.0-abcdef012345' "$prefix/bin/excess-worker"
 touch "$tools/release-lock"
 step=await-concurrent-installs
-wait "$locker"
-wait "$older_pid"
-wait "$newer_pid"
+wait "$locker"; locker=
+wait "$older_pid"; older_pid=
+wait "$newer_pid"; newer_pid=
 grep -F -q installed "$tools/status-fourth"
 grep -F -q installed "$tools/status-third" || grep -F -q rollback-rejected "$tools/status-third"
 [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sequence"])' "$prefix/state/release-high-water.json")" = 5 ]
@@ -213,10 +215,11 @@ run_fail unsafe "$tools/unsafe-install" 'archive links and special entries are n
 run_fail identity "$tools/identity-install" 'worker package source or platform identity mismatch'
 run_fail gpu-missing "$tools/gpu-missing-install" 'Linux GPU helper integrity metadata is missing or invalid'
 run_fail gpu-pin "$tools/gpu-pin-install" 'Linux GPU helper does not match its integrity pin'
-for name in tamper-install manifest-install closed-install unsafe-install identity-install gpu-missing-install gpu-pin-install; do [ ! -e "$tools/$name" ]; done
-printf 'Linux WSL bootstrap fixtures passed: install, upgrade, launcher, CUDA helper integrity and mode, v0.1 compatibility, serialized installs, rollback, tampering, gate, unsafe tar, identity.\n'
+run_fail gpu-profile "$tools/gpu-profile-install" 'Linux GPU helper integrity metadata is missing or invalid'
+for name in tamper-install manifest-install closed-install unsafe-install identity-install gpu-missing-install gpu-pin-install gpu-profile-install; do [ ! -e "$tools/$name" ]; done
+printf 'Linux bootstrap fixtures passed: install, upgrade, launcher, CUDA helper integrity and mode, v0.1 compatibility, serialized installs, rollback, tampering, gate, unsafe tar, identity.\n'
 `;
-  const result = spawnSync("wsl.exe", ["-d", "Ubuntu", "--", "sh", "-s"], { input: wrapper, encoding: "utf8", timeout: 180000, maxBuffer: 1024 * 1024 });
+  const result = process.platform === "linux" ? spawnSync("sh", ["-s"], { input: wrapper, encoding: "utf8", timeout: 180000, maxBuffer: 1024 * 1024 }) : spawnSync("wsl.exe", ["-d", "Ubuntu", "--", "sh", "-s"], { input: wrapper, encoding: "utf8", timeout: 180000, maxBuffer: 1024 * 1024 });
   const safeDiagnostic = `${result.stdout}\n${result.stderr}`.replace(/(?:[A-Za-z]:\\Users\\)[^\\\s]+/gi, "<home>").replace(/\/mnt\/[a-z]\/Users\/[^/\s]+/gi, "<home>").trim().slice(-500);
-  assert.equal(result.status, 0, "WSL native Linux fixture runner completes: " + safeDiagnostic);
+  assert.equal(result.status, 0, "native Linux fixture runner completes: " + safeDiagnostic);
 });

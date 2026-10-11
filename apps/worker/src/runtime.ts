@@ -58,7 +58,7 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
       !Number.isSafeInteger(proof.peakRssMb) || Number(proof.peakRssMb) < 0) throw Error("Invalid local probe observation");
   const linuxGpu=policy.backend==="cuda"&&process.platform==="linux";
   const minimumGpuMb=entry.kind==="image"?64:Math.floor(entry.downloadBytes*0.75/1048576);
-  if(policy.backend==="cuda"&&((linuxGpu?(proof.gpuBoundary!=="linux-cuda-device-budget-v1"||proof.gpuMemoryScope!=="whole-device"||
+  if(policy.backend==="cuda"&&((linuxGpu?(proof.gpuBoundary!=="linux-cuda-device-budget-v2"||proof.gpuMemoryScope!=="whole-device"||
     !Number.isSafeInteger(proof.gpuOffloadedLayers)||Number(proof.gpuOffloadedLayers)<(entry.kind==="image"?0:1)||Number(proof.gpuOffloadedLayers)>128):
     (proof.gpuBoundary!=="windows-cuda-budget-v1"||!Number.isSafeInteger(proof.gpuOffloadedLayers)||Number(proof.gpuOffloadedLayers)<(entry.kind==="image"?0:1)||Number(proof.gpuOffloadedLayers)>128))||proof.maxGpuMemoryMb!==policy.maxGpuMemoryMb||
     !Number.isSafeInteger(proof.peakGpuMemoryMb)||Number(proof.peakGpuMemoryMb)>policy.maxGpuMemoryMb||
@@ -75,7 +75,7 @@ function successfulProbe(value: unknown, policy: WorkerPolicy, startedAt: number
     ...(proof.guardianPid === undefined ? {} : { guardianPid: Number(proof.guardianPid) }),
     ...(policy.backend==="cuda"?{maxGpuMemoryMb:policy.maxGpuMemoryMb,peakGpuMemoryMb:Number(proof.peakGpuMemoryMb),
       peakDedicatedGpuMemoryMb:Number(proof.peakDedicatedGpuMemoryMb),gpuOffloadedLayers:Number(proof.gpuOffloadedLayers),
-      ...(linuxGpu?{gpuBoundary:"linux-cuda-device-budget-v1" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{}),
+      ...(linuxGpu?{gpuBoundary:"linux-cuda-device-budget-v2" as const,gpuMemoryScope:"whole-device" as const}:{gpuBoundary:"windows-cuda-budget-v1" as const})}:{}),
     policy: { ...policy },
   };
 }

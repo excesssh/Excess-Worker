@@ -3,7 +3,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertPublicBytes } from './privacy.mjs';
 
-export const LINUX_GPU_PROFILE = 'linux-cuda-device-budget-v1';
+export const LINUX_GPU_PROFILE = 'linux-cuda-device-budget-v2';
 export const LINUX_GPU_HELPER = 'excess-gpu-sandbox';
 export const LINUX_GPU_PIN = 'integrity-gpu.json';
 

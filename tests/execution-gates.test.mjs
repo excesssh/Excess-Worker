@@ -37,7 +37,7 @@ test('Linux GPU evidence requires the monitored device profile and names only ve
   const linux = value.platforms['linux-x64'];
   linux.gpuInference = linux.gpuCancellation = true;
   assert.throws(() => verifyExecutionEvidence(bytes(value), 'linux-x64', payload, 14), /GPU_SCOPE_INVALID/);
-  linux.gpuScope = { profile:'linux-cuda-device-budget-v1', backend:'cuda', gpuCount:1, device:0,
+  linux.gpuScope = { profile:'linux-cuda-device-budget-v2', backend:'cuda', gpuCount:1, device:0,
     gpu:'NVIDIA H200', driver:'580.178.04', cuda:'12.9', kernel:'7.0.0-38-generic', landlockAbi:6,
     memoryMonitoring:'whole-device-nvml', hardVramPartition:false,
     checks:Object.fromEntries(['cancellation','resourceLimitRefusal','drain','restart','revocation','cleanup'].map(key => [key,true])),

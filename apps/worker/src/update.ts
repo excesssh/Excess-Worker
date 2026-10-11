@@ -57,7 +57,7 @@ function verifyGpuPackage(files: ReadonlyMap<string, Buffer>, details: Record<st
   const metadata = gpu as Record<string, unknown>;
   const expectedKeys = ["file", "integrityFile", "profile", "sha256", "status"];
   if (Object.keys(metadata).sort().join(",") !== expectedKeys.join(",") ||
-      metadata.profile !== "linux-cuda-device-budget-v1" ||
+      !["linux-cuda-device-budget-v1", "linux-cuda-device-budget-v2"].includes(String(metadata.profile)) ||
       metadata.file !== "app/node_modules/@excess/adapters/native/excess-gpu-sandbox" ||
       metadata.integrityFile !== "app/node_modules/@excess/adapters/native/integrity-gpu.json" ||
       typeof metadata.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(metadata.sha256)) {
