@@ -12,6 +12,8 @@ The GPU helper embeds a small compatibility module that discards optional own-th
 
 Focused Linux kernel tests cover deterministic helper builds, loading the sealed module after confinement, immutable bytes, narrow open interception, exact ioctl encodings, CPU socket refusal and outside abstract-peer rejection. These checks contain no NVIDIA device or buyer execution. Current-source GPU hardware and buyer lifecycle verification remain open.
 
+Source verification at `58f6a3e9dc4e87afbaf05ebc8ea2c2a3771e10d5` passes [the standalone workflow](https://github.com/excesssh/Excess-Worker/actions/runs/38100431756): Ubuntu had 307 tests, 300 passed and 7 skipped; Windows had 307 tests, 284 passed and 23 skipped. Both had zero failures or cancellations. Ubuntu also passed all six native controller/package fixtures. These results verify software and recorded kernel checks, without NVIDIA hardware or buyer execution.
+
 No Linux CUDA buyer execution, cancellation, settlement or receipt lifecycle is verified for this corrected source. Do not treat catalogue availability, completed downloads, device detection or a software test as that evidence. No changed GPU binary has been published, and previous releases, signed manifests and assets remain unchanged.
 
 See [recorded platform evidence](../../README.md#your-machine-your-controls), [security boundaries](../../SECURITY.md#model-runtime-boundaries) and the [remaining coverage checklist](remaining-work-checklist.md).
