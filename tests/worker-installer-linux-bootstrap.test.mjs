@@ -215,7 +215,7 @@ run_fail unsafe "$tools/unsafe-install" 'archive links and special entries are n
 run_fail identity "$tools/identity-install" 'worker package source or platform identity mismatch'
 run_fail gpu-missing "$tools/gpu-missing-install" 'Linux GPU helper integrity metadata is missing or invalid'
 run_fail gpu-pin "$tools/gpu-pin-install" 'Linux GPU helper does not match its integrity pin'
-run_fail gpu-profile "$tools/gpu-profile-install" 'Linux GPU helper integrity metadata is missing or invalid'
+run_fail gpu-profile "$tools/gpu-profile-install" 'Linux GPU helper integrity metadata is invalid'
 for name in tamper-install manifest-install closed-install unsafe-install identity-install gpu-missing-install gpu-pin-install gpu-profile-install; do [ ! -e "$tools/$name" ]; done
 printf 'Linux bootstrap fixtures passed: install, upgrade, launcher, CUDA helper integrity and mode, v0.1 compatibility, serialized installs, rollback, tampering, gate, unsafe tar, identity.\n'
 `;
