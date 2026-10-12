@@ -16,7 +16,7 @@ Use `npm.cmd` in Windows PowerShell. Project setup installs branded commit ident
 
 ## Linux native helpers
 
-Linux x64 source version 0.2.1 requires GCC and four separately built helpers. The published 0.2.0 package remains unchanged and its GPU helper is the legacy v1 profile. Keep generated files in a neutral build directory, such as `.cache/native-linux`:
+Linux x64 source version 0.2.2 requires GCC and four separately built helpers. The published 0.2.0 package remains unchanged and its GPU helper is the legacy v1 profile. Keep generated files in a neutral build directory, such as `.cache/native-linux`:
 
 ```sh
 mkdir -p .cache/native-linux
