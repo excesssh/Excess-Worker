@@ -45,15 +45,33 @@ test("synthetic llama SSE decodes split UTF-8, SSE line boundaries and empty tok
   assert.equal((await readLlamaStream(response(multiline + frame(final(1))), 1, async () => {})).text, "fixture");
 });
 
+test("synthetic llama SSE meters only reported token IDs when the runtime withholds the start of a multibyte character", async () => {
+  // Shape seen from the pinned server with gpt-oss: " \u2248" arrives with one ID while tokens_predicted advances by two,
+  // and a run may end inside a character, so the final count can exceed the reported IDs by at most three.
+  const wire = frame(partial(" time", [1058], 1)) + frame(partial(" \u2248", [230], 3)) + frame(partial("10", [702], 4)) +
+    frame(final(6, { stop_type: "limit" }));
+  const chunks = [];
+  assert.deepEqual(await readLlamaStream(response(wire), 6, async chunk => { chunks.push(chunk); }),
+    { text: " time \u224810", generatedTokens: 3, finishReason: "length" });
+  assert.deepEqual(chunks.flatMap(chunk => chunk.tokenIds), [1058, 230, 702]);
+  assert.equal(chunks.map(chunk => chunk.delta).join(""), " time \u224810");
+  assert.equal((await readLlamaStream(response(frame(partial("é", [2], 2)) + frame(final(2, { stop_type: "eos" }))), 2, async () => {})).generatedTokens, 1);
+});
+
 test("synthetic llama SSE rejects incomplete, reordered, oversized or inconsistent runtime evidence", async () => {
   const first = frame(partial("fixture", [1], 1)), end = frame(final(1));
   const cases = [
     ["missing final", first], ["unterminated event", first + end.trimEnd()],
     ["duplicate final", first + end + end], ["content after final", first + end + first],
     ["OpenAI terminator", first + "data: [DONE]\n\n"], ["wrong SSE event", "event: error\ndata: {}\n\n"],
-    ["final count mismatch", first + frame(final(2))], ["cumulative final", first + frame(final(1, { content: "fixture", tokens: [1] }))],
+    ["final count mismatch", first + frame(final(2, { stop_type: "eos" }))], ["cumulative final", first + frame(final(1, { content: "fixture", tokens: [1] }))],
     ["truncated", first + frame(final(1, { truncated: true }))], ["unfinished stop", first + frame(final(1, { stop_type: "none" }))],
-    ["token-ID omission", frame(partial("é", [2], 2)) + frame(final(2))],
+    ["token-ID omission in ASCII text", frame(partial("e", [2], 2)) + frame(final(2))],
+    ["more withheld tokens than a character has", frame(partial("x", [1], 1)) + frame(partial("é", [2], 6)) + frame(final(6))],
+    ["count moving backwards", frame(partial("é", [1], 2)) + frame(partial("x", [2], 2)) + frame(final(2))],
+    ["trailing withheld tokens before the budget", first + frame(final(2)), 3],
+    ["final count beyond withheld bound", first + frame(final(5)), 5],
+    ["withheld tokens beyond the request bound", frame(partial("é", [2], 3)) + frame(final(3)), 2],
     ["negative token", frame(partial("fixture", [-1], 1)) + end],
     ["oversized token", frame(partial("fixture", [2147483648], 1)) + end],
     ["zero-token text", frame(partial("fixture", [], 0)) + frame(final(0))],

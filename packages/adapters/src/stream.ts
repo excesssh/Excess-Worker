@@ -10,6 +10,8 @@ const eventSchema = z.object({
   stop_type: z.enum(["none", "eos", "limit", "word"]).optional(), truncated: z.boolean().optional(),
 });
 const invalid = () => new AdapterError("INVALID_RUNTIME_STREAM");
+// A UTF-8 character has at most four bytes, so at most three byte tokens can precede the one that completes it.
+const MAX_WITHHELD_TOKENS = 3;
 
 /** Follows generated token IDs until the answer marker (the loaded vocabulary's tokenization of a format's answerMarker)
  * has appeared. Everything up to and including it is reasoning: metered, but its text is never delivered. */
@@ -54,7 +56,7 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
   }
   const reader = response.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
   let wireBytes = 0, line = "", data: string[] = [], eventBytes = 0, lines = 0, events = 0, skipLf = false;
-  let finished = false, finishReason: "stop" | "length" = "stop", text = "", tokenCount = 0, sequence = 0;
+  let finished = false, finishReason: "stop" | "length" = "stop", text = "", tokenCount = 0, predicted = 0, sequence = 0;
   let pendingText = "", pendingTokens: number[] = [];
   const flush = async () => {
     if (!pendingTokens.length) { if (pendingText) throw invalid(); return; }
@@ -77,16 +79,22 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
     // strict UTF-8 decoder has validated the wire bytes.
     if (Buffer.from(value.content, "utf8").toString("utf8") !== value.content) throw invalid();
     if (value.stop) {
-      if (value.content !== "" || value.tokens.length || value.truncated !== false ||
-          !value.stop_type || value.stop_type === "none" || value.tokens_predicted !== tokenCount) throw invalid();
+      // A run that reaches its token budget inside a character ends with withheld tokens the server counted but never sent.
+      const trailing = value.tokens_predicted - predicted;
+      if (value.content !== "" || value.tokens.length || value.truncated !== false || !value.stop_type || value.stop_type === "none" ||
+          trailing < 0 || (trailing > 0 && (value.stop_type !== "limit" || value.tokens_predicted !== maxTokens || trailing > MAX_WITHHELD_TOKENS))) throw invalid();
       finished = true; finishReason = value.stop_type === "limit" ? "length" : "stop";
       await flush(); return;
     }
     if ((value.stop_type !== undefined && value.stop_type !== "none") || value.truncated === true || !value.tokens.length) throw invalid();
-    // The pinned server can omit IDs while assembling a multibyte character.
-    // Such a count gap fails closed; never invent missing metering evidence.
-    tokenCount += value.tokens.length;
-    if (tokenCount > maxTokens || value.tokens_predicted !== tokenCount) throw invalid();
+    // The pinned server withholds a token whose text ends inside a multibyte UTF-8 character. It later sends the whole
+    // character with only the completing token's ID, while tokens_predicted counts the withheld ones too (gpt-oss writing
+    // an approximately-equal sign does this). Withheld tokens are not metered: only token IDs the runtime reported are
+    // counted, never invented ones.
+    const withheld = value.tokens_predicted - predicted - value.tokens.length;
+    if (withheld < 0 || withheld > MAX_WITHHELD_TOKENS || (withheld > 0 && !/[^\u0000-\u007f]/u.test(value.content))) throw invalid();
+    predicted = value.tokens_predicted; tokenCount += value.tokens.length;
+    if (predicted > maxTokens) throw invalid();
     let content = value.content;
     if (gate && !gate.revealed) {
       const after = gate.feed(value.tokens);
