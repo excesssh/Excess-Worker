@@ -10,7 +10,7 @@ import { setWorkerControl, readWorkerControl, readWorkerStatus, acquireRuntimeLo
 import { parseWorkerPolicy, policyDecision, readWorkerPolicy, writeWorkerPolicy } from "../apps/worker/dist/policy.js";
 import { WorkerConnectionError } from "../apps/worker/dist/identity.js";
 import { removeWorkerOffer, writeWorkerOffer } from "../apps/worker/dist/offer.js";
-import { capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
+import { AdapterError, capabilityDigest, TEXT_CAPABILITY } from "../packages/adapters/dist/index.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 import { createControllerStateStore } from "../apps/worker/dist/controller-state.js";
 import { createWindowsExecutionProofStore } from "../apps/worker/dist/windows-execution-proof-store.js";
@@ -465,6 +465,31 @@ test("fixture worker rejects input digest mismatch without invoking executor", a
   await unlink(join(f.dir, "attempts.jsonl"));
   await assert.rejects(f.start(), /attempt journal missing/);
   assert.equal(f.counts.executions, 0);
+});
+
+test("fixture worker records a failed job's fixed reason code in its status", async () => {
+  const f = await fixture();
+  f.adapter.execute = async () => { throw new AdapterError("RUNTIME_EXITED"); };
+  const running = f.start();
+  await waitFor(() => f.calls.some(c => c.type === "job.failed"), "job failure report");
+  assert.equal(f.calls.find(c => c.type === "job.failed").data.reason, "execution_error");
+  await waitFor(async () => (await readWorkerStatus(f.dir)).lastJobFailure !== undefined, "status failure record");
+  await setWorkerControl(f.dir, "stop"); await running;
+  const failure = (await readWorkerStatus(f.dir)).lastJobFailure;
+  assert.deepEqual({ ...failure, at: undefined }, { jobId: f.a.jobId, attemptId: f.a.attemptId, outcome: "failed", reason: "adapter_runtime_exited", at: undefined });
+  assert.ok(Date.parse(failure.at) > 0);
+  assert.equal((await f.journal()).at(-1).reason, "execution_failed");
+});
+
+test("fixture worker never records an unclassified failure message in its status", async () => {
+  const f = await fixture();
+  f.adapter.execute = async () => { throw Error("TEST FIXTURE INPUT /private/fixture/path"); };
+  const running = f.start();
+  await waitFor(async () => (await readWorkerStatus(f.dir)).lastJobFailure !== undefined, "status failure record");
+  await setWorkerControl(f.dir, "stop"); await running;
+  const text = await readFile(join(f.dir, "status.json"), "utf8");
+  assert.equal(JSON.parse(text).lastJobFailure.reason, "worker_operation_failed");
+  assert.ok(!text.includes("TEST FIXTURE") && !text.includes("/private/"));
 });
 
 test("fixture idle worker withdraws advertised capacity and stop interrupts an outstanding poll", async () => {

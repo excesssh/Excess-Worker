@@ -15,11 +15,16 @@ export function stateWriteName(context: StateWriteContext, path: string): string
 
 export type WorkerMode = "run" | "drain" | "stop";
 export type WorkerProbe = AdapterProbe & { policy: WorkerPolicy };
+export type JobFailure = {
+  jobId: string; attemptId: string; outcome: "failed" | "cancelled"; reason: string; abortReason?: string; at: string;
+};
 export type WorkerStatus = {
   version: 1; state: string; reason: string; updatedAt: string;
   deviceId?: string; activeAttemptId?: string | null; capabilityDigest?: string | null;
   // Historical observation from the current run, not a live-capacity flag.
   lastProbe?: WorkerProbe;
+  // The last job this run did not finish: fixed reason codes only, never prompt, output, path or credential text.
+  lastJobFailure?: JobFailure;
   // The last check of the paired exchange for a newer published worker.
   update?: { current: string | null; latest: string; available: boolean; checkedAt: string; installFailed?: true };
 };

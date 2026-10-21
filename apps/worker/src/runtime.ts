@@ -10,7 +10,7 @@ import { observeLocalResources } from "./telemetry.js";
 import { readWorkerPolicy, parseWorkerPolicy, policyDecision, type WorkerPolicy, type ResourceObservation } from "./policy.js";
 import { readWorkerOffers, readWorkerAutoPrices, saveWorkerAutoPrices, automaticWorkerPrices, type WorkerOffer } from "./offer.js";
 import { acquireRuntimeLock, atomicPrivateJson, readWorkerControl, setWorkerControl as setDirectWorkerControl, writeWorkerStatus as writeDirectWorkerStatus, stateWriteName,
-  WorkerShutdownError, type WorkerMode, type WorkerProbe, type StateWriteContext } from "./control.js";
+  WorkerShutdownError, type JobFailure, type WorkerMode, type WorkerProbe, type StateWriteContext } from "./control.js";
 import type { WorkerStateWriter } from "./controller-state.js";
 import type { WorkerStateReader } from "./controller-state-reader.js";
 import { checkForUpdate, runInstaller, type UpdateCheck } from "./update.js";
@@ -100,6 +100,25 @@ const pause = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve =>
 // Adapter codes are fixed identifiers (no paths or prompts), so the supplier sees why a probe or job failed.
 const safeReason = (error: unknown) => error instanceof WorkerConnectionError ? error.code
   : error instanceof AdapterError && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code) ? "adapter_" + error.code.toLowerCase() : "worker_operation_failed";
+// Fixed sentences and abort codes this runtime itself uses while running a job. None carries request, output, path or
+// credential text, so a failed job records which one stopped it. Any other message is never recorded.
+const JOB_FAILURES = new Set(["Adapter does not support streaming", "Audio seconds mismatch", "Chunk delivery failed", "Chunk exceeds signed transport limit",
+  "Chunk execution interrupted", "Chunk receipt mismatch", "Embedding count mismatch", "Execution deadline expired", "Execution no longer authorized",
+  "Image result mismatch", "Input artifact digest mismatch", "Invalid adapter chunk", "Invalid coordinator response", "Invalid delivery mode",
+  "Invalid input artifact part", "Invalid lease renewal", "Invalid start acknowledgment", "Invalid stream result", "Job input artifact mismatch",
+  "Job input artifacts mismatch", "Job input does not match its quote", "Job input identity mismatch", "Lease expired", "Lease expired before start",
+  "Lease renewal failed", "Local execution deadline", "Local policy no longer permits start", "Media artifact mismatch", "Media result kind mismatch",
+  "Result exceeds signed transport limit", "Result receipt missing", "Artifact part receipt mismatch", "Start interrupted",
+  "Stream result does not match acknowledged chunks", "Unreferenced media artifact",
+  "coordinator_disconnected", "local_control_unavailable", "local_resource_policy", "runtime_shutdown", "stop_now"]);
+const jobFailureReason = (error: unknown): string => {
+  if (error instanceof WorkerConnectionError || error instanceof AdapterError) return safeReason(error);
+  if (error instanceof Error && Object.getPrototypeOf(error) === Error.prototype && JOB_FAILURES.has(error.message))
+    return error.message.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  if (error instanceof Error && error.name === "ZodError") return "job_data_invalid";
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" && /^E[A-Z0-9]{2,31}$/.test(code) ? "system_" + code.toLowerCase() : "worker_operation_failed";
+};
 const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
 const sha256 = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
 const artifactRefs = (output: MediaResult): ArtifactRef[] => output.kind === "embedding" ? [output.vectors] : output.kind === "image" ? output.images : [];
@@ -267,6 +286,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
   let active: { assignment: Assignment | null; abort: AbortController } | null = null;
   let closing = false, mode: WorkerMode = "stop", connected = false, probed = false, capabilityDigest = "";
   let fatal: string | null = null, statusState = "starting", statusReason = "initializing", statusDetail: string | undefined;
+  let lastJobFailure: JobFailure | undefined;
   let observation: ResourceObservation = { freeMemoryMb: null, idleSeconds: null }, observedAt = 0;
   // `claimed` is set in the same synchronous step that decides to take an assignment, before perform() awaits anything,
   // so an update can never start between that decision and `active` being set.
@@ -311,7 +331,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
       : policyDecision(policy, Date.now() - observedAt <= 5000 ? observation : { freeMemoryMb: null, idleSeconds: null }, active !== null, adapter?.residentMb?.() ?? 0);
     const state = async () => writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(statusDetail ? { detail: statusDetail } : {}), deviceId: connection!.deviceId,
       activeAttemptId: active?.assignment?.attemptId ?? null, capabilityDigest: probed ? capabilityDigest : null,
-      ...(lastProbe ? { lastProbe } : {}), ...(updateState ? { update: updateState } : {}) });
+      ...(lastProbe ? { lastProbe } : {}), ...(lastJobFailure ? { lastJobFailure } : {}), ...(updateState ? { update: updateState } : {}) });
     tasks.push((async () => {
       let lastStatus = 0;
       while (!closing && !lifetime.signal.aborted) {
@@ -639,13 +659,16 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
         const entry = await journal.set(a, "result_pending", "awaiting_result_receipt", outputDigest);
         await sendResult(entry, authorizeExecution);
       } catch (error) {
+        const cancelled = controller.signal.aborted || !started;
+        lastJobFailure = { jobId: a.jobId, attemptId: a.attemptId, outcome: cancelled ? "cancelled" : "failed", reason: jobFailureReason(error),
+          ...(controller.signal.aborted ? { abortReason: jobFailureReason(controller.signal.reason) } : {}), at: new Date().toISOString() };
         await adapter!.stop();
         const entry = journal.entries.get(a.attemptId);
         if (entry?.state === "finished") throw error;
         if (entry?.state !== "result_pending") {
           await journal.set(a, "abandoned", controller.signal.aborted ? "execution_cancelled" : "execution_failed");
           await journal.removeOutput(a);
-          await reportFailure(a, controller.signal.aborted || !started ? "cancelled_locally" : "execution_error");
+          await reportFailure(a, cancelled ? "cancelled_locally" : "execution_error");
         }
         if (error instanceof WorkerConnectionError) disconnected(error);
       } finally { active = null; }
@@ -716,7 +739,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     return { state: statusState, reason: statusReason };
   } catch (error) {
     statusState = "error"; statusReason = safeReason(error);
-    await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(lastProbe ? { lastProbe } : {}) });
+    await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(lastProbe ? { lastProbe } : {}), ...(lastJobFailure ? { lastJobFailure } : {}) });
     throw error;
   } finally {
     closing = true; lifetime.abort(); abortActive("runtime_shutdown");
@@ -735,7 +758,7 @@ export async function runWorker(options: WorkerRuntimeOptions): Promise<{ state:
     // withdrawal remains bounded by the coordinator's liveness/offer expiry.
     await connection?.heartbeat({ totalSlots: 1, availableSlots: 0, capabilityDigests: [] }, AbortSignal.timeout(2000)).catch(() => {});
     await writeWorkerStatus(dir, { state: statusState, reason: statusReason, ...(connection ? { deviceId: connection.deviceId } : {}), activeAttemptId: null,
-      capabilityDigest: probed && !shutdownFailed ? capabilityDigest : null, ...(lastProbe ? { lastProbe } : {}) });
+      capabilityDigest: probed && !shutdownFailed ? capabilityDigest : null, ...(lastProbe ? { lastProbe } : {}), ...(lastJobFailure ? { lastJobFailure } : {}) });
     if (shutdownFailed) throw new WorkerShutdownError(shutdownError);
     await releaseLock();
   }
