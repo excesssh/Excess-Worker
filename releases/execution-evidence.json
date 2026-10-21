@@ -1,11 +1,11 @@
 {
   "format": 2,
-  "testedSourceCommit": "e5ff7b45439774fce78651be813a6989166fa050",
-  "signedCandidateSequence": 29,
-  "signedManifestSha256": "fae07e97b28e3220bcd3497e6737277b5c218e8f8554b41c377c45295eb13305",
+  "testedSourceCommit": "2b674596b029cd1d76be13c390fa75962b3ad561",
+  "signedCandidateSequence": 31,
+  "signedManifestSha256": "d27f872c1a27c7dcbb9d3c64bfbb4a6402b7c012f941eb70368a3f301576a536",
   "platforms": {
     "win32-x64": {
-      "payloadSha256": "b7c5fabdf1a3dd482bd801796d1fa938537a97ed003da6f2f519027682f1ea3a",
+      "payloadSha256": "dac277119a3eae7e399cfc6e5da17ae36e95ad4d5ee40722b4d9ea0d5b13166e",
       "checks": {
         "signedInstallation": true,
         "cpuInference": true,
@@ -18,44 +18,48 @@
       },
       "gpuInference": true,
       "gpuCancellation": true,
-      "configuration": "Windows 11 Pro build 22631 x64, 32 GiB RAM; RTX 3070 Ti 8192 MiB, NVIDIA driver 596.49; Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B, SD-Turbo, Phi-4-mini and Qwen3-8B on CPU and CUDA; Job Object host memory: CPU 4352-8192 MiB, CUDA 6144-7168 MiB host with 6144-6656 MiB GPU; AppContainer controller and model runtimes at low integrity with no capabilities.",
+      "configuration": "Windows 11 Pro build 22631 x64, 32 GiB RAM; RTX 3070 Ti 8192 MiB, NVIDIA driver 596.49; Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B, SD-Turbo, Phi-4-mini, Qwen3-8B and Llama 3.1 8B on CPU and CUDA; Phi-4, Qwen3-14B and gpt-oss-20b on CPU; Job Object host memory: CPU 4352-12800 MiB, CUDA 6144-7168 MiB host with 6144-6656 MiB GPU; AppContainer controller and model runtimes at low integrity with no capabilities.",
       "reports": [
         {
-          "name": "candidate-29-signed.json",
-          "sha256": "861e4c78c6ac2c8ea11bb2a6e408493976db3ad6d79e29b8c91265e5d504e2b3"
+          "name": "candidate-31-signed.json",
+          "sha256": "12f94768f2fe25b4d8c63c4dfbcdbae42279799cedbd9cc138ff5c1db7eee79a"
         },
         {
           "name": "release.json",
-          "sha256": "fae07e97b28e3220bcd3497e6737277b5c218e8f8554b41c377c45295eb13305"
+          "sha256": "d27f872c1a27c7dcbb9d3c64bfbb4a6402b7c012f941eb70368a3f301576a536"
         },
         {
           "name": "release.json.minisig",
-          "sha256": "d3cdcd465b8dd0784788b8188ff42acdfd43e4d6be7f2ed334d9cba2b18e2727"
+          "sha256": "cd1151f2c9fde5149d39d13fa0226b9902cbc3ebb14e5cc7ad599569d0137fdb"
         },
         {
           "name": "minisign.pub",
           "sha256": "c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6"
         },
         {
-          "name": "sequence29-e5ff7b454397-signed-install.json",
-          "sha256": "d6e71ea708a78fddb2011afe73af9d382d856df6e76ca56153d4ea50e876c5ac"
+          "name": "sequence31-2b674596b029-signed-install.json",
+          "sha256": "00e6c9e6c9d029b31a6f31e427ddf2a8c050f2c1069806f778fe0319233423d4"
         },
         {
-          "name": "windows29-controller-boundary.json",
-          "sha256": "d16fbd081314d00efa4c4fe14e825dd9559146379da1f06f336e087f5545a83c"
+          "name": "windows31-controller-boundary.json",
+          "sha256": "3415da14cc33cb2f688e4a51f5d811bd6960d3915788024cc5e49bef0cdcb728"
         },
         {
-          "name": "windows-paired-media-journey-24721025-207a-43ee-bea6-a5cd5985f53a.json",
-          "sha256": "3936f446b87dec368ad852869fbec33e5c0ba1ebc2cf865b91e053f4e02673fe"
+          "name": "windows-paired-media-journey-e1cccd41-7568-4051-8787-e94ae1184855.json",
+          "sha256": "c3236a858135418e83451c0b6251a3b5fe8dba8f21ebb5fa9cedc43079cc03bf"
         },
         {
-          "name": "windows-paired-media-journey-6ad030ac-7695-4b22-837d-937de7ac6df5.json",
-          "sha256": "feace4584d650637f91042e652ec8dfb02fb9929a93294a5322fd072c7bb9755"
+          "name": "windows-paired-media-journey-eacf4008-eb31-4c35-9f17-872321a9b68f.json",
+          "sha256": "04d928484b790f1fa781ccaeadfdb4170a4c666b1903a2b337cf9620b8feb12b"
+        },
+        {
+          "name": "windows-paired-media-journey-0b0438af-0dde-4544-9fda-4f0d66f99af6.json",
+          "sha256": "978a2208a924763d1620bac33e3d4b7d319a8343bbe6a84d8bddf467bc003a9b"
         }
       ]
     },
     "linux-x64": {
-      "payloadSha256": "f2b96adee20787dd3eb071c3865a7e36efa670cba9c2c9a5feba183615428b8d",
+      "payloadSha256": "db29a93cee8a4c1d4d9d8a5c6a7aea3976b48edcdbf99e8eae6476ed427d5aad",
       "checks": {
         "signedInstallation": true,
         "cpuInference": true,
@@ -93,7 +97,7 @@
             "model": "qwen3-4b",
             "task": "text",
             "capabilityDigest": "73c3817b8f2f3c784f3485d84288b0aae1c8e5359d1579d76593cc845976eb84",
-            "reportSha256": "411762ad8f0c20465129728f7c65a9542b56458580e85256e1e1e217cc7d9a4e",
+            "reportSha256": "85bf55f8c7d08c7c6fbeaf4e903da1144ae0188b5a410f10441b16cb7e6b89d6",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 8192
           },
@@ -101,7 +105,7 @@
             "model": "qwen3-embedding-0.6b",
             "task": "embedding",
             "capabilityDigest": "bc661c023539b4797186faee857e66d6a4cc43894dacf9abe162ce4d14505605",
-            "reportSha256": "1a49576b05d6cbc03ff8e9838f47a1b6643304502bfb246c230c175366367e83",
+            "reportSha256": "e276382a6b4757dc39b52f63ef6cd5e986d86bb43e8cc8761d472e09613f58de",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 8192
           },
@@ -109,7 +113,7 @@
             "model": "qwen3-asr-0.6b",
             "task": "transcription",
             "capabilityDigest": "47cf218e5e77fc4780905df10dc74f3d26d20c7a21b753eb7a5ea256bf90e852",
-            "reportSha256": "68d88cb8e91a3b7769d04f5872f9d0e2107e4cbb5c2aa4faa121cd489c7ca6c9",
+            "reportSha256": "7d0afc550b1cf65a7ef3b33c551251d12e658fd464162e767923f00d5bc9c434",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 8192
           },
@@ -117,7 +121,7 @@
             "model": "sd-turbo",
             "task": "image",
             "capabilityDigest": "ed74f6f8391d63dc41a44c77b8596a4bc45c215ba3cfd6857388a86de837170d",
-            "reportSha256": "ebe3669702e16e72b389de5eb394fc113ce4a5eb96d49ca753d03040571eaf86",
+            "reportSha256": "4a50621156d67bca596622b52548bea767af21294b196a019b5c5cf9785af942",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 8192
           },
@@ -125,7 +129,7 @@
             "model": "flux1-schnell",
             "task": "image",
             "capabilityDigest": "57d70b6db688c3fb1687d58ba8c45b99aaa469bfd20f968730b6f03b2dc5ae43",
-            "reportSha256": "25eb17f74556f175dcb6eb03b883a8b8ba033893462c50f9c187bfa63755cb4d",
+            "reportSha256": "46f21fd626b569b82184670eb9d8d15f6dc937829345305fc26a521d4702bd7a",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 32768
           },
@@ -133,7 +137,7 @@
             "model": "phi-4-mini",
             "task": "text",
             "capabilityDigest": "87228209345b91d752a738c03c9b1b72ae0e9149136d50f2a8c60410b711d05a",
-            "reportSha256": "baabb40928a9586befdf9799d90bed58e43f613b83cf6f85fef9d8117ffa565a",
+            "reportSha256": "6cd857c61dd42221da7bdd190f1801215acfe8ceee8fa8f288c52c9296295fdf",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 8192
           },
@@ -141,7 +145,7 @@
             "model": "llama-3.1-8b",
             "task": "text",
             "capabilityDigest": "0035faf35c5b1815139123f27b97aa9e38d2c26aede152314fa49ef6d176bb43",
-            "reportSha256": "73fe64870628c37b6ac66267ccd23a45a23a2075d3c5d7f8a761c4d9279d2618",
+            "reportSha256": "c17264660486bb1f496a5e163c56ecaf225baa0905b60654c88936114255685b",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 10752
           },
@@ -149,23 +153,39 @@
             "model": "qwen3-8b",
             "task": "text",
             "capabilityDigest": "bd95d1b913e2d322832950cd643c54984b3db80e7dccf897a0a551bae4ed4e0b",
-            "reportSha256": "e505ced78c6e292ed2a0b3ab2c709020cd572f909c5394d5c19e1a397e38d267",
+            "reportSha256": "742a591d44833719c4cc46dc35acc1ca941609c05750df5fde24214a87061352",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 10752
+          },
+          {
+            "model": "qwen3-14b",
+            "task": "text",
+            "capabilityDigest": "798e0d4f7dd81a20a9506a4866444b15985fa53add471655f74940b061d1d14f",
+            "reportSha256": "1ef16eeb583f415ff9af842e90ceffe7646574015a384b02b9e8295695bc9df3",
+            "maxMemoryMb": 129024,
+            "maxGpuMemoryMb": 15872
           },
           {
             "model": "phi-4",
             "task": "text",
             "capabilityDigest": "766961217add49011d8f5e4930506093974fd773944b9c50204b745986e13b12",
-            "reportSha256": "d99a7569f2225cfd82a86c8bcb671bcb7c3ecb56e68c48296aedc26ecb42de3f",
+            "reportSha256": "afa9b0031f55c1755cafaf83387787e8f58724668216d033f747439060eeb310",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 15872
+          },
+          {
+            "model": "gpt-oss-20b",
+            "task": "text",
+            "capabilityDigest": "fe3c3b373dffa5f8c57158fae1a3ed92881e3319e4317d7bb2ecb8d8e5dece6d",
+            "reportSha256": "87d825f69a335a518612a124dd450788bdad1e9c48e4da747369e7bf81b87de2",
+            "maxMemoryMb": 129024,
+            "maxGpuMemoryMb": 17408
           },
           {
             "model": "qwen3-30b-a3b",
             "task": "text",
             "capabilityDigest": "a8d03112b92fbb0c743f2be422163da639146c5397c09f60f4894a1407a3bb4d",
-            "reportSha256": "78d50012ecba50c981a6efd982de53e74d159d53af483a374dd7cae9bd3c91cf",
+            "reportSha256": "9b5e1fd8d483b515403acf2b0d84cb4cd247b75a4b1eaeef8dbdbf7ada77651f",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 27136
           },
@@ -173,7 +193,7 @@
             "model": "qwen3-30b-a3b-instruct-2507",
             "task": "text",
             "capabilityDigest": "1bad8bd3028eb651858f0f7d2519899889e710e39eb93d10b5f251249cfd2610",
-            "reportSha256": "735751253499aff485fd94c49873fb5aebd3f8875a310df83e9f4233be3b7943",
+            "reportSha256": "f80f175823ad565514e3fdd39380a303c445103c3d6e38ae54c4ad279171cad3",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 26624
           },
@@ -181,7 +201,7 @@
             "model": "qwen3-coder-30b-a3b",
             "task": "text",
             "capabilityDigest": "9cac897418a58f0a28345a98f668a4aa8107bd9486f132b688c3f4150b011935",
-            "reportSha256": "2374d74199e491b8a6c043f3963078313e1db86fb16cd3123288d117cb4a3434",
+            "reportSha256": "1167661dd190daba832083beee6409dfad50d770c6ea4ba1ee2e4549c7f2f05b",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 26624
           },
@@ -189,81 +209,65 @@
             "model": "qwen3-32b",
             "task": "text",
             "capabilityDigest": "5c8504a827df6defbdc1a428fa0c76b0c043fcfbb4c757a4aac365382ca9025b",
-            "reportSha256": "5d4494997b1544fd9636ddc0dba3bbb3b604f95fae875ac3e7cb94d82e5198cf",
+            "reportSha256": "9518919856f87cdf5b22d727107ff24c14e46173eca833b4c01a4ee840845b6f",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 29184
-          },
-          {
-            "model": "qwen3-14b",
-            "task": "text",
-            "capabilityDigest": "798e0d4f7dd81a20a9506a4866444b15985fa53add471655f74940b061d1d14f",
-            "reportSha256": "e07a93636decdc2407197bcd28588b68c57699faa44ec965627259a4c2072194",
-            "maxMemoryMb": 129024,
-            "maxGpuMemoryMb": 15872
           },
           {
             "model": "llama-3.3-70b",
             "task": "text",
             "capabilityDigest": "1fc89c7721a021598ba58cfe9ef95e5170ae09fd38c92ca927b5b1b4be02ca3b",
-            "reportSha256": "57d81236744c67fa452d19ea5ddb523eacbd6f1199c64902f100603a31214445",
+            "reportSha256": "33df06d90967b4f5fca7f7d2b53e308d4e0013bcc465995a1480122e87b2f0b1",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 57344
-          },
-          {
-            "model": "gpt-oss-20b",
-            "task": "text",
-            "capabilityDigest": "fe3c3b373dffa5f8c57158fae1a3ed92881e3319e4317d7bb2ecb8d8e5dece6d",
-            "reportSha256": "19491f0c4f574cbd9439ea1c85f459a32685eb066ab235bc777542d34233f488",
-            "maxMemoryMb": 129024,
-            "maxGpuMemoryMb": 17408
           },
           {
             "model": "gpt-oss-120b",
             "task": "text",
             "capabilityDigest": "741882e473c2b3487ab5d14b7c74dce64825bb3dc183401ecf41717ffea06c6a",
-            "reportSha256": "cbf742196e5acbe783c77bc24a21610d253562d4448d4930c3347353439eb8ef",
+            "reportSha256": "423889a90d85b5cac7b086b349b350cb5b68a019cacec05a494d164ddf66de02",
             "maxMemoryMb": 129024,
             "maxGpuMemoryMb": 78848
           }
         ]
       },
-      "configuration": "Linux x64 WSL2, kernel 6.18.40.1-microsoft-standard-WSL2, Ubuntu 24.04; Qwen3-4B CPU; two threads; 8 GiB systemd user-unit memory maximum, zero swap, 64 tasks, 200 percent CPU; namespaced controller and runtime with no-new-privileges and seccomp; owner-only WSL model store.",
+      "configuration": "Linux x64 WSL2, kernel 6.18.54.1-microsoft-standard-WSL2, Ubuntu 24.04; Qwen3-4B CPU; two threads; 8 GiB systemd user-unit memory maximum, zero swap, 64 tasks, 200 percent CPU; namespaced controller and runtime with no-new-privileges and seccomp; owner-only WSL model store; GPU scope from the B300 matrix.",
       "reports": [
         {
-          "name": "candidate-29-signed.json",
-          "sha256": "861e4c78c6ac2c8ea11bb2a6e408493976db3ad6d79e29b8c91265e5d504e2b3"
+          "name": "candidate-31-signed.json",
+          "sha256": "12f94768f2fe25b4d8c63c4dfbcdbae42279799cedbd9cc138ff5c1db7eee79a"
         },
         {
           "name": "release.json",
-          "sha256": "fae07e97b28e3220bcd3497e6737277b5c218e8f8554b41c377c45295eb13305"
+          "sha256": "d27f872c1a27c7dcbb9d3c64bfbb4a6402b7c012f941eb70368a3f301576a536"
         },
         {
           "name": "release.json.minisig",
-          "sha256": "d3cdcd465b8dd0784788b8188ff42acdfd43e4d6be7f2ed334d9cba2b18e2727"
+          "sha256": "cd1151f2c9fde5149d39d13fa0226b9902cbc3ebb14e5cc7ad599569d0137fdb"
         },
         {
           "name": "minisign.pub",
           "sha256": "c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6"
         },
         {
-          "name": "sequence29-e5ff7b454397-signed-install.json",
-          "sha256": "aa881f6d99a742cbab20ea4ae2173edb647085e4a4adf0601ffde2b3115c3255"
+          "name": "sequence31-2b674596b029-signed-install.json",
+          "sha256": "3abfe364463c5749e132d39df56fcd872b3ecfbcfcdc4f03d646b07d1864f762"
         },
         {
-          "name": "linux29-controller-boundary.json",
-          "sha256": "4555d964818af620c8f375fad33729f8f47c293fdcdaa24d251601aa9c4045ef"
+          "name": "linux31-controller-boundary.json",
+          "sha256": "eae6d95f2bc4e0cde7e6bbac77b1820744e187f48fc057f6b0ea97d9eee04fb3"
         },
         {
-          "name": "sequence29-e5ff7b454397-linux-text-qwen3-4b-release-gate-buyer.json",
-          "sha256": "8830aab514411c71b1ca5e6c8fb4e610ee17dc66096c7266f02984400ed4ece3"
+          "name": "sequence31-2b674596b029-linux-text-qwen3-4b-release-gate-buyer.json",
+          "sha256": "b7092b7aa61869cfeaafec945bf2129434f8cb819bd87416e3a80f47df1255be"
         },
         {
-          "name": "sequence29-e5ff7b454397-linux-text-qwen3-4b-release-gate-cleanup-audit.json",
-          "sha256": "fb778de2c488d6cb5d3994edbd96a407734a9aac2c00d3143f483c04a7b42779"
+          "name": "sequence31-2b674596b029-linux-text-qwen3-4b-release-gate-cleanup-audit.json",
+          "sha256": "1987803a116e1f4104006957ea5f79e9938d86913e9c19a3c4bd497e13542d78"
         },
         {
-          "name": "b300-linux-gpu-matrix-29.json",
-          "sha256": "4147d502279b18fee929af7784b61a06a109acca679abf72bdfa61928532874d"
+          "name": "b300-linux-gpu-matrix-31.json",
+          "sha256": "de93916938f41c6a594f85b3593fa2cf0ffad2aff69546509d9e191ddc807520"
         }
       ]
     }
