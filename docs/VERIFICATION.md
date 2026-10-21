@@ -1,14 +1,14 @@
-# Verify Excess Worker 0.2.2
+# Verify Excess Worker 0.2.3
 
-The published [0.2.2 release, sequence 30](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.2) has a signed `release.json` with exact platform archive names, sizes, SHA-256 hashes, source identity and sequence. The detached signature was verified with the bundled verifier and Minisign 0.12. Establish the project key and verify the manifest before using its archive hashes. A matching hash alone does not authenticate a publisher.
+The published [0.2.3 release, sequence 32](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.3) has a signed `release.json` with exact platform archive names, sizes, SHA-256 hashes, source identity and sequence. The detached signature was verified with the bundled verifier and Minisign 0.12. Establish the project key and verify the manifest before using its archive hashes. A matching hash alone does not authenticate a publisher.
 
 ## Verify your download
 
 ### 1. Establish the trusted project key
 
-Confirm that you are using **`excesssh/Excess-Worker`**, reached through a project location you already trust, such as an independently opened [excess.sh](https://excess.sh). Review the public key in the tagged source at [releases/minisign.pub](https://github.com/excesssh/Excess-Worker/blob/v0.2.2/releases/minisign.pub). The v0.2.2 public key SHA-256 is `c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6`, unchanged from v0.2.0 and v0.2.1 and matching the embedded key in both platform installers. Compare it with a trusted checkout or a previously saved trusted copy before trusting the signature. The published [0.2.1](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.1), [0.2.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) and [0.1.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) keys and releases remain available for historical comparison. Investigate any key change rather than accepting a key delivered beside an untrusted archive.
+Confirm that you are using **`excesssh/Excess-Worker`**, reached through a project location you already trust, such as an independently opened [excess.sh](https://excess.sh). Review the public key in the tagged source at [releases/minisign.pub](https://github.com/excesssh/Excess-Worker/blob/v0.2.3/releases/minisign.pub). The v0.2.3 public key SHA-256 is `c14b80a70fd127519eb7185f4fbc4cdd5c0daf26cb522148bfb21eccab188cc6`, unchanged from v0.2.0, v0.2.1 and v0.2.2 and matching the embedded key in both platform installers. Compare it with a trusted checkout or a previously saved trusted copy before trusting the signature. The published [0.2.2](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.2), [0.2.1](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.1), [0.2.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.0) and [0.1.0](https://github.com/excesssh/Excess-Worker/releases/tag/v0.1.0) keys and releases remain available for historical comparison. Investigate any key change rather than accepting a key delivered beside an untrusted archive.
 
-Install [Minisign from its official project](https://jedisct1.github.io/minisign/) and make the command available on PATH. Download the Windows or Linux archive, `release.json`, and `release.json.minisig` from the [0.2.2 release page](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.2) into the same directory.
+Install [Minisign from its official project](https://jedisct1.github.io/minisign/) and make the command available on PATH. Download the Windows or Linux archive, `release.json`, and `release.json.minisig` from the [0.2.3 release page](https://github.com/excesssh/Excess-Worker/releases/tag/v0.2.3) into the same directory.
 
 ### 2. Authenticate the release manifest
 
@@ -22,14 +22,14 @@ Require a successful exit and Minisign's signature/trusted-comment verification 
 
 ### 3. Check the selected archive against the signed manifest
 
-The signed manifest identifies product `Excess Worker`, repository `https://github.com/excesssh/Excess-Worker`, version `0.2.2`, release sequence `30` and source `aa4315c3ebb814ed656088fd898e406ba13c83b2`. It records Windows archive `excess-worker-0.2.2-aa4315c3ebb8-win-x64.zip` (SHA-256 `3a3c81c6bc0ad0b212e54993e89414044bf84b9da16d99900111899152544325`) and Linux archive `excess-worker-0.2.2-aa4315c3ebb8-linux-x64.tar.gz` (SHA-256 `ed4415c121ac6022f5dcc7fc406794b933aa054009876d7c2d8e977bbcc6b70f`).
+The signed manifest identifies product `Excess Worker`, repository `https://github.com/excesssh/Excess-Worker`, version `0.2.3`, release sequence `32` and source `eae9de12849a2b8db7f18c8228baef9c7747921b`. It records Windows archive `excess-worker-0.2.3-eae9de12849a-win-x64.zip` (SHA-256 `95725c7fb6b3a461e4076388ae905ae5f7cfec58fd1f1fc57e5c88af5c9cac59`) and Linux archive `excess-worker-0.2.3-eae9de12849a-linux-x64.tar.gz` (SHA-256 `c2ce18ef2ec6409142215ff66cd0074a5ac98583481876c5c254ceefcbf9ed6e`).
 
 **Windows PowerShell**, after the successful signature check:
 
 ```powershell
 $release = Get-Content -LiteralPath .\release.json -Raw | ConvertFrom-Json
-if ($release.product -cne 'Excess Worker' -or $release.repository -cne 'https://github.com/excesssh/Excess-Worker' -or $release.version -cne '0.2.2' -or $release.sequence -ne 30 -or $release.sourceCommit -cne 'aa4315c3ebb814ed656088fd898e406ba13c83b2') { throw 'Unexpected release identity' }
-$archive = '.\excess-worker-0.2.2-aa4315c3ebb8-win-x64.zip'
+if ($release.product -cne 'Excess Worker' -or $release.repository -cne 'https://github.com/excesssh/Excess-Worker' -or $release.version -cne '0.2.3' -or $release.sequence -ne 32 -or $release.sourceCommit -cne 'eae9de12849a2b8db7f18c8228baef9c7747921b') { throw 'Unexpected release identity' }
+$archive = '.\excess-worker-0.2.3-eae9de12849a-win-x64.zip'
 $entry = @($release.files | Where-Object { $_.platform -ceq 'win32-x64' })
 if ($entry.Count -ne 1 -or $entry[0].file -cne (Split-Path $archive -Leaf) -or $entry[0].bytes -ne (Get-Item -LiteralPath $archive).Length -or $entry[0].sha256 -cne (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Archive verification failed' }
 'Verified Windows archive against the signed manifest'
@@ -42,9 +42,9 @@ python3 - <<'PY'
 import hashlib, json
 from pathlib import Path
 release = json.loads(Path('release.json').read_text())
-if (release['product'], release['repository'], release['version'], release['sequence'], release['sourceCommit']) != ('Excess Worker', 'https://github.com/excesssh/Excess-Worker', '0.2.2', 30, 'aa4315c3ebb814ed656088fd898e406ba13c83b2'):
+if (release['product'], release['repository'], release['version'], release['sequence'], release['sourceCommit']) != ('Excess Worker', 'https://github.com/excesssh/Excess-Worker', '0.2.3', 32, 'eae9de12849a2b8db7f18c8228baef9c7747921b'):
     raise SystemExit('Unexpected release identity')
-archive = Path('excess-worker-0.2.2-aa4315c3ebb8-linux-x64.tar.gz')
+archive = Path('excess-worker-0.2.3-eae9de12849a-linux-x64.tar.gz')
 entries = [entry for entry in release['files'] if entry['platform'] == 'linux-x64']
 if len(entries) != 1:
     raise SystemExit('Unexpected platform entries')
@@ -87,6 +87,8 @@ Windows executables have **no trusted Authenticode publisher signature**. Minisi
 
 ## Updates and recovery
 
+Sequence 32 (0.2.3) was checked with the published 0.2.2 and the signed 0.2.3 files through a local loopback HTTPS feed, not the hosted feed. On Windows and on Linux, the installed 0.2.2 worker drained, found and installed 0.2.3 with its `update` command (high-water 30 to 32, launcher bytes verified, and the updated launcher started). The 0.2.3 installer then refused the signed 0.2.2 package and a modified 0.2.3 archive without changing install state. After publication, fresh installations of the downloaded release files with the tagged installers verified all 339 Windows and 342 Linux package files, and the same update, downgrade and tamper checks passed again with the downloaded files.
+
 Sequence 30 (0.2.2) was checked with the published 0.2.1 and the signed 0.2.2 files through a local loopback HTTPS feed, not the hosted feed. On Windows and on Linux, the installed 0.2.1 worker drained, found and installed 0.2.2 with its `update` command (high-water 28 to 30, launcher bytes verified, and the updated launcher started). The 0.2.2 installer then refused the signed 0.2.1 package and a modified 0.2.2 archive without changing install state. After publication, fresh installations of the downloaded release files with the tagged installers verified all 339 Windows and 342 Linux package files.
 
 Sequence 28 (0.2.1) was checked with the published 0.2.0 and 0.2.1 signed files through a local loopback HTTPS feed, not the hosted feed. On Windows, the installed 0.2.0 worker drained, found and installed 0.2.1 with its default-fetch `update` command (high-water 26 to 28, launcher bytes verified, and the updated launcher started); the 0.2.1 installer then refused the signed 0.2.0 package (`release sequence rollback rejected`) and refused a modified 0.2.1 archive without creating install state. On Linux, the 0.2.0 `update` command downloaded and authenticated 0.2.1 but refused to install it, because the 0.2.0 updater accepts only the earlier `linux-cuda-device-budget-v1` GPU helper profile; 0.2.0 stayed unchanged. Running the 0.2.1 installer over the same 0.2.0 location upgraded it in place to high-water 28, and Linux downgrade and tampered-archive refusal passed. See [Updating Linux 0.2.0 to 0.2.1](INSTALLATION.md#stop-revoke-and-update).
@@ -97,7 +99,7 @@ The immutable 0.1.0 tag points to source `2980a6ec2e580251208b3b31d81d3fec6e4b45
 
 ## Technical release evidence
 
-The current [execution evidence](../releases/execution-evidence.json) binds the signed 0.2.3 candidate31 payload (source `2b674596b029cd1d76be13c390fa75962b3ad561`) to actual Windows CPU/CUDA buyer execution on all eight routes (Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo, each with a funded job and a cancellation) plus Phi-4-mini, Qwen3-8B and Llama 3.1 8B on CPU and CUDA and Phi-4, Qwen3-14B and gpt-oss-20b on CPU, one Linux WSL2 Qwen3-4B CPU buyer job, Linux NVIDIA CUDA buyer jobs for 17 catalogue models on one recorded B300 configuration, and observed controller and runtime isolation on both platforms. Ready sequence 32 must match that payload. The 0.2.2 sequence-30 evidence remains at the `v0.2.2` tag and the 0.2.1 sequence-28 evidence at the `v0.2.1` tag. For 0.2.0, the candidate25 evidence at the `v0.2.0` tag and the [final successor report](verification/source92-neutral.json) record sequence 26 signature, installation, update, rollback, roll-forward and recovery checks.
+The current [execution evidence](../releases/execution-evidence.json) binds the signed 0.2.3 candidate31 payload (source `2b674596b029cd1d76be13c390fa75962b3ad561`) to actual Windows CPU/CUDA buyer execution on all eight routes (Qwen3-4B text, Qwen3 Embedding 0.6B, Qwen3 ASR 0.6B and SD-Turbo, each with a funded job and a cancellation) plus Phi-4-mini, Qwen3-8B and Llama 3.1 8B on CPU and CUDA and Phi-4, Qwen3-14B and gpt-oss-20b on CPU, one Linux WSL2 Qwen3-4B CPU buyer job, Linux NVIDIA CUDA buyer jobs for 17 catalogue models on one recorded B300 configuration, and observed controller and runtime isolation on both platforms. Published sequence 32 (`v0.2.3`, source `eae9de12849a2b8db7f18c8228baef9c7747921b`) matches that payload: its Windows and Linux payload fingerprints equal the recorded evidence, and two independent clean-directory builds produced byte-identical archives ([sequence-32 comparison report](https://github.com/excesssh/Excess-Worker/releases/download/v0.2.3/reproducibility.json)). The [B300 record](verification/linux-b300-cuda-sequence31.md) and the [0.2.3 model route record](verification/candidate31-other-models.md) describe the GPU and additional model routes. The 0.2.2 sequence-30 evidence remains at the `v0.2.2` tag and the 0.2.1 sequence-28 evidence at the `v0.2.1` tag. For 0.2.0, the candidate25 evidence at the `v0.2.0` tag and the [final successor report](verification/source92-neutral.json) record sequence 26 signature, installation, update, rollback, roll-forward and recovery checks.
 
 The historical [0.1.0 execution evidence](https://github.com/excesssh/Excess-Worker/blob/v0.1.0/releases/execution-evidence.json) binds the tested source-74 candidate-15 payload to executable, dependency, native-pin, launcher and licence bytes. Optional release-ready builds require committed unchanged reports, tested-source ancestry and matching payload; default development packages remain closed. The published source-77 sequence-18 package repeated actual installation, execution, update and recovery checks before publication. Metadata changes cannot supply execution evidence. See [build and reproducibility scope](BUILD.md#reproducibility-and-release-status).
 

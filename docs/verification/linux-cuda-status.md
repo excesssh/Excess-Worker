@@ -16,6 +16,8 @@ Source verification at `58f6a3e9dc4e87afbaf05ebc8ea2c2a3771e10d5` passes [the st
 
 Version 0.2.2 keeps the v2 helper and fixes streamed-text metering when the pinned runtime withholds token IDs inside a multibyte character (seen with gpt-oss). Its signed candidate, sequence 29, with the same payload as published sequence 30, ran actual Linux NVIDIA CUDA buyer jobs for all 17 pinned local models on one recorded NVIDIA B300 configuration (driver 580.178.04, CUDA 12.9, Ubuntu kernel 7.0.0-38-generic). Drain, restart, revocation and cleanup passed. GPU cancellation has runtime-monitor evidence for transcription only; text and image cancellations ended with no charge but without monitor evidence. See the [B300 record](linux-b300-cuda-sequence29.md).
 
+Version 0.2.3 keeps the same helper. Its signed candidate, sequence 31, with the same payload as published sequence 32, repeated the 17-model B300 matrix on the same recorded configuration. Drain, restart, revocation and cleanup passed. Cancelled text, image, transcription and embedding jobs ended with no charge; runtime-monitor evidence covers transcription and embedding only. See the [0.2.3 B300 record](linux-b300-cuda-sequence31.md).
+
 Versions 0.2.0 and 0.2.1 make no Linux GPU claim, and their published assets remain unchanged. Other NVIDIA GPUs, drivers, kernels and distributions, multi-GPU hosts and hard VRAM isolation remain unverified. Do not treat catalogue availability, completed downloads, device detection or a software test as Linux GPU execution evidence.
 
 See [recorded platform evidence](../../README.md#your-machine-your-controls), [security boundaries](../../SECURITY.md#model-runtime-boundaries) and the [remaining coverage checklist](remaining-work-checklist.md).
