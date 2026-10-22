@@ -5,7 +5,9 @@
 ## Implementation faults
 
 - [x] The repeated-job observer was corrected for the coordinator’s `items` response envelope and multiline close diagnostics. The original incomplete repeat-run report and its missing-observation reasons remain preserved; the post-run append-only reconciliation records five successful, signed, accounted buffered-media jobs.
-- [x] A separate native admission-ordering regression was reproduced with bounded fixture controls and fixed. No reproducible implementation fault remains open.
+- [x] A separate native admission-ordering regression was reproduced with bounded fixture controls and fixed.
+- [ ] Three Windows faults in published 0.2.3 are fixed on `main` but not released: non-ASCII prompts and output fail, a warm runtime is stopped at the job limit after it started, and the worker stops after a failed job. They need a 0.2.4 release and a live recheck (non-ASCII prompt, a job more than 300 seconds after the runtime started, and a failed job followed by another). See the [Windows streaming and cancellation record](windows-streaming-cancellation-0.2.3.md).
+- [ ] Untested: the Linux CPU sandbox time limit counts CPU time across all runtime threads, so a long-lived Linux CPU runtime may still be stopped after 605 CPU-seconds in total.
 - Historical incident: the cause of the first candidate24 CUDA delivery failure remains unestablished. Its recorded terminal state is `failed` / `lease_expired`, with zero billed units and no local `result_pending` or authenticated terminal-accounting row. The stream-specific `deliveryStarted=false` field does not establish buffered-artifact non-delivery. Do not claim the later harness or native fix resolved it.
 
 ## Missing execution evidence
@@ -18,7 +20,8 @@
 
 ## External access and capacity blockers
 
-- [x] Linux CUDA: all 17 pinned local models passed actual buyer jobs on one recorded NVIDIA B300 configuration with the 0.2.2 and 0.2.3 candidates. Other GPUs, drivers and distributions remain unverified. On 0.2.3, cancelled jobs of all four task types ended with no charge; text and image cancellation still lack runtime-monitor evidence.
+- [x] Linux CUDA: all 17 pinned local models passed actual buyer jobs on one recorded NVIDIA B300 configuration with the 0.2.2 and 0.2.3 candidates. Other GPUs, drivers and distributions remain unverified. On 0.2.3, cancelled jobs of all four task types ended with no charge; text and image cancellation still lack runtime-monitor evidence on Linux.
+- [x] Windows 0.2.3, RTX 3070 Ti: cancelling text on CPU and CUDA stopped the runtime within about 0.45 seconds, and cancelling a CPU image within about 5 seconds; a CUDA image at the market maximum finishes in about 2 seconds, before cancellation can reach it. A buyer about 1.5 seconds away completed every stream with the 0.2.3 SDK and failed with the 0.2.2 SDK. [Recorded evidence](windows-streaming-cancellation-0.2.3.md).
 - [x] This capacity blocker does not block the scoped Windows release or the verified Linux CPU/install/update claims. Any later Linux CUDA claim requires actual Linux NVIDIA execution and buyer evidence.
 - [x] Published sequence 26 Qwen3-8B Windows CPU buyer lifecycle: useful signed output, acknowledged-prefix cancellation, exact settlement/supplier earnings, drain/restart, revocation and cleanup. Two threads/10 GiB/300-seconds. [Recorded evidence](qwen3-8b-windows-cpu.md).
 - [x] Published sequence 26 Qwen3-14B Windows CPU buyer lifecycle: 65 useful words/80 billed tokens, eight acknowledged, digest-checked provisional cancellation-prefix tokens, exact settlement, drain/restart, revocation and cleanup. Operator-funded testnet, Windows 11 x64, two threads/11 GiB/300 seconds. [Recorded evidence](qwen3-14b-windows-cpu.md).

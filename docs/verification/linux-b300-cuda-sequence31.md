@@ -41,7 +41,7 @@ GPU cancellation was checked for all four task types, each in the first run. Emb
 
 ## Streamed text
 
-The 0.2.2 record noted that the buyer SDK waited for a round trip after acknowledging each streamed text chunk, so a distant buyer could fall behind a fast GPU. The SDK now keeps one cumulative acknowledgement in flight and sends the final one before it accepts the terminal receipt; every chunk is still verified before it is acknowledged. In these runs every text route, including gpt-oss-20b and gpt-oss-120b, completed through the plain SDK stream: the coordinator's accounting acknowledged every produced token (879 for gpt-oss-20b, 1,027 for gpt-oss-120b) and the result signature verified. The buyer was close to the coordinator in these runs, so they do not show how a distant buyer keeps up with a fast GPU.
+The 0.2.2 record noted that the buyer SDK waited for a round trip after acknowledging each streamed text chunk, so a distant buyer could fall behind a fast GPU. The SDK now keeps one cumulative acknowledgement in flight and sends the final one before it accepts the terminal receipt; every chunk is still verified before it is acknowledged. In these runs every text route, including gpt-oss-20b and gpt-oss-120b, completed through the plain SDK stream: the coordinator's accounting acknowledged every produced token (879 for gpt-oss-20b, 1,027 for gpt-oss-120b) and the result signature verified. The buyer was close to the coordinator in these runs, so they do not show how a distant buyer keeps up with a fast GPU. A later Windows test with a buyer about 1.5 seconds from the coordinator completed every stream with the 0.2.3 SDK; see the [Windows streaming and cancellation record](windows-streaming-cancellation-0.2.3.md).
 
 ## Scope
 
