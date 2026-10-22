@@ -33,6 +33,8 @@ export class AnswerGate {
 export const unansweredReasoning = (finishReason: "stop" | "length") =>
   new AdapterError(finishReason === "length" ? "REASONING_EXCEEDED_OUTPUT_TOKENS" : "REASONING_WITHOUT_ANSWER");
 
+type DeliveryOutcome = { ok: true } | { ok: false; error: unknown };
+
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
   let abort: (() => void) | undefined;
@@ -58,15 +60,62 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
   let wireBytes = 0, line = "", data: string[] = [], eventBytes = 0, lines = 0, events = 0, skipLf = false;
   let finished = false, finishReason: "stop" | "length" = "stop", text = "", tokenCount = 0, predicted = 0, sequence = 0;
   let pendingText = "", pendingTokens: number[] = [];
-  const flush = async () => {
+  let inFlight: { outcome: Promise<DeliveryOutcome> } | undefined, deliveryFailure: { error: unknown } | undefined;
+  const checkDelivery = () => { if (deliveryFailure) throw deliveryFailure.error; };
+  const waitForDelivery = async () => {
+    const current = inFlight;
+    if (current) {
+      const outcome = await abortable(current.outcome, signal);
+      if (!outcome.ok) throw outcome.error;
+    }
+    checkDelivery();
+  };
+  const sendPending = () => {
+    checkDelivery();
     if (!pendingTokens.length) { if (pendingText) throw invalid(); return; }
+    if (inFlight) throw invalid();
     if (++sequence > TEXT_LIMITS.maxStreamChunks) throw invalid();
     const value = { sequence, delta: pendingText, tokenIds: pendingTokens };
-    await abortable(Promise.resolve().then(() => onChunk({ ...value, chunkDigest: requestDigest(value) })), signal);
     pendingText = ""; pendingTokens = [];
+    const flight = { outcome: Promise.resolve().then(() => onChunk({ ...value, chunkDigest: requestDigest(value) }))
+      .then(() => ({ ok: true } as const), error => ({ ok: false, error } as const)) };
+    inFlight = flight;
+    void flight.outcome.then(outcome => {
+      if (inFlight === flight) inFlight = undefined;
+      if (!outcome.ok) deliveryFailure = { error: outcome.error };
+      else if (!signal?.aborted && pendingTokens.length >= 8) {
+        try { sendPending(); } catch (error) { deliveryFailure = { error }; }
+      }
+    });
+  };
+  const flush = async () => {
+    checkDelivery();
+    if (!pendingTokens.length) { if (pendingText) throw invalid(); await waitForDelivery(); return; }
+    await waitForDelivery(); sendPending();
+  };
+  let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+  const readNext = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    for (;;) {
+      checkDelivery();
+      pendingRead ??= reader.read();
+      const current = inFlight;
+      if (!current) {
+        const value = await abortable(pendingRead, signal);
+        pendingRead = undefined; checkDelivery(); return value;
+      }
+      const result = await abortable(Promise.race([
+        pendingRead.then(value => ({ kind: "read" as const, value })),
+        current.outcome.then(outcome => ({ kind: "delivery" as const, outcome })),
+      ]), signal);
+      if (result.kind === "read") { pendingRead = undefined; checkDelivery(); return result.value; }
+      if (inFlight === current) inFlight = undefined;
+      if (!result.outcome.ok) { deliveryFailure = { error: result.outcome.error }; throw result.outcome.error; }
+      checkDelivery();
+    }
   };
   const event = async () => {
     if (!data.length) return;
+    checkDelivery();
     // Every partial event carries at least one token: at most maxOutputTokens + 1 events, with slack.
     if (finished || ++events > 2 * TEXT_LIMITS.maxOutputTokens + 4) throw invalid();
     let raw: unknown;
@@ -110,7 +159,15 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
     if (pendingTokens.length + value.tokens.length > TEXT_LIMITS.maxChunkTokens ||
         Buffer.byteLength(pendingText, "utf8") + contentBytes > TEXT_LIMITS.maxChunkBytes) await flush();
     pendingText += content; pendingTokens.push(...value.tokens);
-    if (pendingTokens.length >= 8) await flush();
+    const pendingBytes = Buffer.byteLength(pendingText, "utf8");
+    if (pendingTokens.length >= 8) {
+      if (!inFlight) sendPending();
+      else if (pendingTokens.length === TEXT_LIMITS.maxChunkTokens || pendingBytes === TEXT_LIMITS.maxChunkBytes) {
+        await waitForDelivery(); sendPending();
+      }
+    } else if (inFlight && (pendingTokens.length === TEXT_LIMITS.maxChunkTokens || pendingBytes === TEXT_LIMITS.maxChunkBytes)) {
+      await waitForDelivery();
+    }
   };
   const endLine = async () => {
     if (++lines > 16 * TEXT_LIMITS.maxOutputTokens) throw invalid();
@@ -134,7 +191,7 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
   };
   try {
     for (;;) {
-      const next = await abortable(reader.read(), signal);
+      const next = await readNext();
       if (next.done) break;
       wireBytes += next.value.byteLength;
       if (wireBytes > 32 * TEXT_LIMITS.maxOutputBytes) throw invalid();
@@ -145,6 +202,7 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
     let tail: string;
     try { tail = decoder.decode(); } catch { throw invalid(); }
     await consume(tail);
+    await waitForDelivery();
     if (!finished || line || data.length) throw invalid();
     signal?.throwIfAborted();
     if (gate && !gate.revealed) throw unansweredReasoning(finishReason);

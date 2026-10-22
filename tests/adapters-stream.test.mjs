@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readLlamaStream } from "../packages/adapters/dist/stream.js";
+import { AnswerGate, readLlamaStream } from "../packages/adapters/dist/stream.js";
 import { requestDigest } from "../packages/protocol/dist/index.js";
 
 // Synthetic native llama.cpp SSE bytes only. These parser tests do not load a
@@ -11,24 +11,29 @@ const frame = (value, eol = "\n") => "data: " + JSON.stringify(value) + eol + eo
 const response = text => new Response(text, { headers: { "content-type": "text/event-stream; charset=utf-8" } });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
-test("synthetic llama SSE coalesces incrementally and awaits chunk persistence backpressure", async () => {
-  const ready = deferred(), release = deferred(), emitted = [];
-  let controller;
-  const body = new ReadableStream({ start(value) { controller = value; } });
-  const pending = readLlamaStream(response(body), 16, async chunk => {
-    emitted.push(chunk); if (chunk.sequence === 1) { ready.resolve(); await release.promise; }
+test("synthetic llama SSE keeps reading during one slow delivery and coalesces to the token bound", async () => {
+  const started = deferred(), release = deferred(), tokenFramesRead = deferred(), emitted = [];
+  const tokenCount = 136;
+  const frames = Array.from({ length: tokenCount }, (_, i) => frame(partial("x", [100 + i], i + 1)));
+  frames.push(frame(final(tokenCount)));
+  let index = 0;
+  const body = new ReadableStream({ pull(controller) {
+    const next = frames[index++];
+    if (next === undefined) { controller.close(); return; }
+    controller.enqueue(Buffer.from(next));
+    if (index === tokenCount) tokenFramesRead.resolve();
+  } }, { highWaterMark: 0 });
+  const pending = readLlamaStream(response(body), tokenCount, async chunk => {
+    emitted.push(chunk); if (chunk.sequence === 1) { started.resolve(); await release.promise; }
   });
-  controller.enqueue(Buffer.from(Array.from({ length: 16 }, (_, i) => frame(partial(String(i % 10), [100 + i], i + 1))).join("")));
-  await ready.promise;
-  assert.equal(emitted.length, 1, "first callback arrives while the SSE body remains open");
-  assert.equal(emitted[0].tokenIds.length, 8);
-  await new Promise(r => setTimeout(r, 20));
-  assert.equal(emitted.length, 1, "the next callback waits for the first acknowledgement");
+  await started.promise;
+  const readAhead = await Promise.race([tokenFramesRead.promise.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 300))]);
   release.resolve();
-  controller.enqueue(Buffer.from(frame(final(16)))); controller.close();
   const result = await pending;
-  assert.deepEqual(result, { text: "0123456789012345", generatedTokens: 16, finishReason: "length" });
-  assert.deepEqual(emitted.map(value => value.tokenIds.length), [8, 8]);
+  assert.equal(readAhead, true, "the reader reaches the protocol chunk limit before the first delivery resolves");
+  assert.deepEqual(result, { text: "x".repeat(tokenCount), generatedTokens: tokenCount, finishReason: "length" });
+  assert.deepEqual(emitted.map(value => value.sequence), [1, 2]);
+  assert.deepEqual(emitted.map(value => value.tokenIds.length), [8, 128]);
   for (const { chunkDigest, ...chunk } of emitted) assert.equal(chunkDigest, requestDigest(chunk));
 });
 
@@ -109,6 +114,55 @@ test("synthetic llama SSE splits native events so each emitted chunk stays withi
   const byteChunks = [];
   const result = await readLlamaStream(response(bytes), 2048, async chunk => { byteChunks.push(chunk); });
   assert.deepEqual(byteChunks.map(c => Buffer.byteLength(c.delta)), [5000, 5000]); assert.equal(result.generatedTokens, 2);
+});
+
+test("synthetic llama SSE waits at the byte bound and preserves the reasoning answer gate", async () => {
+  const started = deferred(), release = deferred(), payloadFramesRead = deferred(), byteChunks = [];
+  const payloads = [...Array.from({ length: 8 }, () => "a".repeat(800)), "b".repeat(4000), "c".repeat(4000), "d".repeat(192)];
+  const frames = payloads.map((content, i) => frame(partial(content, [i + 1], i + 1)));
+  frames.push(frame(final(payloads.length)));
+  let index = 0;
+  const body = new ReadableStream({ pull(controller) {
+    const next = frames[index++];
+    if (next === undefined) { controller.close(); return; }
+    controller.enqueue(Buffer.from(next));
+    if (index === payloads.length) payloadFramesRead.resolve();
+  } }, { highWaterMark: 0 });
+  const pending = readLlamaStream(response(body), payloads.length, async chunk => {
+    byteChunks.push(chunk); if (chunk.sequence === 1) { started.resolve(); await release.promise; }
+  });
+  await started.promise;
+  const readAhead = await Promise.race([payloadFramesRead.promise.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 300))]);
+  release.resolve();
+  const result = await pending;
+  assert.equal(readAhead, true, "the parser stops at the byte limit while the first delivery is pending");
+  assert.deepEqual(byteChunks.map(chunk => chunk.sequence), [1, 2]);
+  assert.deepEqual(byteChunks.map(chunk => chunk.tokenIds.length), [8, 3]);
+  assert.deepEqual(byteChunks.map(chunk => Buffer.byteLength(chunk.delta, "utf8")), [6400, 8192]);
+  assert.equal(result.generatedTokens, payloads.length);
+  assert.equal(result.text, payloads.join(""));
+
+  const gate = new AnswerGate([99]);
+  const gatedChunks = [];
+  const gatedWire = frame(partial("private reasoning", [1, 2, 3, 4, 5, 6, 7, 8], 8)) +
+    frame(partial("answer marker", [99], 9)) + frame(partial("visible answer", [100], 10)) + frame(final(10, { stop_type: "eos" }));
+  const gatedResult = await readLlamaStream(response(gatedWire), 10, async chunk => { gatedChunks.push(chunk); }, undefined, gate);
+  assert.deepEqual(gatedChunks.map(chunk => chunk.delta), ["", "visible answer"]);
+  assert.deepEqual(gatedChunks.map(chunk => chunk.tokenIds), [[1, 2, 3, 4, 5, 6, 7, 8], [99, 100]]);
+  assert.equal(gatedResult.text, "visible answer");
+});
+
+test("synthetic llama SSE waits for its final chunk acknowledgement before returning", async () => {
+  const started = deferred(), release = deferred(); let returned = false;
+  const pending = readLlamaStream(response(frame(partial("final", [42], 1)) + frame(final(1))), 1, async () => {
+    started.resolve(); await release.promise;
+  }).then(result => { returned = true; return result; });
+  await started.promise;
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(returned, false);
+  release.resolve();
+  assert.deepEqual(await pending, { text: "final", generatedTokens: 1, finishReason: "length" });
+  assert.equal(returned, true);
 });
 
 test("synthetic llama SSE cancels the reader on callback failure and abort during reads or callbacks", async () => {
