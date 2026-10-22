@@ -6,9 +6,10 @@ import { crc32, deflateSync } from "node:zlib";
 
 const args = process.argv.slice(2), value = name => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; };
 const llama = args.includes("--port");
-const config = JSON.parse(readFileSync(value("--model") ?? value("--diffusion-model"), "utf8"));
+const configPath = value("--model") ?? value("--diffusion-model");
 const key = process.env.LLAMA_API_KEY;
-const log = entry => appendFileSync(config.log, JSON.stringify(entry) + "\n");
+const config = () => JSON.parse(readFileSync(configPath, "utf8"));
+const log = entry => appendFileSync(config().log, JSON.stringify(entry) + "\n");
 log({ type: "start", args, hasKey: Boolean(key) });
 
 function png(width, height) {
@@ -26,7 +27,7 @@ createServer((request, response) => {
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : null;
     log({ type: "request", method: request.method, url: request.url, authorized, body });
     if (!authorized) return send(response, 401, { error: "unauthorized" });
-    const behavior = config.behavior ?? "ok";
+    const settings = config(), behavior = settings.behavior ?? "ok";
     if (behavior === "hang") return;
     if (behavior === "crash") process.exit(3);
     if (behavior === "status500") return send(response, 500, { error: "fixture failure" });
@@ -37,10 +38,10 @@ createServer((request, response) => {
         for (let n = 0; n < vector.length / 4; n++) vector.writeFloatLE(behavior === "nan" && index === 0 && n === 7 ? NaN : (index + 1) / 64, n * 4);
         return { index: behavior === "duplicate" ? 0 : index, object: "embedding", embedding: vector.toString("base64") };
       });
-      return send(response, 200, { model: "fixture", object: "list", usage: { prompt_tokens: config.tokens ?? 7, total_tokens: config.tokens ?? 7 }, data });
+      return send(response, 200, { model: "fixture", object: "list", usage: { prompt_tokens: settings.tokens ?? 7, total_tokens: settings.tokens ?? 7 }, data });
     }
     if (request.url === "/v1/chat/completions")
-      return send(response, 200, { choices: [{ index: 0, finish_reason: config.finish ?? "stop", message: { role: "assistant", content: config.content ?? "language English<asr_text>FIXTURE TRANSCRIPT" } }] });
+      return send(response, 200, { choices: [{ index: 0, finish_reason: settings.finish ?? "stop", message: { role: "assistant", content: settings.content ?? "language English<asr_text>FIXTURE TRANSCRIPT" } }] });
     if (request.url === "/v1/images/generations") {
       const [width, height] = body.size.split("x").map(Number);
       const count = behavior === "fewer" ? body.n - 1 : body.n;

@@ -5,6 +5,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { AdapterError } from "./manifest.js";
+import { windowsRuntimeHelperTimeoutMilliseconds } from "./runtime-lifetime.js";
 import type { VerifiedRuntimeInputs } from "./install.js";
 import { noLinks } from "./install.js";
 import type { RuntimeSupervision } from "./native-process.js";
@@ -65,7 +66,7 @@ export async function isolateWindowsRuntime(executable:string,args:readonly stri
     const config={executable:await realpath(executable),runtimeRoot:await realpath(options.runtimeRoot),scratchDirectory:scratch,
       runtimeFiles:await files(options.runtimeFiles),modelFiles:await files(options.modelFiles),arguments:[...args],
       relayFile:{path:await realpath(helper),sha256:helperHash},runtimePort:options.port,
-      memoryLimitBytes:options.maxMemoryBytes,processLimit:2,timeoutMilliseconds:Math.min(600000,options.timeoutMs+5000),
+      memoryLimitBytes:options.maxMemoryBytes,processLimit:2,timeoutMilliseconds:windowsRuntimeHelperTimeoutMilliseconds(options.timeoutMs),
       ...(gpu?{gpuProfile:"windows-cuda-budget-v1",gpuMemoryLimitBytes:options.maxGpuMemoryBytes}:{})};
     const input=JSON.stringify(config);
     if(Buffer.byteLength(input)>65536)throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE");

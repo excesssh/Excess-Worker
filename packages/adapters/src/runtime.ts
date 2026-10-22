@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { availableParallelism,totalmem } from "node:os";
+import { performance } from "node:perf_hooks";
 import { dirname,join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import { startSupervisedProcess,type ManagedProcess } from "./process.js";
 import { AnswerGate,readLlamaStream,unansweredReasoning,type ChunkCallback } from "./stream.js";
 import { PROMPT_FORMATS } from "./prompt-format.js";
 import { isolateRuntime, type RuntimeIsolation } from "./isolation.js";
+import { MAX_RUNTIME_HELPER_LIFETIME_MS, runtimeHelperCoversJobDeadline } from "./runtime-lifetime.js";
 
 export interface AdapterOptions {threads:number;maxMemoryMb:number;maxGpuMemoryMb?:number;timeoutMs:number;modelId?:string;backend?:Backend}
 export interface AdapterProbe {ok:true;capabilityDigest:string;backend:Backend;modelId?:string;model:string;runtime:string;threads:number;maxMemoryMb:number;probedAt:string;generatedTokens:number;peakRssMb:number;nativePid?:number;guardianPid?:number;maxGpuMemoryMb?:number;peakGpuMemoryMb?:number;peakDedicatedGpuMemoryMb?:number;gpuOffloadedLayers?:number;gpuBoundary?:"windows-cuda-budget-v1"|"linux-cuda-device-budget-v2";gpuMemoryScope?:"whole-device"}
@@ -20,7 +22,9 @@ export interface TextAdapter {readonly supportsStreaming?:true;probe():Promise<A
   residentMb?():number}
 /** Internal seam: where the verified server and model are. Tests substitute a fixture server; the package entry point exposes
  * only createTextAdapter, which always re-verifies the pinned installation. */
-export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
+export interface TextLaunch {resolve():Promise<{serverPath:string;modelPath:string}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true;
+  /** Internal fixture seams; the package entry point exposes only the verified adapter constructor. */
+  isolateRuntime?:typeof isolateRuntime;now?:()=>number}
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   maxGpuMemoryMb:z.number().int().min(1024).max(131072).optional(),modelId:z.string().min(1).max(64).optional(),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
 // Sampling as pinned in the capability; version 3 entries predate minP and repeatPenalty and used llama-server's neutral values.
@@ -79,14 +83,15 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
   const format=pinned,values=parsedSampling.data;
   if(options.threads>availableParallelism()||options.maxMemoryMb*1048576>totalmem())throw new AdapterError("ADAPTER_POLICY_EXCEEDS_MACHINE");
   const processes=new AdapterProcessState();
-  let origin="",secret="",busy=false,stopping=new AbortController(),marker:number[]=[],isolation:RuntimeIsolation|undefined;
-  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;}
+  let origin="",secret="",busy=false,stopping=new AbortController(),marker:number[]=[],isolation:RuntimeIsolation|undefined,helperStartedAt:number|undefined;
+  const clockNow=launch.now??(()=>performance.now());
+  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;helperStartedAt=undefined;}
   const runtimeFetch=(path:string,init:RequestInit)=>processes.process?.request?.(path,init)??fetch(origin+path,init);
   const post=(path:string,body:unknown,signal:AbortSignal)=>runtimeFetch(path,{method:"POST",redirect:"error",signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+secret},body:JSON.stringify(body)});
   const tokenList=(limit:number)=>z.object({tokens:z.array(z.number().int().nonnegative()).max(limit)});
-  async function ensure(signal:AbortSignal) {
-    if(processes.process?.alive())return;
-    await processes.stop();signal.throwIfAborted();
+  async function ensure(signal:AbortSignal,jobDeadline:number) {
+    if(processes.process?.alive()&&(!launch.isolate||(helperStartedAt!==undefined&&runtimeHelperCoversJobDeadline(helperStartedAt,jobDeadline))))return;
+    await processes.stop();await isolation?.cleanup();isolation=undefined;helperStartedAt=undefined;signal.throwIfAborted();
     const platform=currentPlatform();
     if(!platform)throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
     const installed=await launch.resolve();signal.throwIfAborted();
@@ -112,14 +117,15 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
       // pinned format, so the GGUF's own chat template is never used.
       "--parallel","1","--n-gpu-layers",backend==="cpu"?"0":"999",...(backend==="cuda"?["--split-mode","none","--main-gpu","0","--log-verbosity","4","--log-colors","off"]:[]),...(currentPlatform()==="linux-x64"&&backend==="cuda"?["--flash-attn","off"]:[]),"--no-mmap","--no-webui","--no-jinja","--no-cache-prompt","--no-context-shift"];
     if(launch.isolate){
-      isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
+      isolation=await (launch.isolateRuntime??isolateRuntime)(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
         modelPaths:installed.modelFiles?.map(file=>file.path)??[installed.modelPath],
         ...(installed.runtimeRoot?{runtimeRoot:installed.runtimeRoot}:{}),...(installed.runtimeFiles?{runtimeFiles:installed.runtimeFiles}:{}),
-        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*1048576,timeoutMs:options.timeoutMs,port:selectedPort,backend,
+        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*1048576,timeoutMs:MAX_RUNTIME_HELPER_LIFETIME_MS,port:selectedPort,backend,
         ...(options.maxGpuMemoryMb!==undefined?{maxGpuMemoryBytes:options.maxGpuMemoryMb*1048576}:{})});
       env.TEMP=isolation.scratch;env.TMP=isolation.scratch;
       if(platform==="linux-x64"){env.HOME=isolation.scratch;env.TMPDIR=isolation.scratch;}
     }
+    helperStartedAt=launch.isolate?clockNow():undefined;
     processes.attach(startSupervisedProcess(isolation?.executable??launch.executable??installed.serverPath,isolation?.args??runtimeArgs,
       {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*1048576,supervision:isolation?.supervision}));
     for(;;) {
@@ -173,10 +179,11 @@ export function createTextAdapterWith(inputOptions:AdapterOptions,launch:TextLau
   async function run(request:TextRequest,external?:AbortSignal,onChunk?:ChunkCallback):Promise<TextResult> {
     if(busy)throw new AdapterError("ADAPTER_BUSY");busy=true;
     if(stopping.signal.aborted)stopping=new AbortController();
+    const startedAt=clockNow();
     const signal=AbortSignal.any([stopping.signal,AbortSignal.timeout(options.timeoutMs),...(external?[external]:[])]);
     try {
       await processes.ready();
-      signal.throwIfAborted();await ensure(signal);return await completion(request,signal,onChunk);
+      signal.throwIfAborted();await ensure(signal,startedAt+options.timeoutMs);return await completion(request,signal,onChunk);
     }
     catch(error) {const fault=processes.process?.error();await stop();if(fault)throw fault;if(error instanceof AdapterError)throw error;throw new AdapterError(signal?.aborted?"ADAPTER_ABORTED_OR_TIMED_OUT":"RUNTIME_EXECUTION_FAILED");}
     finally {busy=false;}

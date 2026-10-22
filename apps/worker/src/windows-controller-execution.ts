@@ -447,7 +447,9 @@ export async function createWindowsTextExecutionHost(options: WindowsTextExecuti
           assertCurrent(active);
           const value = success(response);
           const errorEnvelope = object(response);
-      if (value !== undefined && object(value).accepted === true || errorEnvelope.ok === false && [404, 409].includes(Number(errorEnvelope.status))) {
+          // A successful 2xx command reply acknowledges job.failed even when
+          // its body is { state: "failed" } rather than { accepted: true }.
+          if (value !== undefined || errorEnvelope.ok === false && [404, 409].includes(Number(errorEnvelope.status))) {
             await options.proofStore.clear(a.attemptId); assertCurrent(active); current = undefined;
             if (pendingProof?.assignment.attemptId === a.attemptId) pendingProof = undefined;
           }

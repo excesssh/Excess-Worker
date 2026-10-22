@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { AdapterError } from "./manifest.js";
 import { isolateWindowsRuntime } from "./windows-isolation.js";
 import type { RuntimeSupervision } from "./native-process.js";
+import { linuxRuntimeHelperTimeoutSeconds } from "./runtime-lifetime.js";
 
 export interface RuntimeIsolation {
   executable: string; args: string[]; scratch: string; profile: string; supervision?:RuntimeSupervision; cleanup(): Promise<void>;
@@ -46,7 +47,7 @@ export async function isolateRuntime(executable: string, args: readonly string[]
     const reads = [...new Set(await Promise.all(options.readPaths.map(path => realpath(path))))];
     const models = [...new Set(await Promise.all((options.modelPaths ?? []).map(path => realpath(path))))];
     if (models.length > 32) throw Error();
-    return { executable: helper, args: [...(gpu ? [String(options.maxGpuMemoryBytes)] : []), String(options.maxMemoryBytes), String(Math.ceil(options.timeoutMs / 1000) + 5), String(options.port), scratch,
+    return { executable: helper, args: [...(gpu ? [String(options.maxGpuMemoryBytes)] : []), String(options.maxMemoryBytes), String(linuxRuntimeHelperTimeoutSeconds(options.timeoutMs)), String(options.port), scratch,
       String(reads.length), ...reads, String(models.length), ...models, "--", await realpath(executable), ...args], scratch, profile,
       ...(gpu ? { supervision: { protocol: "linux-cuda-device-budget-v1" as const, input: "{}" } } : {}), cleanup };
   } catch { await cleanup(); throw new AdapterError("RUNTIME_ISOLATION_UNAVAILABLE"); }

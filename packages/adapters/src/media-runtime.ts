@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { availableParallelism,totalmem } from "node:os";
+import { performance } from "node:perf_hooks";
 import { dirname,join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import { AdapterProcessState,boundedJson,port } from "./runtime.js";
 import { startSupervisedProcess } from "./process.js";
 import { artifactRef,parsePng,parseWav,sha256,strictBase64,toneWav } from "./media-format.js";
 import { isolateRuntime, type RuntimeIsolation } from "./isolation.js";
+import { MAX_RUNTIME_HELPER_LIFETIME_MS, runtimeHelperCoversJobDeadline } from "./runtime-lifetime.js";
 
 export interface MediaAdapterOptions {threads:number;maxMemoryMb:number;maxGpuMemoryMb?:number;timeoutMs:number;modelId:string;backend?:Backend}
 export interface MediaArtifact {ref:ArtifactRef;data:Buffer}
@@ -32,7 +34,9 @@ export interface MediaAdapter {
 }
 /** Internal seam: where the verified server and model files are. Tests substitute a fixture server; the package entry point
  * exposes only createMediaAdapter, which always re-verifies the pinned installation. */
-export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonly<Record<string,string>>}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true}
+export interface MediaLaunch {resolve():Promise<{serverPath:string;files:Readonly<Record<string,string>>}&Partial<VerifiedRuntimeInputs>>;executable?:string;prefixArgs?:readonly string[];isolate?:true;
+  /** Internal fixture seams; the package entry point exposes only the verified adapter constructor. */
+  isolateRuntime?:typeof isolateRuntime;now?:()=>number}
 
 const optionsSchema=z.strictObject({threads:z.number().int().min(1).max(64),maxMemoryMb:z.number().int().min(1024).max(262144),timeoutMs:z.number().int().min(1000).max(TEXT_LIMITS.maxRunSeconds*1000),
   maxGpuMemoryMb:z.number().int().min(1024).max(131072).optional(),modelId:z.string().min(1).max(64),backend:z.enum(["cpu","cuda","vulkan"]).optional()});
@@ -80,9 +84,10 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
   if(options.threads>availableParallelism()||options.maxMemoryMb*MiB>totalmem())throw new AdapterError("ADAPTER_POLICY_EXCEEDS_MACHINE");
   const limits=entry.capability.limits as {sizes?:number[];maxSteps?:number;maxImages?:number};
   const processes=new AdapterProcessState();
-  let origin="",secret="",busy=false,stopping=new AbortController(),isolation:RuntimeIsolation|undefined;
+  let origin="",secret="",busy=false,stopping=new AbortController(),isolation:RuntimeIsolation|undefined,helperStartedAt:number|undefined;
+  const clockNow=launch.now??(()=>performance.now());
   let embeddingBatch=512,loadedEmbeddingBatch=0;
-  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;loadedEmbeddingBatch=0;}
+  async function stop():Promise<void> {stopping.abort();await processes.stop();await isolation?.cleanup();isolation=undefined;helperStartedAt=undefined;loadedEmbeddingBatch=0;}
   const headers=(json:boolean)=>({...(json?{"Content-Type":"application/json"}:{}),...(secret?{Authorization:"Bearer "+secret}:{})});
   const runtimeFetch=(path:string,init:RequestInit)=>processes.process?.request?.(path,init)??fetch(origin+path,init);
   function serverArgs(files:Readonly<Record<string,string>>,selectedPort:number):string[] {
@@ -99,11 +104,12 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
       ?["--diffusion-model",file("diffusion.gguf"),"--t5xxl",file("t5xxl.gguf"),"--clip_l",file("clip_l.gguf"),"--vae",file("ae.gguf"),...sdCommon]
       :["--model",file("model.gguf"),...sdCommon];
   }
-  async function ensure(signal:AbortSignal) {
+  async function ensure(signal:AbortSignal,jobDeadline:number) {
     // Each image gets a fresh bounded process. A long probe must not consume
     // the guardian's execution timer for the next buyer workload.
-    if(processes.process?.alive()&&entry.kind!=="image"&&(entry.kind!=="embedding"||loadedEmbeddingBatch>=embeddingBatch))return;
-    await processes.stop();await isolation?.cleanup();isolation=undefined;loadedEmbeddingBatch=0;signal.throwIfAborted();
+    if(processes.process?.alive()&&entry.kind!=="image"&&(entry.kind!=="embedding"||loadedEmbeddingBatch>=embeddingBatch)&&
+      (!launch.isolate||(helperStartedAt!==undefined&&runtimeHelperCoversJobDeadline(helperStartedAt,jobDeadline))))return;
+    await processes.stop();await isolation?.cleanup();isolation=undefined;helperStartedAt=undefined;loadedEmbeddingBatch=0;signal.throwIfAborted();
     const platform=currentPlatform();
     if(!platform)throw new AdapterError("UNSUPPORTED_ADAPTER_PLATFORM");
     const installed=await launch.resolve();signal.throwIfAborted();
@@ -122,14 +128,15 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
     if(secret)env[llama||platform==="win32-x64"?"LLAMA_API_KEY":"SD_API_KEY"]=secret;
     const runtimeArgs=[...(launch.prefixArgs??[]),...serverArgs(installed.files,selectedPort)];
     if(launch.isolate){
-      isolation=await isolateRuntime(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
+      isolation=await (launch.isolateRuntime??isolateRuntime)(launch.executable??installed.serverPath,runtimeArgs,{readPaths:[installed.runtimeRoot??dirname(installed.serverPath)],
         modelPaths:installed.modelFiles?.map(file=>file.path)??Object.entries(installed.files).filter(([name])=>!name.startsWith("licences/")).map(([,path])=>path),
         ...(installed.runtimeRoot?{runtimeRoot:installed.runtimeRoot}:{}),...(installed.runtimeFiles?{runtimeFiles:installed.runtimeFiles}:{}),
-        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*MiB,timeoutMs:options.timeoutMs,port:selectedPort,backend,
+        ...(installed.modelFiles?{modelFiles:installed.modelFiles}:{}),maxMemoryBytes:options.maxMemoryMb*MiB,timeoutMs:MAX_RUNTIME_HELPER_LIFETIME_MS,port:selectedPort,backend,
         ...(options.maxGpuMemoryMb!==undefined?{maxGpuMemoryBytes:options.maxGpuMemoryMb*MiB}:{})});
       env.TEMP=isolation.scratch;env.TMP=isolation.scratch;
       if(platform==="linux-x64"){env.HOME=isolation.scratch;env.TMPDIR=isolation.scratch;}
     }
+    helperStartedAt=launch.isolate?clockNow():undefined;
     processes.attach(startSupervisedProcess(isolation?.executable??launch.executable??installed.serverPath,isolation?.args??runtimeArgs,
       {cwd:isolation?.scratch??dirname(installed.serverPath),env,maxMemoryBytes:options.maxMemoryMb*MiB,supervision:isolation?.supervision}));
     // sd-server only listens once its model is loaded; llama-server reports readiness on /health.
@@ -213,6 +220,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
   async function run(request:MediaRequest,external?:AbortSignal,inputs?:ReadonlyMap<string,Buffer>):Promise<MediaOutput> {
     if(busy)throw new AdapterError("ADAPTER_BUSY");busy=true;
     if(stopping.signal.aborted)stopping=new AbortController();
+    const startedAt=clockNow();
     const signal=AbortSignal.any([stopping.signal,AbortSignal.timeout(options.timeoutMs),...(external?[external]:[])]);
     try {
       await processes.ready();
@@ -220,7 +228,7 @@ export function createMediaAdapterWith(inputOptions:MediaAdapterOptions,launch:M
         const longest=Math.max(...request.inputs.map(value=>Buffer.byteLength(value,"utf8")));
         embeddingBatch=Math.min(EMBEDDING_BATCH_TOKENS,Math.max(512,Math.ceil((longest+256)/256)*256));
       }
-      signal.throwIfAborted();await ensure(signal);
+      signal.throwIfAborted();await ensure(signal,startedAt+options.timeoutMs);
       const output=request.kind==="embedding"?await embed(request,signal):request.kind==="transcription"?await transcribe(request,inputs,signal):await image(request,signal);
       if(launch.isolate&&backend==="cuda"){
         // Check every result, including a runtime restarted after its startup probe.

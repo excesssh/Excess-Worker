@@ -19,6 +19,7 @@ createServer((request, response) => {
     log({ type: "request", url: request.url, authorized, body });
     if (!authorized) return send(response, 401, { error: "unauthorized" });
     const settings = config(), output = settings.output ?? [[1, "FIXTURE"]];
+    if (settings.behavior === "hang" && request.url === "/completion") return;
     if (request.url === "/tokenize") {
       // The answer marker tokenizes to the configured IDs; any other text counts one token per four bytes.
       if (body.content === "<|channel|>final<|message|>" && settings.marker) return send(response, 200, { tokens: settings.marker });

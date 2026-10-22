@@ -21,16 +21,18 @@ const marker = ["aa", "ron"].join("");
 
 function fixture(options = {}) {
   const calls = [], adapterCalls = [], saved = { value: options.proof ?? null }, adapterEvents = [...(options.events ?? [{ kind: "result", result: output, residentMb: 10 }])];
+  let pollCount = 0;
   const coordinator = {
     async handle(payload) {
       calls.push(structuredClone(payload));
       if (payload.action !== "command") return { ok: true, value: null };
-      if (payload.type === "worker.poll") return { ok: true, value: { executionEnabled: options.executionEnabled ?? true, assignments: options.assignments ?? [assignment] } };
+      if (payload.type === "worker.poll") return { ok: true, value: { executionEnabled: options.executionEnabled ?? true,
+        assignments: typeof options.assignments === "function" ? options.assignments(++pollCount) : options.assignments ?? [assignment] } };
       if (payload.type === "job.input") return { ok: true, value: { request, requestDigest: requestHash, capabilityDigest, deliveryMode: options.deliveryMode ?? "buffered" } };
       if (payload.type === "job.started" || payload.type === "job.renew") return { ok: true, value: { state: "running", leaseExpiresAt: options.lease?.(payload.type) ?? assignment.leaseExpiresAt } };
       if (payload.type === "job.chunk") return { ok: true, value: { accepted: true, sequence: payload.data.sequence, chunkDigest: payload.data.chunkDigest } };
       if (payload.type === "job.result") return options.resultResponse?.() ?? { ok: true, value: { accepted: true } };
-      if (payload.type === "job.failed") return { ok: true, value: { accepted: true } };
+      if (payload.type === "job.failed") return options.failureResponse?.() ?? { ok: true, value: { accepted: true } };
       return { ok: true, value: {} };
     },
     async close() {},
@@ -212,6 +214,23 @@ test("execution-disabled assignment cannot fetch input or start an adapter; host
     const failure = await f.command("job.failed", { ...attempt, reason: "busy" });
     assert.equal(failure.ok, true);
     assert.equal(f.calls.filter(call => call.type === "job.failed").length, 1);
+  } finally { await (await f.host).close(); }
+});
+
+test("successful job failure retires the Windows attempt for a coordinator state reply", async () => {
+  const f = fixture({ assignments: poll => poll === 1 ? [assignment] : [],
+    events: [{ kind: "error", code: "RUNTIME_TIMEOUT", residentMb: 10 }],
+    failureResponse: () => ({ ok: true, value: { state: "failed" } }) });
+  try {
+    await f.command("worker.poll", {});
+    await f.command("job.input", attempt);
+    await f.command("job.started", attempt);
+    await f.adapterCall({ action: "execute", request, streaming: false });
+    assert.deepEqual(await f.adapterCall({ action: "pull", id: "66666666-6666-4666-8666-666666666666", ack: 0 }),
+      { kind: "error", code: "RUNTIME_TIMEOUT", residentMb: 10 });
+    await f.command("job.failed", { ...attempt, reason: "execution_error" });
+    assert.equal(f.calls.filter(call => call.action === "command" && call.type === "job.failed").length, 1);
+    assert.deepEqual(await f.command("worker.poll", {}), { ok: true, value: { executionEnabled: true, assignments: [] } });
   } finally { await (await f.host).close(); }
 });
 
