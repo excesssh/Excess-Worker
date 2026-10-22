@@ -5,11 +5,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/resource.h>
 #include <netinet/in.h>
 #include <unistd.h>
 static void *thread(void *p) { return p; }
 int main(int argc, char **argv) {
     if (argc != 3) return 1;
+    struct rlimit cpu;
+    if (getrlimit(RLIMIT_CPU, &cpu) || cpu.rlim_cur != 640 || cpu.rlim_max != 640) return 12;
     int allowed = open(argv[1], O_RDONLY); if (allowed < 0) return 2; close(allowed);
     if (open(argv[2], O_RDONLY) >= 0 || errno != EACCES) return 3;
     if (open(argv[1], O_WRONLY) >= 0 || errno != EACCES) return 4;
@@ -21,5 +24,5 @@ int main(int argc, char **argv) {
     if (fork() >= 0 || errno != EPERM) return 9;
     pthread_t id; if (pthread_create(&id, NULL, thread, NULL) || pthread_join(id, NULL)) return 10;
     if (malloc((size_t)1024*1024*1024) != NULL) return 11;
-    puts("fixture isolation checks passed"); return 0;
+    puts("fixture isolation and scaled cpu budget checks passed"); return 0;
 }

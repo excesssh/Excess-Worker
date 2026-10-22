@@ -12,15 +12,21 @@ test('Linux kernel denies host files, read-only writes, outbound TCP, UDP, forks
     const scratch = join(root, 'scratch'); await mkdir(scratch);
     const allow = join(root, 'model-fixture.txt'), deny = join(root, 'credential-fixture.txt');
     await writeFile(allow, 'public fixture'); await writeFile(deny, 'private fixture');
-    const helper = join(root, 'excess-sandbox'), probe = join(root, 'isolation-probe'), modelProbe = join(root, 'model-fd-probe');
+    const helper = join(root, 'excess-sandbox'), probe = join(root, 'isolation-probe'), modelProbe = join(root, 'model-fd-probe'), timeoutProbe = join(root, 'isolation-timeout-probe');
     execFileSync('gcc', ['-O2', '-s', 'native/linux/excess-sandbox.c', '-o', helper], { stdio: 'pipe' });
     execFileSync('gcc', ['-O2', '-pthread', 'tests/fixtures/isolation-probe.c', '-o', probe], { stdio: 'pipe' });
     execFileSync('gcc', ['-O2', 'tests/fixtures/isolation-model-fd-probe.c', '-o', modelProbe], { stdio: 'pipe' });
+    execFileSync('gcc', ['-O2', 'tests/fixtures/isolation-timeout-probe.c', '-o', timeoutProbe], { stdio: 'pipe' });
     assert.equal(execFileSync(helper, ['--check'], { encoding: 'utf8' }).trim(), 'linux-landlock-v1');
     const result = execFileSync(helper, [String(256*1024*1024), '10', '54321', scratch, '1', allow, '0', '--', probe, allow, deny], { encoding: 'utf8' });
-    assert.match(result, /fixture isolation checks passed/);
+    assert.match(result, /fixture isolation and scaled cpu budget checks passed/);
     const selectedScratch = join(root, 'selected-scratch'); await mkdir(selectedScratch);
     const selectedResult = execFileSync(helper, [String(256*1024*1024), '10', '54322', selectedScratch, '0', '1', allow, '--', modelProbe, allow, deny], { encoding: 'utf8' });
     assert.match(selectedResult, /selected read-only model handle accessible; unselected file denied/);
+    const timeoutScratch = join(root, 'timeout-scratch'); await mkdir(timeoutScratch);
+    let timeoutError;
+    try { execFileSync(helper, [String(256*1024*1024), '1', '54323', timeoutScratch, '0', '0', '--', timeoutProbe], { timeout: 5000, stdio: 'pipe' }); }
+    catch (error) { timeoutError = error; }
+    assert.equal(timeoutError?.signal, 'SIGALRM', 'the CPU helper enforces its wall-clock lifetime across exec');
   } finally { assert.ok(root.startsWith(resolve('.cache') + '/linux-isolation-')); await rm(root, { recursive: true, force: true }); }
 });

@@ -9,8 +9,8 @@ export function runtimeHelperCoversJobDeadline(startedAt: number, jobDeadline: n
 
 /** Linux helpers receive a seconds limit. Keep the existing five-second
  * supervisor/reap allowance after the bounded job timeout. The CPU helper
- * applies RLIMIT_CPU; the CUDA helper uses its separately validated 605-second
- * wall-clock ceiling. */
+ * combines a thread-scaled RLIMIT_CPU with a wall-clock alarm; the CUDA helper
+ * uses its separately validated 605-second wall-clock supervisor. */
 export function linuxRuntimeHelperTimeoutSeconds(timeoutMs: number): number {
   return Math.ceil(Math.min(MAX_RUNTIME_HELPER_LIFETIME_MS, timeoutMs) / 1000) + 5;
 }

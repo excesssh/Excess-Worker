@@ -7,6 +7,7 @@
 #include <linux/seccomp.h>
 #include <limits.h>
 #include <sched.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -57,6 +58,7 @@ static void path_rule(int rules, const char *path, uint64_t rights) {
 }
 #define DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, (n), 0, 1), BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM)
 #define MAX_MODELS 32
+#define MAX_RUNTIME_THREADS 64
 static void syscalls(void) {
     /* Deny process inspection, kernel control, child processes and UDP.
        Threads remain available. clone3 gets ENOSYS so libc uses clone. */
@@ -195,7 +197,16 @@ int main(int argc, char **argv) {
     if (strcmp(argv[command-1], "--")) fail();
     phase=4;
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_DUMPABLE, 0)) fail();
-    struct rlimit mem = { memory, memory }, cpu = { seconds, seconds }, files = { 256, 256 }, core = { 0, 0 };
+    uint64_t cpu_seconds = seconds;
+#ifndef EXCESS_GPU_PROFILE
+    /* The CPU helper's seconds argument bounds wall lifetime. A pinned runtime
+       can use up to 64 inference threads, so its aggregate CPU allowance must
+       cover that many CPU-seconds per wall-second. The wall alarm below keeps
+       this larger allowance bounded for both single jobs and warm reuse. */
+    if (seconds > UINT64_MAX / MAX_RUNTIME_THREADS) fail();
+    cpu_seconds = seconds * MAX_RUNTIME_THREADS;
+#endif
+    struct rlimit mem = { memory, memory }, cpu = { (rlim_t)cpu_seconds, (rlim_t)cpu_seconds }, files = { 256, 256 }, core = { 0, 0 };
 #ifdef EXCESS_GPU_PROFILE
     /* CUDA reserves a large sparse address space. The enclosing dedicated
        cgroup provides the hard aggregate RAM ceiling; the trusted supervisor
@@ -269,5 +280,15 @@ int main(int argc, char **argv) {
     if (syscall(SYS_close_range, first, ~0U, 0)) fail();
     for (int at = command + 1; at < argc; at++) for (uint64_t n = 0; n < model_count; n++)
         if (!strcmp(argv[at], argv[model_paths_at+n])) argv[at] = model_alias[n];
+#ifndef EXCESS_GPU_PROFILE
+    /* Keep a wall-clock cap independent of aggregate CPU consumption. Reset
+       inherited signal state so the fixed runtime starts with an active,
+       unblocked deadline after exec. */
+    struct sigaction timeout_action = { .sa_handler = SIG_DFL };
+    sigset_t timeout_signal;
+    if (sigemptyset(&timeout_action.sa_mask) || sigaction(SIGALRM, &timeout_action, NULL) ||
+        sigemptyset(&timeout_signal) || sigaddset(&timeout_signal, SIGALRM) ||
+        sigprocmask(SIG_UNBLOCK, &timeout_signal, NULL) || alarm((unsigned int)seconds)) fail();
+#endif
     syscalls(); phase=31; execv(argv[command], &argv[command]); fail();
 }
