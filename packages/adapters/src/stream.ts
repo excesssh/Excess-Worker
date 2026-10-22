@@ -12,6 +12,10 @@ const eventSchema = z.object({
 const invalid = () => new AdapterError("INVALID_RUNTIME_STREAM");
 // A UTF-8 character has at most four bytes, so at most three byte tokens can precede the one that completes it.
 const MAX_WITHHELD_TOKENS = 3;
+// Coalesced deltas also stay within this JSON-escaped size, so a chunk with its token IDs and attempt fields fits the
+// worker's 12,000-byte signed chunk message even when most characters need escaping (newlines, quotes, controls).
+const MAX_ESCAPED_DELTA_BYTES = 8192;
+const escapedBytes = (value: string) => Buffer.byteLength(JSON.stringify(value), "utf8") - 2;
 
 /** Follows generated token IDs until the answer marker (the loaded vocabulary's tokenization of a format's answerMarker)
  * has appeared. Everything up to and including it is reasoning: metered, but its text is never delivered. */
@@ -157,7 +161,8 @@ export async function readLlamaStream(response: Response, maxTokens: number, onC
     if (Buffer.byteLength(text, "utf8") > TEXT_LIMITS.maxOutputBytes || contentBytes > TEXT_LIMITS.maxChunkBytes) throw invalid();
     // Keep each emitted chunk within the per-chunk token and byte bounds.
     if (pendingTokens.length + value.tokens.length > TEXT_LIMITS.maxChunkTokens ||
-        Buffer.byteLength(pendingText, "utf8") + contentBytes > TEXT_LIMITS.maxChunkBytes) await flush();
+        Buffer.byteLength(pendingText, "utf8") + contentBytes > TEXT_LIMITS.maxChunkBytes ||
+        (pendingText !== "" && escapedBytes(pendingText + content) > MAX_ESCAPED_DELTA_BYTES)) await flush();
     pendingText += content; pendingTokens.push(...value.tokens);
     const pendingBytes = Buffer.byteLength(pendingText, "utf8");
     if (pendingTokens.length >= 8) {

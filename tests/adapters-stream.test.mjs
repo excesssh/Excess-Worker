@@ -116,6 +116,16 @@ test("synthetic llama SSE splits native events so each emitted chunk stays withi
   assert.deepEqual(byteChunks.map(c => Buffer.byteLength(c.delta)), [5000, 5000]); assert.equal(result.generatedTokens, 2);
 });
 
+test("synthetic llama SSE keeps coalesced deltas within the escaped transport size", async () => {
+  // 4,000 newlines escape to 8,000 JSON bytes: two such events must not share one chunk even though their raw bytes fit.
+  const frames = frame(partial("\n".repeat(4000), [1], 1)) + frame(partial("\n".repeat(4000), [2], 2)) + frame(final(2));
+  const chunks = [];
+  const result = await readLlamaStream(response(frames), 2048, async chunk => { chunks.push(chunk); });
+  assert.deepEqual(chunks.map(c => c.delta.length), [4000, 4000]);
+  for (const chunk of chunks) assert.ok(Buffer.byteLength(JSON.stringify(chunk.delta)) - 2 <= 8192);
+  assert.equal(result.generatedTokens, 2);
+});
+
 test("synthetic llama SSE waits at the byte bound and preserves the reasoning answer gate", async () => {
   const started = deferred(), release = deferred(), payloadFramesRead = deferred(), byteChunks = [];
   const payloads = [...Array.from({ length: 8 }, () => "a".repeat(800)), "b".repeat(4000), "c".repeat(4000), "d".repeat(192)];
