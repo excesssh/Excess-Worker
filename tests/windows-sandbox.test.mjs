@@ -387,7 +387,8 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
     };
     const relay = launchSandbox(relayConfig);
     await relay.waitFor((output) => output.includes('"type":"started"'));
-    relay.send({ type: 'request', id: 31, method: 'POST', path: '/completion', body: '{"prompt":"probe"}' });
+    const utf8Text = 'Café — naïve résumé ✓ 漢字 🙂';
+    relay.send({ type: 'request', id: 31, method: 'POST', path: '/completion', body: JSON.stringify({ prompt: utf8Text }) });
     let response;
     await relay.waitFor((output) => {
       try { return parseEvents(output).some((event) => (event.type === 'response' || event.type === 'error') && event.id === 31 || event.type === 'status' && event.termination !== undefined); }
@@ -403,7 +404,9 @@ test('Windows sandbox denies an outside-process loopback TCP connection without 
       'relay must wait for a pull before reading response data');
     relay.send({ type: 'next', id: 31 });
     const data = await waitForRpcEvent(relay, 'data', 31);
-    assert.equal(Buffer.from(data.data, 'base64').toString('utf8'), 'data: {"ok":true}\n\n');
+    const expectedRelayBytes = Buffer.from(`data: ${JSON.stringify({ text: utf8Text })}\n\n`, 'utf8');
+    assert.deepEqual(Buffer.from(data.data, 'base64'), expectedRelayBytes,
+      'relay response bytes containing non-ASCII text must reach the parent unchanged');
     relay.send({ type: 'next', id: 31 });
     await waitForRpcEvent(relay, 'end', 31);
     const relayStarted = parseEvents(relay.output()).find((event) => event.type === 'started');

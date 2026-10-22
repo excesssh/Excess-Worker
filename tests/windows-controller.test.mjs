@@ -246,6 +246,19 @@ test('Windows controller is a bounded, fail-closed host RPC boundary', {
   assert.deepEqual(observedRequest, { op: 'adapter', text: 'ping', checks: true });
   assert.equal(success.peakInFlightRequests, 1);
 
+  const utf8Text = 'Café — naïve résumé ✓ 漢字 🙂';
+  let observedUtf8;
+  const utf8 = await launch(fixture, 'utf8', async request => {
+    observedUtf8 = request.payload.text;
+    return request.payload.text;
+  });
+  const utf8Result = await boundedClose(utf8, fixture);
+  assert.equal(utf8Result.termination, 'none', JSON.stringify(utf8Result));
+  assert.equal(utf8Result.exitCode, 0);
+  assert.equal(utf8Result.reaped, true);
+  assert.equal(utf8Result.cleaned, true);
+  assert.equal(observedUtf8, utf8Text, 'child frame text must reach the parent byte-identically');
+
   let moduleProbe;
   const moduleRun = await launch(fixture, 'module-probe', async request => { moduleProbe = String(request.payload.text); return 'probe-ack'; });
   const moduleResult = await boundedClose(moduleRun, fixture);

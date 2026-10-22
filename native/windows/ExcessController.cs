@@ -39,7 +39,9 @@ internal static class ExcessController
     private static volatile bool OutputBroken, CleanupUnsafe;
     private static volatile string ErrorCode = "none", StopReason = "none";
     private static volatile string ChildDiagnosticCode = "NONE";
-    private static readonly BoundedLineReader ControlLines = new BoundedLineReader(Console.In);
+    private static readonly StreamReader ParentInput = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false), false, 4096);
+    private static readonly StreamWriter ParentOutput = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
+    private static readonly BoundedLineReader ControlLines = new BoundedLineReader(ParentInput);
     private static string Mode, PackageDir, StateDir, ScratchRoot, ScratchSession, Origin, NodeExe, EntryFile, Scenario, TestSibling;
     private static uint TimeoutMilliseconds;
     private static uint OperationTimeoutMilliseconds = 30000;
@@ -99,7 +101,7 @@ internal static class ExcessController
         if (fixture)
         {
             Scenario = Text(c, "testScenario");
-            if (Array.IndexOf(new[] { "echo", "malformed", "oversized", "duplicate-id", "four-inflight", "four-refill", "nativefixture-loop-top", "nativefixture-after-flush", "five-inflight", "long-session", "module-probe", "hang", "flood" }, Scenario) < 0) throw new ProtocolException("FIXTURE_MODE_INVALID");
+            if (Array.IndexOf(new[] { "echo", "utf8", "malformed", "oversized", "duplicate-id", "four-inflight", "four-refill", "nativefixture-loop-top", "nativefixture-after-flush", "five-inflight", "long-session", "module-probe", "hang", "flood" }, Scenario) < 0) throw new ProtocolException("FIXTURE_MODE_INVALID");
             OperationTimeoutMilliseconds = checked((uint)Integer(c, "testOperationTimeoutMilliseconds"));
             if (OperationTimeoutMilliseconds < 100 || OperationTimeoutMilliseconds > 30000) throw new ProtocolException("FIXTURE_MODE_INVALID");
             object responseDelta; long delta = c.TryGetValue("testResponseIdDelta", out responseDelta) ? Convert.ToInt64(responseDelta) : 0;
@@ -527,6 +529,7 @@ internal static class ExcessController
 
     private static string FixtureCode(string scenario)
     {
+        if (scenario == "utf8") return "const text='Café — naïve résumé ✓ 漢字 🙂';process.stdout.write(JSON.stringify({type:'request',id:1,op:'adapter',payload:{text}})+'\\n');let b='';process.stdin.on('data',d=>{b+=d.toString();const n=b.indexOf('\\n');if(n<0)return;const r=JSON.parse(b.slice(0,n));if(r.type!=='response'||r.id!==1||r.ok!==true||r.payload!==text)process.exit(3);process.stdout.write(JSON.stringify({type:'done'})+'\\n',()=>process.exit(0))});";
         if (scenario == "malformed") return "process.stdout.write('not-json\\n');setTimeout(()=>{},30000);";
         if (scenario == "oversized") return "process.stdout.write('X'.repeat(1048600)+'\\n');setTimeout(()=>{},30000);";
         if (scenario == "duplicate-id") return "process.stdout.write(JSON.stringify({type:'request',id:1,op:'adapter',payload:{text:'one'}})+'\\n'+JSON.stringify({type:'request',id:1,op:'adapter',payload:{text:'replay'}})+'\\n');setTimeout(()=>{},30000);";
@@ -647,7 +650,7 @@ internal static class ExcessController
     {
         var thread = new Thread(() =>
         {
-            try { foreach (string line in Output.GetConsumingEnumerable()) { Console.Out.WriteLine(line); Console.Out.Flush(); if (line.StartsWith("{\"type\":\"ready\",", StringComparison.Ordinal)) ReadyOutputDone.Set(); } }
+            try { foreach (string line in Output.GetConsumingEnumerable()) { ParentOutput.WriteLine(line); ParentOutput.Flush(); if (line.StartsWith("{\"type\":\"ready\",", StringComparison.Ordinal)) ReadyOutputDone.Set(); } }
             catch { OutputBroken = true; RequestStop("output-unavailable"); }
             finally { OutputDone.Set(); }
         }); thread.IsBackground = true; thread.Name = "controller-parent-output"; thread.Start();

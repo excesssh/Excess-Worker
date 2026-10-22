@@ -18,6 +18,8 @@ using Microsoft.Win32.SafeHandles;
 
 internal static class ExcessSandbox
 {
+    private static readonly StreamReader ParentInput = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false), false, 4096);
+    private static readonly StreamWriter ParentOutput = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
     private static string currentStage = "config";
     private static string stopReasonCode = "none";
     private static readonly ManualResetEvent stopEvent = new ManualResetEvent(false);
@@ -847,7 +849,7 @@ internal static class ExcessSandbox
         string input;
         try
         {
-            while (ReadBoundedLine(Console.In, 32 * 1024 * 1024, out input))
+            while (ReadBoundedLine(ParentInput, 32 * 1024 * 1024, out input))
             {
                 if (input == "{\"type\":\"stop\"}") return 0;
                 var frame = serializer.Deserialize<Dictionary<string, object>>(input);
@@ -886,13 +888,13 @@ internal static class ExcessSandbox
             if (!String.IsNullOrEmpty(response.ContentType)) headers["content-type"] = response.ContentType.Length <= 256 ? response.ContentType : response.ContentType.Substring(0, 256);
             var responseFrame = new Dictionary<string, object>();
             responseFrame["type"] = "response"; responseFrame["id"] = id; responseFrame["status"] = (int)((HttpWebResponse)response).StatusCode; responseFrame["headers"] = headers;
-            Console.WriteLine(serializer.Serialize(responseFrame)); Console.Out.Flush();
+            ParentOutput.WriteLine(serializer.Serialize(responseFrame)); ParentOutput.Flush();
             stream = response.GetResponseStream(); if (stream == null) { WriteRelayEnd(id, serializer); return; }
             long total = 0; var buffer = new byte[65536];
             while (true)
             {
                 string control;
-                if (!ReadBoundedLine(Console.In, 1024, out control) || control == "{\"type\":\"stop\"}") { web.Abort(); return; }
+                if (!ReadBoundedLine(ParentInput, 1024, out control) || control == "{\"type\":\"stop\"}") { web.Abort(); return; }
                 var command = serializer.Deserialize<Dictionary<string, object>>(control);
                 if (command == null || !command.ContainsKey("id") || Convert.ToInt32(command["id"], CultureInfo.InvariantCulture) != id) { web.Abort(); WriteRelayError(id, "INVALID_CONTROL", serializer); return; }
                 string controlType = command.ContainsKey("type") ? command["type"] as string : null;
@@ -902,7 +904,7 @@ internal static class ExcessSandbox
                 if (count == 0) { WriteRelayEnd(id, serializer); return; }
                 total += count; if (total > 64L * 1024 * 1024) { web.Abort(); WriteRelayError(id, "RESPONSE_TOO_LARGE", serializer); return; }
                 var data = new Dictionary<string, object>(); data["type"] = "data"; data["id"] = id; data["data"] = Convert.ToBase64String(buffer, 0, count);
-                Console.WriteLine(serializer.Serialize(data)); Console.Out.Flush();
+                ParentOutput.WriteLine(serializer.Serialize(data)); ParentOutput.Flush();
             }
         }
         catch (WebException) { WriteRelayError(id, "UPSTREAM_UNAVAILABLE", serializer); }
@@ -917,8 +919,8 @@ internal static class ExcessSandbox
         return method == "POST" && body != null && Encoding.UTF8.GetByteCount(body) <= 16 * 1024 * 1024 &&
             (path == "/tokenize" || path == "/completion" || path == "/detokenize" || path == "/v1/embeddings" || path == "/v1/chat/completions" || path == "/v1/images/generations");
     }
-    private static void WriteRelayError(int id, string code, JavaScriptSerializer serializer) { var frame = new Dictionary<string, object>(); frame["type"] = "error"; frame["id"] = Math.Max(1, id); frame["error"] = SafeCode(code).ToUpperInvariant(); Console.WriteLine(serializer.Serialize(frame)); Console.Out.Flush(); }
-    private static void WriteRelayEnd(int id, JavaScriptSerializer serializer) { var frame = new Dictionary<string, object>(); frame["type"] = "end"; frame["id"] = id; Console.WriteLine(serializer.Serialize(frame)); Console.Out.Flush(); }
+    private static void WriteRelayError(int id, string code, JavaScriptSerializer serializer) { var frame = new Dictionary<string, object>(); frame["type"] = "error"; frame["id"] = Math.Max(1, id); frame["error"] = SafeCode(code).ToUpperInvariant(); ParentOutput.WriteLine(serializer.Serialize(frame)); ParentOutput.Flush(); }
+    private static void WriteRelayEnd(int id, JavaScriptSerializer serializer) { var frame = new Dictionary<string, object>(); frame["type"] = "end"; frame["id"] = id; ParentOutput.WriteLine(serializer.Serialize(frame)); ParentOutput.Flush(); }
     private static void WriteBridgeError(int id, string code)
     {
         var frame = new Dictionary<string, object>(); frame["type"] = "error"; frame["id"] = Math.Max(1, id); frame["error"] = SafeCode(code).ToUpperInvariant();
@@ -1251,8 +1253,9 @@ internal static class ExcessSandbox
                     byte[] requestBody = new byte[length]; int consumed = 0;
                     while (consumed < length) { int count = stream.Read(requestBody, consumed, length - consumed); if (count <= 0) return 74; consumed += count; }
                     bool authorized = !String.IsNullOrEmpty(expectedKey) && headers.IndexOf("Authorization: Bearer " + expectedKey, StringComparison.OrdinalIgnoreCase) >= 0;
-                    int status = authorized && requestParts.Length == 3 && requestParts[0] == "POST" && requestParts[1] == "/completion" ? 200 : 401;
-                    string responseBody = status == 200 ? "data: {\"ok\":true}\n\n" : "denied";
+                    string expectedRequest = "{\"prompt\":\"Café — naïve résumé ✓ 漢字 🙂\"}";
+                    int status = authorized && requestParts.Length == 3 && requestParts[0] == "POST" && requestParts[1] == "/completion" && Encoding.UTF8.GetString(requestBody) == expectedRequest ? 200 : 401;
+                    string responseBody = status == 200 ? "data: {\"text\":\"Café — naïve résumé ✓ 漢字 🙂\"}\n\n" : "denied";
                     byte[] bodyBytes = Encoding.UTF8.GetBytes(responseBody);
                     string contentType = status == 200 ? "text/event-stream" : "text/plain";
                     byte[] responseHeaders = Encoding.ASCII.GetBytes("HTTP/1.1 " + status.ToString(CultureInfo.InvariantCulture) + (status == 200 ? " OK" : " Unauthorized") + "\r\nContent-Type: " + contentType + "\r\nContent-Length: " + bodyBytes.Length.ToString(CultureInfo.InvariantCulture) + "\r\nConnection: close\r\n\r\n");
@@ -1700,7 +1703,7 @@ internal static class ExcessSandbox
             {
                 foreach (string line in statusOutput.GetConsumingEnumerable())
                 {
-                    try { Console.Out.WriteLine(line); Console.Out.Flush(); }
+                    try { ParentOutput.WriteLine(line); ParentOutput.Flush(); }
                     catch { statusOutputFailed = true; stopReasonCode = "parent-output-unavailable"; stopEvent.Set(); break; }
                 }
             }
